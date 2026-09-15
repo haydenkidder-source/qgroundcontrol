@@ -26,6 +26,6 @@ options=('!strip' '!debug')
 package() {
     DESTDIR="${pkgdir}" cmake --install "@CMAKE_BINARY_DIR@" \
         --component Runtime --prefix /opt/QGroundControl
-    cmake -DQGC_NATIVE_PACKAGE_ROOT="${pkgdir}" \
+    cmake -DQGC_NATIVE_PACKAGE_ROOT="${pkgdir}" -DCPACK_PACKAGE_NAME="@CMAKE_PROJECT_NAME@" \
         -P "@CMAKE_SOURCE_DIR@/cmake/install/FinalizeNativePackage.cmake"
 }
