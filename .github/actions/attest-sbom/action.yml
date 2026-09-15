@@ -55,6 +55,13 @@ runs:
         upload-artifact: true
         upload-artifact-retention: 30
         artifact-name: sbom-${{ inputs.subject-name }}
+        # These per-platform build workflows only grant `contents: read` and a
+        # tag push (e.g. a version tag) also triggers them directly, which
+        # makes sbom-action's default "auto" behavior try to attach the SBOM
+        # to a release and fail with "Resource not accessible by integration".
+        # release.yml's own upload-artifacts job (contents: write) is the
+        # actual place release assets get published.
+        upload-release-assets: false
 
     - name: Attest Build Provenance
       if: steps.check.outputs.skip != 'true'
