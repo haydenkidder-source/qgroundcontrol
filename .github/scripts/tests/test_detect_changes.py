@@ -160,6 +160,26 @@ class TestHasRelevantChanges:
     def test_test_dir_triggers(self) -> None:
         assert has_relevant_changes(["test/UnitTest.cc"], "linux")
 
+    def test_custom_overlay_triggers_all_platforms(self) -> None:
+        for platform in (
+            "linux",
+            "windows",
+            "macos",
+            "ios",
+            "android",
+            "docker-linux",
+            "docker-android",
+        ):
+            assert has_relevant_changes(
+                ["custom/src/ExclusionZone/ExclusionZoneController.cc"], platform
+            )
+
+    def test_custom_example_does_not_trigger_real_platforms(self) -> None:
+        # custom-example/ is the stock upstream template, only relevant to the
+        # dedicated custom-build platform - not this fork's real custom/ overlay.
+        assert not has_relevant_changes(["custom-example/CMakeLists.txt"], "linux")
+        assert has_relevant_changes(["custom-example/CMakeLists.txt"], "custom-build")
+
     def test_deploy_platform_triggers(self) -> None:
         assert has_relevant_changes(["deploy/macos/Info.plist"], "macos")
         assert not has_relevant_changes(["deploy/macos/Info.plist"], "linux")

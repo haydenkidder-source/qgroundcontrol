@@ -29,6 +29,10 @@ if TYPE_CHECKING:
 # Patterns that trigger a build for ANY platform
 _COMMON_PATTERNS: list[str] = [
     r"^src/",
+    # This fork's real customization overlay (see custom/README.md) - CMakeLists.txt
+    # auto-detects it and builds it into every platform target. Distinct from
+    # custom-example/, the stock upstream template gated separately below.
+    r"^custom/",
     r"^CMakeLists\.txt$",
     r"^CMakePresets\.json$",
     r"^cmake/",
