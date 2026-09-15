@@ -73,7 +73,7 @@ jobs:
             host: windows
             arch: win64_msvc2022_64
             preset: Windows
-            package: QGroundControl-installer-AMD64
+            package: Custom-QGroundControl-installer-AMD64
             gstreamer: true
 
           - variant: arm64
@@ -81,7 +81,7 @@ jobs:
             host: windows_arm64
             arch: win64_msvc2022_arm64
             preset: Windows-arm64
-            package: QGroundControl-installer-ARM64
+            package: Custom-QGroundControl-installer-ARM64
             gstreamer: true
 
           - variant: arm64-cross
@@ -94,7 +94,7 @@ jobs:
             host: windows
             arch: win64_msvc2022_arm64_cross_compiled
             preset: Windows-arm64
-            package: QGroundControl-installer-AMD64-ARM64
+            package: Custom-QGroundControl-installer-AMD64-ARM64
             gstreamer: false
 
     defaults:
@@ -207,7 +207,7 @@ jobs:
         if: matrix.build_type == 'Release' && matrix.variant != 'arm64-cross'
         uses: ./.github/actions/verify-executable
         with:
-          binary-path: ${{ runner.temp }}/build/${{ matrix.build_type }}/QGroundControl.exe
+          binary-path: ${{ runner.temp }}/build/${{ matrix.build_type }}/Custom-QGroundControl.exe
           type: exe
           build-dir: ${{ runner.temp }}/build
 
