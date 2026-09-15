@@ -4,19 +4,25 @@
 #include <QtCore/QObject>
 #include <QtQmlIntegration/QtQmlIntegration>
 
+class GeoFenceManager;
 class QmlObjectListModel;
+class StagedExclusionZone;
 class Vehicle;
 
 /// \brief Stages perception-derived exclusion polygons (imported from KML/SHP) for operator
-/// review/approval, then pushes approved zones to a specific vehicle's geofence.
+/// review/approval, then merges approved zones into a specific vehicle's existing geofence.
 ///
-/// Approved zones are written to a timestamped audit-trail JSON file (same schema
-/// GeoFenceController::save()/load() use) before being pushed, and re-parsed from that file
-/// before sending — proving the on-disk record matches what was actually sent. The push itself
-/// goes directly through the target Vehicle's own GeoFenceManager rather than a throwaway
-/// PlanMasterController/GeoFenceController: driving the latter's send would either leak the
-/// throwaway controller or risk overwriting the target vehicle's live mission (its send cascade
-/// is Mission -> GeoFence -> RallyPoints).
+/// Approved zones are merged with the target vehicle's current fence - freshly loaded from the
+/// vehicle, not a stale cache - before being sent: GeoFenceManager::sendToVehicle() replaces the
+/// entire fence with whatever it's given, so pushing the approved zones by themselves would
+/// silently delete the vehicle's inclusion polygon, any other zones, and its breach-return point.
+/// The merged fence is written to a timestamped audit-trail JSON file (same schema
+/// GeoFenceController::save()/load() use) and re-read from that file before sending, so the
+/// on-disk record is proven to match what was actually sent rather than just what was in memory.
+/// The push itself goes directly through the target Vehicle's own GeoFenceManager rather than a
+/// throwaway PlanMasterController/GeoFenceController: driving the latter's send would either leak
+/// the throwaway controller or risk overwriting the target vehicle's live mission (its send
+/// cascade is Mission -> GeoFence -> RallyPoints).
 class ExclusionZoneController : public QObject
 {
     Q_OBJECT
@@ -48,8 +54,9 @@ public:
     /// Marks a staged zone's approval state by its index in stagedZones.
     Q_INVOKABLE void setApproved(int index, bool approved);
 
-    /// Writes approved zones to the audit-trail file, re-parses them, and pushes the result to
-    /// targetVehicle's geofence. Requires targetVehicle to be set and approvedCount > 0.
+    /// Loads targetVehicle's current fence, merges in the approved zones, writes/re-reads the
+    /// audit-trail file, and pushes the merged result to targetVehicle's geofence. Requires
+    /// targetVehicle to be set and approvedCount > 0.
     /// @return true if the push was started (completion is reported via pushFinished).
     Q_INVOKABLE bool pushApproved();
 
@@ -60,6 +67,8 @@ signals:
     void pushFinished(bool success, QString message);
 
 private:
+    void _mergeAndSend(GeoFenceManager* fenceMgr, const QList<StagedExclusionZone*>& approvedZones);
+
     QmlObjectListModel* _stagedZones = nullptr;
     Vehicle* _targetVehicle = nullptr;
     QString _lastFenceError;
@@ -67,6 +76,8 @@ private:
     // Re-bound on every pushApproved() call so at most one push's completion handlers are ever
     // live on a GeoFenceManager, regardless of how many times pushApproved() has been called or
     // how many different target vehicles it's been pointed at.
+    QMetaObject::Connection _fenceLoadCompleteConnection;
+    QMetaObject::Connection _fenceLoadErrorConnection;
     QMetaObject::Connection _fenceErrorConnection;
     QMetaObject::Connection _fenceSendCompleteConnection;
 };
