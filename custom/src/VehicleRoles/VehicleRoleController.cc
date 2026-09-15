@@ -17,7 +17,10 @@ const char* kRolesFileName = "VehicleRoles.json";
 }
 
 VehicleRoleEntry::VehicleRoleEntry(int sysid, const QString& role, const QString& name, QObject* parent)
-    : QObject(parent), _sysid(sysid), _role(role), _name(name)
+    : QObject(parent)
+    , _sysid(sysid)
+    , _role(role)
+    , _name(name)
 {}
 
 void VehicleRoleEntry::setRole(const QString& role)
@@ -37,7 +40,8 @@ void VehicleRoleEntry::setName(const QString& name)
 }
 
 VehicleRoleController::VehicleRoleController(QObject* parent)
-    : QObject(parent), _roleEntries(new QmlObjectListModel(this))
+    : QObject(parent)
+    , _roleEntries(new QmlObjectListModel(this))
 {
     _load();
 }
