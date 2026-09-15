@@ -5,9 +5,11 @@
 # an explicitly requested package target must fail if makepkg cannot build it.
 # ============================================================================
 
-# pkgver: strip the git-describe 'v' prefix and map '-' to '.' (makepkg forbids '-').
-string(REGEX REPLACE "^v" "" QGC_ARCH_PKGVER "${QGC_APP_VERSION_STR}")
-string(REPLACE "-" "." QGC_ARCH_PKGVER "${QGC_ARCH_PKGVER}")
+# pkgver: QGC_APP_VERSION is already normalized to X.Y.Z (falling back to the
+# shared 0.0.0 sentinel ValidatePackageVersion.cmake rejects below). Unlike
+# QGC_APP_VERSION_STR, `git describe --always` returns a bare commit hash with
+# no tags to describe from, which would slip past that check unvalidated.
+set(QGC_ARCH_PKGVER "${QGC_APP_VERSION}")
 
 # Single source of truth for the Arch runtime dep list (see PKGBUILD.in note):
 # the remaining system libraries QGC links against once Qt is bundled by the
