@@ -42,7 +42,7 @@ def validate(package: Path) -> None:
     install, remove = package_commands(package)
     subprocess.run(install, env={**os.environ, "DEBIAN_FRONTEND": "noninteractive"}, check=True)
     try:
-        if not os.access("/opt/QGroundControl/bin/QGroundControl", os.X_OK):
+        if not os.access("/opt/QGroundControl/bin/Custom-QGroundControl", os.X_OK):
             raise ValueError("Installed application is missing or not executable")
         if not Path("/usr/bin/QGroundControl").is_symlink():
             raise ValueError("Installed launcher is not a symlink")

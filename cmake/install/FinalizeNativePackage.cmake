@@ -13,8 +13,8 @@ elseif(DEFINED CPACK_TEMPORARY_DIRECTORY AND IS_DIRECTORY "${CPACK_TEMPORARY_DIR
     )
     set(_qgc_package_roots "")
     foreach(qgc_entry IN LISTS _qgc_staged_entries)
-        if(qgc_entry MATCHES "/${_qgc_app_prefix}/bin/QGroundControl$")
-            string(REGEX REPLACE "/${_qgc_app_prefix}/bin/QGroundControl$" "" _qgc_root "${qgc_entry}")
+        if(qgc_entry MATCHES "/${_qgc_app_prefix}/bin/${CPACK_PACKAGE_NAME}$")
+            string(REGEX REPLACE "/${_qgc_app_prefix}/bin/${CPACK_PACKAGE_NAME}$" "" _qgc_root "${qgc_entry}")
             list(APPEND _qgc_package_roots "${_qgc_root}")
         endif()
     endforeach()
@@ -24,12 +24,12 @@ else()
 endif()
 
 if(NOT _qgc_package_roots)
-    message(FATAL_ERROR "QGC: no staged /${_qgc_app_prefix}/bin/QGroundControl executable found")
+    message(FATAL_ERROR "QGC: no staged /${_qgc_app_prefix}/bin/${CPACK_PACKAGE_NAME} executable found")
 endif()
 
 foreach(qgc_root IN LISTS _qgc_package_roots)
     set(_qgc_private_root "${qgc_root}/${_qgc_app_prefix}")
-    if(NOT EXISTS "${_qgc_private_root}/bin/QGroundControl")
+    if(NOT EXISTS "${_qgc_private_root}/bin/${CPACK_PACKAGE_NAME}")
         message(FATAL_ERROR "QGC: incomplete private runtime at ${_qgc_private_root}")
     endif()
 
@@ -77,7 +77,9 @@ foreach(qgc_root IN LISTS _qgc_package_roots)
     endif()
 
     file(MAKE_DIRECTORY "${qgc_root}/usr/bin")
-    file(CREATE_LINK "../../${_qgc_app_prefix}/bin/QGroundControl" "${_qgc_launcher}" SYMBOLIC RESULT _qgc_link_result)
+    file(CREATE_LINK "../../${_qgc_app_prefix}/bin/${CPACK_PACKAGE_NAME}" "${_qgc_launcher}" SYMBOLIC
+         RESULT _qgc_link_result
+    )
     if(NOT _qgc_link_result STREQUAL "0")
         message(FATAL_ERROR "QGC: failed to create native package launcher: ${_qgc_link_result}")
     endif()
