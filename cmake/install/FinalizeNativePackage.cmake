@@ -58,9 +58,10 @@ foreach(qgc_root IN LISTS _qgc_package_roots)
         file(RENAME "${_qgc_source}" "${_qgc_destination}")
     endforeach()
 
-    foreach(qgc_required_path IN
-            ITEMS "applications/org.mavlink.qgroundcontrol.desktop" "icons/hicolor/256x256/apps/QGroundControl.png"
-                  "icons/hicolor/scalable/apps/QGroundControl.svg" "metainfo/org.mavlink.qgroundcontrol.appdata.xml"
+    foreach(
+        qgc_required_path IN
+        ITEMS "applications/org.mavlink.qgroundcontrol.desktop" "icons/hicolor/256x256/apps/${CPACK_PACKAGE_NAME}.png"
+              "icons/hicolor/scalable/apps/${CPACK_PACKAGE_NAME}.svg" "metainfo/org.mavlink.qgroundcontrol.appdata.xml"
     )
         if(NOT EXISTS "${qgc_root}/usr/share/${qgc_required_path}")
             message(FATAL_ERROR "QGC: required native package payload is missing: /usr/share/${qgc_required_path}")

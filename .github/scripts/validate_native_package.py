@@ -14,8 +14,8 @@ REQUIRED_PATHS = {
     f"{PRIVATE_ROOT}/bin/Custom-QGroundControl",
     "usr/bin/QGroundControl",
     "usr/share/applications/org.mavlink.qgroundcontrol.desktop",
-    "usr/share/icons/hicolor/256x256/apps/QGroundControl.png",
-    "usr/share/icons/hicolor/scalable/apps/QGroundControl.svg",
+    "usr/share/icons/hicolor/256x256/apps/Custom-QGroundControl.png",
+    "usr/share/icons/hicolor/scalable/apps/Custom-QGroundControl.svg",
     "usr/share/metainfo/org.mavlink.qgroundcontrol.appdata.xml",
 }
 EXPECTED_LAUNCHER_TARGET = "../../opt/QGroundControl/bin/Custom-QGroundControl"
