@@ -151,11 +151,11 @@ def main() -> None:
     if args.exe_type == "appimage" or binary_name.endswith(".AppImage"):
         headless = False
 
+    exe = work_dir / binary_name
     if os.name != "nt":
-        exe = work_dir / binary_name
         with contextlib.suppress(OSError):
             exe.chmod(exe.stat().st_mode | stat.S_IEXEC)
-        run_binary = str(exe.resolve())
+    run_binary = str(exe.resolve())
 
     if args.expected_appimage_update_information:
         try:
