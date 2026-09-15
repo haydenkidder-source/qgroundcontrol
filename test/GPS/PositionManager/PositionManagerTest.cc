@@ -2,13 +2,15 @@
 
 #include <QtCore/QIODevice>
 #include <QtCore/QRegularExpression>
-#include <QtPositioning/QNmeaPositionInfoSource>
+#include <QtQml/QQmlComponent>
+#include <QtQml/QQmlEngine>
 #include <QtTest/QSignalSpy>
 
-#include <cstring>
-
+#include "ManualScheduler.h"
 #include "NMEAUtils.h"
 #include "PositionManager.h"
+#include "SequentialTestDevice.h"
+#include "SimulatedPosition.h"
 
 namespace {
 
@@ -21,45 +23,14 @@ constexpr double kExpectedLat = 53.361337;
 constexpr double kExpectedLon = -6.50562;
 constexpr double kCoordEpsilon = 0.0001;
 
-/// Sequential QIODevice that hands queued NMEA bytes to QNmeaPositionInfoSource on demand.
-class NmeaTestDevice : public QIODevice
-{
-public:
-    NmeaTestDevice() { (void) open(QIODevice::ReadOnly); }
-
-    bool isSequential() const override { return true; }
-    qint64 bytesAvailable() const override { return _data.size() + QIODevice::bytesAvailable(); }
-    bool canReadLine() const override { return _data.contains('\n') || QIODevice::canReadLine(); }
-
-    void feed(const QByteArray &data)
-    {
-        _data.append(data);
-        emit readyRead();
-    }
-
-protected:
-    qint64 readData(char *data, qint64 maxSize) override
-    {
-        const qint64 count = qMin<qint64>(maxSize, _data.size());
-        (void) memcpy(data, _data.constData(), count);
-        _data.remove(0, count);
-        return count;
-    }
-
-    qint64 writeData(const char *, qint64) override { return -1; }
-
-private:
-    QByteArray _data;
-};
-
-} // namespace
+}  // namespace
 
 void PositionManagerTest::init()
 {
     UnitTest::init();
     // Headless CI has no real position source, so the internal GPS fallback
     // times out waiting for updates. Expected and benign in this fixture.
-    ignoreLogMessage("PositionManager.QGCPositionManager", QtWarningMsg,
+    ignoreLogMessage("GPS.PositionManager.GPSPositionService", QtWarningMsg,
                      QRegularExpression(QStringLiteral("UpdateTimeoutError")));
 }
 
@@ -77,8 +48,8 @@ void PositionManagerTest::cleanup()
 
 void PositionManagerTest::_nmeaSourceProducesGcsPosition()
 {
-    QGCPositionManager *pm = QGCPositionManager::instance();
-    auto *device = new NmeaTestDevice();
+    QGCPositionManager* pm = QGCPositionManager::instance();
+    auto* device = new SequentialTestDevice();
     _nmeaDevice = device;
 
     pm->setNmeaSourceDevice(device);
@@ -92,8 +63,8 @@ void PositionManagerTest::_nmeaSourceProducesGcsPosition()
 
 void PositionManagerTest::_resetNmeaSourceTearsDownAndClearsState()
 {
-    QGCPositionManager *pm = QGCPositionManager::instance();
-    auto *device = new NmeaTestDevice();
+    QGCPositionManager* pm = QGCPositionManager::instance();
+    auto* device = new SequentialTestDevice();
     _nmeaDevice = device;
 
     pm->setNmeaSourceDevice(device);
@@ -122,14 +93,18 @@ void PositionManagerTest::_resetNmeaSourceTearsDownAndClearsState()
 
 void PositionManagerTest::_nmeaUpdatesStayHealthyUntilStale()
 {
-    NmeaTestDevice device;
-    QGCPositionManager pm;
-    pm._nmeaStaleTimer.setInterval(300);
+    ManualScheduler scheduler;
+    SequentialTestDevice device(&scheduler);
+    QGCPositionManager pm(nullptr, &scheduler);
     pm.setNmeaSourceDevice(&device);
-    QSignalSpy errors(pm._nmeaSource, &QGeoPositionInfoSource::errorOccurred);
-    QSignalSpy updates(&pm, &QGCPositionManager::positionInfoUpdated);
+    pm.sourceHealth()->setFreshnessTimeoutMs(300);
+    QVERIFY(scheduler.advanceBy(std::chrono::seconds(10)));
+    QCOMPARE(pm.sourceStatus(), GPSPositionService::SourceStatus::WaitingForFix);
+    QCOMPARE(pm.gcsPositioningError(), QGeoPositionInfoSource::NoError);
+    int nextSecond = 0;
     const auto feed = [&]() {
-        const QByteArray time = QDateTime::currentDateTimeUtc().toString(QStringLiteral("hhmmss.zzz")).toLatin1();
+        const QByteArray time =
+            QDateTime::currentDateTimeUtc().addSecs(nextSecond++).toString(QStringLiteral("hhmmss.zzz")).toLatin1();
         QByteArray sentences;
         for (QByteArray line : QByteArray(kNmeaSentences).split('\n')) {
             if (!line.trimmed().isEmpty()) {
@@ -139,28 +114,127 @@ void PositionManagerTest::_nmeaUpdatesStayHealthyUntilStale()
         }
         device.feed(sentences);
     };
-    QTimer sender;
-    connect(&sender, &QTimer::timeout, this, feed);
-    sender.start(50);
-    QTRY_VERIFY_WITH_TIMEOUT(updates.size() >= 6, TestTimeout::mediumMs());
+    feed();
+    QTRY_VERIFY_WITH_TIMEOUT((scheduler.advanceBy(std::chrono::microseconds::zero()), pm.gcsPosition().isValid()),
+                             TestTimeout::mediumMs());
+    QVERIFY(scheduler.advanceBy(std::chrono::milliseconds(299)));
     QVERIFY(pm.gcsPosition().isValid());
-    QVERIFY(errors.isEmpty());
     QCOMPARE(pm.gcsPositioningError(), QGeoPositionInfoSource::NoError);
-
-    sender.stop();
-    QTRY_VERIFY_WITH_TIMEOUT(!pm.gcsPosition().isValid(), TestTimeout::mediumMs());
+    QVERIFY(scheduler.advanceBy(std::chrono::milliseconds(1)));
+    QVERIFY(!pm.gcsPosition().isValid());
     QCOMPARE(pm.gcsPositioningError(), QGeoPositionInfoSource::UpdateTimeoutError);
     QVERIFY(!pm.geoPositionInfo().isValid());
     QVERIFY(!pm.gcsPositionTimestamp().isValid());
     QVERIFY(qIsInf(pm.gcsPositionHorizontalAccuracy()));
-    QVERIFY(!pm._nmeaStaleTimer.isActive());
-
     feed();
-    QTRY_VERIFY_WITH_TIMEOUT(pm.gcsPosition().isValid(), TestTimeout::mediumMs());
+    QTRY_VERIFY_WITH_TIMEOUT((scheduler.advanceBy(std::chrono::microseconds::zero()), pm.gcsPosition().isValid()),
+                             TestTimeout::mediumMs());
     QCOMPARE(pm.gcsPositioningError(), QGeoPositionInfoSource::NoError);
-    QVERIFY(pm._nmeaStaleTimer.isActive());
     pm.resetNmeaSourceDevice();
-    QVERIFY(!pm._nmeaStaleTimer.isActive());
+    QVERIFY(!pm.gcsPosition().isValid());
 }
 
 UT_REGISTER_TEST(PositionManagerTest, TestLabel::Unit)
+
+void PositionManagerTest::_qmlPositionProperties()
+{
+    QQmlEngine engine;
+    QQmlComponent component(&engine);
+    component.setData(R"(
+        import QtQml
+        import QGC
+        QtObject {
+            required property GPSPositionService service
+            readonly property real latitude: service.gcsPosition.latitude
+            readonly property bool usable: service.sourceHealth ? service.sourceHealth.usable : false
+        }
+    )",
+                      QUrl());
+    QTRY_VERIFY_WITH_TIMEOUT(component.isReady(), TestTimeout::mediumMs());
+    QGCPositionManager service;
+    std::unique_ptr<QObject> object(
+        component.createWithInitialProperties({{QStringLiteral("service"), QVariant::fromValue(&service)}}));
+    QVERIFY2(object, qPrintable(component.errorString()));
+    SequentialTestDevice device;
+    service.setNmeaSourceDevice(&device);
+    device.feed(kNmeaSentences);
+    QTRY_VERIFY_WITH_TIMEOUT(object->property("usable").toBool(), TestTimeout::mediumMs());
+    QVERIFY(qAbs(object->property("latitude").toDouble() - kExpectedLat) < kCoordEpsilon);
+    service.resetNmeaSourceDevice();
+    QVERIFY(!object->property("usable").toBool());
+}
+
+void PositionManagerTest::_destructionDoesNotPublishPosition()
+{
+    SequentialTestDevice device;
+    auto service = std::make_unique<QGCPositionManager>();
+    service->setNmeaSourceDevice(&device);
+    device.feed(kNmeaSentences);
+    QTRY_VERIFY_WITH_TIMEOUT(service->gcsPosition().isValid(), TestTimeout::mediumMs());
+    bool notified = false;
+    connect(service.get(), &QGCPositionManager::gcsPositionChanged, this, [&]() { notified = true; });
+    service.reset();
+    QVERIFY(!notified);
+}
+
+void PositionManagerTest::_deviceDestructionRetiresNmea()
+{
+    auto device = std::make_unique<SequentialTestDevice>();
+    QGCPositionManager service;
+    service.setNmeaSourceDevice(device.get());
+    device->feed(kNmeaSentences);
+    QTRY_VERIFY_WITH_TIMEOUT(service.gcsPosition().isValid(), TestTimeout::mediumMs());
+    device.reset();
+    QCOMPARE(service.selectedSource(), GPSPositionService::SelectedSource::None);
+    QVERIFY(!service.gcsPosition().isValid());
+}
+
+void PositionManagerTest::_simulatedPosition_data()
+{
+    QTest::addColumn<int>("intervalMs");
+    QTest::newRow("one-second") << 1000;
+    QTest::newRow("two-seconds") << 2000;
+}
+
+void PositionManagerTest::_simulatedPosition()
+{
+    QFETCH(int, intervalMs);
+    ManualScheduler scheduler;
+    SimulatedPosition source(nullptr, &scheduler);
+    GPSPositionService service(nullptr, &scheduler);
+    service.setSimulatedPositionSource(&source);
+    source.stopUpdates();
+    source.setUpdateInterval(intervalMs);
+    source.startUpdates();
+    const auto origin = source.lastKnownPosition(false).coordinate();
+    const auto before = QDateTime::currentDateTimeUtc();
+    QSignalSpy positions(&source, &QGeoPositionInfoSource::positionUpdated);
+    QVERIFY(scheduler.advanceBy(std::chrono::milliseconds(intervalMs)));
+    QCOMPARE(positions.size(), 1);
+    QVERIFY(service.acceptedObservation());
+    QCOMPARE(service.selectedSource(), GPSPositionService::SelectedSource::Simulated);
+    QCOMPARE(service.gcsPosition().type(), QGeoCoordinate::Coordinate3D);
+    QVERIFY(qAbs(origin.distanceTo(service.gcsPosition()) - 0.5 * intervalMs / 1000.0) < 0.001);
+    QVERIFY(qAbs(service.gcsPosition().altitude() - origin.altitude() - 0.1 * intervalMs / 1000.0) < 0.001);
+    const auto timestamp = service.geoPositionInfo().timestamp();
+    QCOMPARE(timestamp.timeSpec(), Qt::UTC);
+    QVERIFY(timestamp >= before);
+    QVERIFY(timestamp <= QDateTime::currentDateTimeUtc());
+
+    source.stopUpdates();
+    const auto stopped = service.gcsPosition();
+    QVERIFY(scheduler.advanceBy(std::chrono::seconds(10)));
+    QCOMPARE(positions.size(), 1);
+    QVERIFY(!service.acceptedObservation());
+    source.startUpdates();
+    source.startUpdates();
+    QVERIFY(scheduler.advanceBy(std::chrono::milliseconds(intervalMs)));
+    QCOMPARE(positions.size(), 2);
+    QVERIFY(service.acceptedObservation());
+    QVERIFY(qAbs(stopped.distanceTo(service.gcsPosition()) - 0.5 * intervalMs / 1000.0) < 0.001);
+    connect(&source, &QGeoPositionInfoSource::positionUpdated, &source, &SimulatedPosition::stopUpdates);
+    QVERIFY(scheduler.advanceBy(std::chrono::milliseconds(intervalMs)));
+    QCOMPARE(positions.size(), 3);
+    QVERIFY(scheduler.advanceBy(std::chrono::seconds(10)));
+    QCOMPARE(positions.size(), 3);
+}
