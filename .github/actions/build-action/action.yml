@@ -2,12 +2,16 @@ name: Build action
 description: Build action whose dist hasn't been updated from source
 inputs:
   repo:
-    description: Target repo to build
+    description: Trusted target repo to build (must be validated by the caller)
     required: true
   ref:
-    description: The branch, tag or SHA to checkout
+    description: Trusted branch, tag or SHA to checkout (must be validated by the caller)
     required: false
     default: master
+# npm executes code from repo/ref, including dependency lifecycle scripts.
+# Callers must validate both inputs against trusted sources before invoking this action.
+# Set permissions: { contents: read } on the calling job and expose no secrets to the build.
+# Composite actions cannot restrict the calling job's GITHUB_TOKEN permissions.
 runs:
   using: composite
   steps:
