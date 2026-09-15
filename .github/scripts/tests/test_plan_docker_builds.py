@@ -168,7 +168,9 @@ def test_artifact_patterns_exclude_packaging_tools_and_staging_copies():
         "Linux-Fedora",
         "Linux-Arch",
     }
-    assert all(artifact[platform] == "Custom-QGroundControl-*.AppImage" for platform in native_linux)
+    assert all(
+        artifact[platform] == "Custom-QGroundControl-*.AppImage" for platform in native_linux
+    )
     assert artifact["Linux-aarch64"] == "Release/Custom-QGroundControl"
     assert artifact["Android"] == "android-build/QGroundControl.apk"
 
