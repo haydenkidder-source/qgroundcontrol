@@ -8,9 +8,9 @@ if ($Phase -eq 'Install') {
     $installDir = $env:INSTALL_DIR
     Write-Host "Installing $($installerExe.Name) to $oldInstallDir"
     Start-Process -FilePath $installerExe.FullName -ArgumentList "/S", "/D=$oldInstallDir" -Wait -NoNewWindow
-    $oldBinary = Join-Path $oldInstallDir "bin\QGroundControl.exe"
+    $oldBinary = Join-Path $oldInstallDir "bin\Custom-QGroundControl.exe"
     if (-not (Test-Path $oldBinary)) {
-      Write-Error "QGroundControl.exe not found at $oldBinary after initial install"
+      Write-Error "Custom-QGroundControl.exe not found at $oldBinary after initial install"
       exit 1
     }
     $settingsRoot = [Environment]::GetFolderPath([Environment+SpecialFolder]::ApplicationData)
@@ -32,9 +32,9 @@ if ($Phase -eq 'Install') {
       Write-Error "Application data was removed during upgrade"
       exit 1
     }
-    $binary = Join-Path $installDir "bin\QGroundControl.exe"
+    $binary = Join-Path $installDir "bin\Custom-QGroundControl.exe"
     if (-not (Test-Path $binary)) {
-      Write-Error "QGroundControl.exe not found at $binary after upgrade"
+      Write-Error "Custom-QGroundControl.exe not found at $binary after upgrade"
       Get-ChildItem -Path $installDir -Recurse | Select-Object FullName
       exit 1
     }
@@ -53,8 +53,8 @@ if ($Phase -eq 'Install') {
       Write-Error "GStreamer plugin directory not found: $pluginDir"
       exit 1
     }
-    $uninstallKey = "HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\QGroundControl"
-    $werKey = "HKLM:\Software\Microsoft\Windows\Windows Error Reporting\LocalDumps\QGroundControl.exe"
+    $uninstallKey = "HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Custom-QGroundControl"
+    $werKey = "HKLM:\Software\Microsoft\Windows\Windows Error Reporting\LocalDumps\Custom-QGroundControl.exe"
     if (-not (Test-Path -LiteralPath $uninstallKey)) {
       Write-Error "Uninstall registry key not found: $uninstallKey"
       exit 1
@@ -76,7 +76,7 @@ if ($Phase -eq 'Install') {
       exit 1
     }
     $werRegistryKey = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey(
-      "Software\Microsoft\Windows\Windows Error Reporting\LocalDumps\QGroundControl.exe"
+      "Software\Microsoft\Windows\Windows Error Reporting\LocalDumps\Custom-QGroundControl.exe"
     )
     if ($null -eq $werRegistryKey) {
       Write-Error "Unable to open Windows Error Reporting registry key"
@@ -96,8 +96,8 @@ if ($Phase -eq 'Install') {
     $startMenuRoot = Join-Path $env:ProgramData "Microsoft\Windows\Start Menu\Programs"
     $startMenuDir = Join-Path $startMenuRoot $uninstallProperties.StartMenu
     $shortcuts = @(
-      (Join-Path $startMenuDir "QGroundControl.lnk"),
-      (Join-Path $startMenuDir "QGroundControl (GPU Safe Mode).lnk")
+      (Join-Path $startMenuDir "Custom-QGroundControl.lnk"),
+      (Join-Path $startMenuDir "Custom-QGroundControl (GPU Safe Mode).lnk")
     )
     foreach ($shortcut in $shortcuts) {
       if (-not (Test-Path -LiteralPath $shortcut -PathType Leaf)) {

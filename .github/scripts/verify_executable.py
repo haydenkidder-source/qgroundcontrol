@@ -151,11 +151,21 @@ def main() -> None:
     if args.exe_type == "appimage" or binary_name.endswith(".AppImage"):
         headless = False
 
+    exe = work_dir / binary_name
     if os.name != "nt":
-        exe = work_dir / binary_name
         with contextlib.suppress(OSError):
             exe.chmod(exe.stat().st_mode | stat.S_IEXEC)
-        run_binary = str(exe.resolve())
+    run_binary = str(exe.resolve())
+
+    if not exe.is_file():
+        gh_error(f"Binary not found: {exe.resolve()}")
+        with contextlib.suppress(OSError):
+            entries = sorted(p.name for p in work_dir.iterdir())
+            print(f"Contents of {work_dir}: {entries}", file=sys.stderr)
+        with contextlib.suppress(OSError):
+            parent_entries = sorted(p.name for p in work_dir.parent.iterdir())
+            print(f"Contents of {work_dir.parent}: {parent_entries}", file=sys.stderr)
+        sys.exit(1)
 
     if args.expected_appimage_update_information:
         try:

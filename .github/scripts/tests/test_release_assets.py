@@ -144,7 +144,7 @@ def test_release_uses_platform_sboms_without_reattesting() -> None:
         "runs-file": "release-build-runs.json",
         "strict-runs": "true",
         "output-dir": "artifacts",
-        "artifact-prefixes": "QGroundControl,sbom-",
+        "artifact-prefixes": "Custom-QGroundControl,sbom-",
     }
     step_names = list(steps)
     assert step_names.index("Generate source SBOM (CycloneDX)") < step_names.index(

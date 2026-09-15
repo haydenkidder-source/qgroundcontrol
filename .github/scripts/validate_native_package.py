@@ -11,14 +11,14 @@ from pathlib import Path
 PRIVATE_ROOT = "opt/QGroundControl"
 PRIVATE_LIBRARY_DIRS = ("lib", "lib64")
 REQUIRED_PATHS = {
-    f"{PRIVATE_ROOT}/bin/QGroundControl",
+    f"{PRIVATE_ROOT}/bin/Custom-QGroundControl",
     "usr/bin/QGroundControl",
     "usr/share/applications/org.mavlink.qgroundcontrol.desktop",
-    "usr/share/icons/hicolor/256x256/apps/QGroundControl.png",
-    "usr/share/icons/hicolor/scalable/apps/QGroundControl.svg",
+    "usr/share/icons/hicolor/256x256/apps/Custom-QGroundControl.png",
+    "usr/share/icons/hicolor/scalable/apps/Custom-QGroundControl.svg",
     "usr/share/metainfo/org.mavlink.qgroundcontrol.appdata.xml",
 }
-EXPECTED_LAUNCHER_TARGET = "../../opt/QGroundControl/bin/QGroundControl"
+EXPECTED_LAUNCHER_TARGET = "../../opt/QGroundControl/bin/Custom-QGroundControl"
 EXPECTED_PACKAGE_NAME = "qgroundcontrol"
 ARCH_PACKAGE_METADATA = {".BUILDINFO", ".INSTALL", ".MTREE", ".PKGINFO"}
 RPM_PACKAGE_METADATA_ROOT = "usr/lib/.build-id"

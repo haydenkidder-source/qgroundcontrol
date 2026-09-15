@@ -160,7 +160,7 @@ jobs:
           runs-file: release-build-runs.json
           strict-runs: 'true'
           output-dir: artifacts
-          artifact-prefixes: QGroundControl,sbom-
+          artifact-prefixes: Custom-QGroundControl,sbom-
 
       - name: Validate release assets
         run: |

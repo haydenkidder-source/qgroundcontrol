@@ -204,7 +204,13 @@ def test_native_package_finalizer_moves_metadata_and_creates_launcher(
     staged_native_runtime(tmp_path, library_dir)
 
     subprocess.run(
-        ["cmake", f"-DQGC_NATIVE_PACKAGE_ROOT={tmp_path}", "-P", str(FINALIZER)],
+        [
+            "cmake",
+            f"-DQGC_NATIVE_PACKAGE_ROOT={tmp_path}",
+            "-DCPACK_PACKAGE_NAME=Custom-QGroundControl",
+            "-P",
+            str(FINALIZER),
+        ],
         check=True,
         capture_output=True,
         text=True,
@@ -224,7 +230,13 @@ def test_native_package_finalizer_discovers_cpack_component_root(
     staged_native_runtime(package_root, library_dir)
 
     subprocess.run(
-        ["cmake", f"-DCPACK_TEMPORARY_DIRECTORY={tmp_path}", "-P", str(FINALIZER)],
+        [
+            "cmake",
+            f"-DCPACK_TEMPORARY_DIRECTORY={tmp_path}",
+            "-DCPACK_PACKAGE_NAME=Custom-QGroundControl",
+            "-P",
+            str(FINALIZER),
+        ],
         check=True,
         capture_output=True,
         text=True,

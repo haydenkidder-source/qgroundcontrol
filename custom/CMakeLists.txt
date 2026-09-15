@@ -12,8 +12,8 @@ message(STATUS "QGC: Adding Custom Plugin")
 if(ANDROID)
     set(CUSTOM_ANDROID_DIR "${CMAKE_CURRENT_SOURCE_DIR}/android")
     if(IS_DIRECTORY "${CUSTOM_ANDROID_DIR}")
-        file(GLOB_RECURSE CUSTOM_ANDROID_FILES
-            CONFIGURE_DEPENDS
+        file(
+            GLOB_RECURSE CUSTOM_ANDROID_FILES CONFIGURE_DEPENDS
             LIST_DIRECTORIES FALSE
             "${CUSTOM_ANDROID_DIR}/*"
         )
@@ -21,8 +21,8 @@ if(ANDROID)
             message(STATUS "QGC: Custom Android package template found. Overlaying custom files...")
             set(DEFAULT_ANDROID_DIR "${CMAKE_SOURCE_DIR}/android")
             set(FINAL_ANDROID_DIR "${CMAKE_BINARY_DIR}/${QGC_CUSTOM_DIR}/android")
-            file(GLOB_RECURSE DEFAULT_ANDROID_FILES
-                CONFIGURE_DEPENDS
+            file(
+                GLOB_RECURSE DEFAULT_ANDROID_FILES CONFIGURE_DEPENDS
                 LIST_DIRECTORIES FALSE
                 "${DEFAULT_ANDROID_DIR}/*"
             )
@@ -33,7 +33,10 @@ if(ANDROID)
             file(COPY "${CUSTOM_ANDROID_DIR}/" DESTINATION "${FINAL_ANDROID_DIR}")
 
             set(QGC_ANDROID_PACKAGE_SOURCE_DIR "${FINAL_ANDROID_DIR}")
-            set(QGC_ANDROID_PACKAGE_SOURCE_DIR "${FINAL_ANDROID_DIR}" PARENT_SCOPE)
+            set(QGC_ANDROID_PACKAGE_SOURCE_DIR
+                "${FINAL_ANDROID_DIR}"
+                PARENT_SCOPE
+            )
             message(STATUS "QGC: Android package template path will be set to: ${QGC_ANDROID_PACKAGE_SOURCE_DIR}")
         else()
             message(STATUS "QGC: Custom Android package template empty. Using default.")
@@ -64,14 +67,16 @@ set(CUSTOM_IMAGE_RESOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/res/Images/vertical_speed.svg"
 )
 qgc_set_qt_resource_alias(${CUSTOM_IMAGE_RESOURCES})
-qt_add_resources(${CMAKE_PROJECT_NAME} custom_images
+qt_add_resources(
+    ${CMAKE_PROJECT_NAME} custom_images
     PREFIX "/custom/img"
     FILES ${CUSTOM_IMAGE_RESOURCES}
 )
 
 set(CUSTOM_VEHICLE_ICON "${CMAKE_CURRENT_SOURCE_DIR}/res/Images/CustomVehicleIcon.svg")
 set_source_files_properties("${CUSTOM_VEHICLE_ICON}" PROPERTIES QT_RESOURCE_ALIAS "PaperPlane.svg")
-qt_add_resources(${CMAKE_PROJECT_NAME} custom_vehicle_icon
+qt_add_resources(
+    ${CMAKE_PROJECT_NAME} custom_vehicle_icon
     PREFIX "/Custom/qmlimages"
     FILES "${CUSTOM_VEHICLE_ICON}"
 )
@@ -82,44 +87,47 @@ set(CUSTOM_QML_OVERRIDES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/FlyViewToolStripActionList.qml"
 )
 set_source_files_properties("${CMAKE_CURRENT_SOURCE_DIR}/src/CustomGuidedActionsController.qml"
-    PROPERTIES QT_RESOURCE_ALIAS "QGroundControl/FlyView/CustomGuidedActionsController.qml"
+                            PROPERTIES QT_RESOURCE_ALIAS "QGroundControl/FlyView/CustomGuidedActionsController.qml"
 )
 set_source_files_properties("${CMAKE_CURRENT_SOURCE_DIR}/src/FlyViewCustomLayer.qml"
-    PROPERTIES QT_RESOURCE_ALIAS "QGroundControl/FlyView/FlyViewCustomLayer.qml"
+                            PROPERTIES QT_RESOURCE_ALIAS "QGroundControl/FlyView/FlyViewCustomLayer.qml"
 )
 set_source_files_properties("${CMAKE_CURRENT_SOURCE_DIR}/src/FlyViewToolStripActionList.qml"
-    PROPERTIES QT_RESOURCE_ALIAS "QGroundControl/FlyView/FlyViewToolStripActionList.qml"
+                            PROPERTIES QT_RESOURCE_ALIAS "QGroundControl/FlyView/FlyViewToolStripActionList.qml"
 )
-qt_add_resources(${CMAKE_PROJECT_NAME} custom_qml_overrides
+qt_add_resources(
+    ${CMAKE_PROJECT_NAME} custom_qml_overrides
     PREFIX "/Custom/qml"
     FILES ${CUSTOM_QML_OVERRIDES}
 )
 
-set(CUSTOM_BRAND_RESOURCES
-    "${CMAKE_CURRENT_SOURCE_DIR}/res/Images/QGCLogoFull.svg"
-    "${CMAKE_CURRENT_SOURCE_DIR}/res/icons/custom_qgroundcontrol.ico"
+set(CUSTOM_BRAND_RESOURCES "${CMAKE_CURRENT_SOURCE_DIR}/res/Images/QGCLogoFull.svg"
+                           "${CMAKE_CURRENT_SOURCE_DIR}/res/icons/custom_qgroundcontrol.ico"
 )
-set_source_files_properties("${CMAKE_CURRENT_SOURCE_DIR}/res/Images/QGCLogoFull.svg"
-    PROPERTIES QT_RESOURCE_ALIAS "QGCLogoFull.svg"
+set_source_files_properties("${CMAKE_CURRENT_SOURCE_DIR}/res/Images/QGCLogoFull.svg" PROPERTIES QT_RESOURCE_ALIAS
+                                                                                                "QGCLogoFull.svg"
 )
 set_source_files_properties("${CMAKE_CURRENT_SOURCE_DIR}/res/icons/custom_qgroundcontrol.ico"
-    PROPERTIES QT_RESOURCE_ALIAS "qgroundcontrol.ico"
+                            PROPERTIES QT_RESOURCE_ALIAS "qgroundcontrol.ico"
 )
-qt_add_resources(${CMAKE_PROJECT_NAME} custom_brand
+qt_add_resources(
+    ${CMAKE_PROJECT_NAME} custom_brand
     PREFIX "/Custom/res"
     FILES ${CUSTOM_BRAND_RESOURCES}
 )
 
 set(CUSTOM_SHARED_GEAR "${CMAKE_SOURCE_DIR}/resources/gear-white.svg")
 set_source_files_properties("${CUSTOM_SHARED_GEAR}" PROPERTIES QT_RESOURCE_ALIAS "gear-white.svg")
-qt_add_resources(${CMAKE_PROJECT_NAME} custom_shared_resources
+qt_add_resources(
+    ${CMAKE_PROJECT_NAME} custom_shared_resources
     PREFIX "/res"
     FILES "${CUSTOM_SHARED_GEAR}"
 )
 
 set(CUSTOM_JSON_RESOURCE "${CMAKE_CURRENT_SOURCE_DIR}/res/json/PerimeterScan.SettingsGroup.json")
 qgc_set_qt_resource_alias("${CUSTOM_JSON_RESOURCE}")
-qt_add_resources(${CMAKE_PROJECT_NAME} custom_json
+qt_add_resources(
+    ${CMAKE_PROJECT_NAME} custom_json
     PREFIX "/json"
     FILES "${CUSTOM_JSON_RESOURCE}"
 )
@@ -128,13 +136,17 @@ qt_add_resources(${CMAKE_PROJECT_NAME} custom_json
 # the settings QML generator reads it from src/Settings at configure time.
 set(CUSTOM_SETTINGS_JSON_RESOURCE "${CMAKE_CURRENT_SOURCE_DIR}/src/Settings/Custom.SettingsGroup.json")
 qgc_set_qt_resource_alias("${CUSTOM_SETTINGS_JSON_RESOURCE}")
-qt_add_resources(${CMAKE_PROJECT_NAME} custom_settings_json
+qt_add_resources(
+    ${CMAKE_PROJECT_NAME} custom_settings_json
     PREFIX "/json"
     FILES "${CUSTOM_SETTINGS_JSON_RESOURCE}"
 )
 
 list(APPEND QML_IMPORT_PATH "${CMAKE_CURRENT_SOURCE_DIR}/res")
-set(QML_IMPORT_PATH "${QML_IMPORT_PATH}" CACHE STRING "Extra QML import paths" FORCE)
+set(QML_IMPORT_PATH
+    "${QML_IMPORT_PATH}"
+    CACHE STRING "Extra QML import paths" FORCE
+)
 
 # ============================================================================
 # Custom QML Module
@@ -143,7 +155,9 @@ set(QML_IMPORT_PATH "${QML_IMPORT_PATH}" CACHE STRING "Extra QML import paths" F
 qt_add_library(CustomModule STATIC)
 qgc_configure_target(CustomModule)
 
-set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/res/Custom/Widgets/CustomArtificialHorizon.qml PROPERTIES QT_RESOURCE_ALIAS CustomArtificialHorizon.qml)
+set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/res/Custom/Widgets/CustomArtificialHorizon.qml
+                            PROPERTIES QT_RESOURCE_ALIAS CustomArtificialHorizon.qml
+)
 qgc_set_qt_resource_alias(
     ${CMAKE_CURRENT_SOURCE_DIR}/res/Custom/Widgets/CustomAttitudeWidget.qml
     ${CMAKE_CURRENT_SOURCE_DIR}/res/Custom/Widgets/CustomIconButton.qml
@@ -154,19 +168,19 @@ qgc_set_qt_resource_alias(
     ${CMAKE_CURRENT_SOURCE_DIR}/res/Custom/Widgets/CustomVehicleButton.qml
 )
 
-qt_add_qml_module(CustomModule
+qt_add_qml_module(
+    CustomModule
     URI Custom.Widgets
     VERSION 1.0
     RESOURCE_PREFIX /qml
-    QML_FILES
-        ${CMAKE_CURRENT_SOURCE_DIR}/res/Custom/Widgets/CustomArtificialHorizon.qml
-        ${CMAKE_CURRENT_SOURCE_DIR}/res/Custom/Widgets/CustomAttitudeWidget.qml
-        ${CMAKE_CURRENT_SOURCE_DIR}/res/Custom/Widgets/CustomIconButton.qml
-        ${CMAKE_CURRENT_SOURCE_DIR}/res/Custom/Widgets/CustomOnOffSwitch.qml
-        ${CMAKE_CURRENT_SOURCE_DIR}/res/Custom/Widgets/CustomQuickButton.qml
-        ${CMAKE_CURRENT_SOURCE_DIR}/res/Custom/Widgets/CustomSignalStrength.qml
-        ${CMAKE_CURRENT_SOURCE_DIR}/res/Custom/Widgets/CustomToolBarButton.qml
-        ${CMAKE_CURRENT_SOURCE_DIR}/res/Custom/Widgets/CustomVehicleButton.qml
+    QML_FILES ${CMAKE_CURRENT_SOURCE_DIR}/res/Custom/Widgets/CustomArtificialHorizon.qml
+              ${CMAKE_CURRENT_SOURCE_DIR}/res/Custom/Widgets/CustomAttitudeWidget.qml
+              ${CMAKE_CURRENT_SOURCE_DIR}/res/Custom/Widgets/CustomIconButton.qml
+              ${CMAKE_CURRENT_SOURCE_DIR}/res/Custom/Widgets/CustomOnOffSwitch.qml
+              ${CMAKE_CURRENT_SOURCE_DIR}/res/Custom/Widgets/CustomQuickButton.qml
+              ${CMAKE_CURRENT_SOURCE_DIR}/res/Custom/Widgets/CustomSignalStrength.qml
+              ${CMAKE_CURRENT_SOURCE_DIR}/res/Custom/Widgets/CustomToolBarButton.qml
+              ${CMAKE_CURRENT_SOURCE_DIR}/res/Custom/Widgets/CustomVehicleButton.qml
     NO_PLUGIN
 )
 
@@ -177,18 +191,17 @@ qt_add_qml_module(CustomModule
 qt_add_library(CustomPlanModule STATIC)
 qgc_configure_target(CustomPlanModule)
 
-qgc_set_qt_resource_alias(
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/PlanView/PerimeterScanMapVisual.qml
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/PlanView/PerimeterScanEditor.qml
+qgc_set_qt_resource_alias(${CMAKE_CURRENT_SOURCE_DIR}/src/PlanView/PerimeterScanMapVisual.qml
+                          ${CMAKE_CURRENT_SOURCE_DIR}/src/PlanView/PerimeterScanEditor.qml
 )
 
-qt_add_qml_module(CustomPlanModule
+qt_add_qml_module(
+    CustomPlanModule
     URI Custom.Plan
     VERSION 1.0
     RESOURCE_PREFIX /qml
-    QML_FILES
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/PlanView/PerimeterScanMapVisual.qml
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/PlanView/PerimeterScanEditor.qml
+    QML_FILES ${CMAKE_CURRENT_SOURCE_DIR}/src/PlanView/PerimeterScanMapVisual.qml
+              ${CMAKE_CURRENT_SOURCE_DIR}/src/PlanView/PerimeterScanEditor.qml
     NO_PLUGIN
 )
 
@@ -204,10 +217,9 @@ qt_add_qml_module(CustomPlanModule
 # QGCCorePlugin::analyzePages()), and files compiled into the same module see each
 # other's registered types without a cross-module import.
 
-qgc_set_qt_resource_alias(
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/ExclusionZone/ExclusionZoneReviewPage.qml
-)
-qt_add_resources(${CMAKE_PROJECT_NAME} custom_exclusion_zone_qml
+qgc_set_qt_resource_alias(${CMAKE_CURRENT_SOURCE_DIR}/src/ExclusionZone/ExclusionZoneReviewPage.qml)
+qt_add_resources(
+    ${CMAKE_PROJECT_NAME} custom_exclusion_zone_qml
     PREFIX "/qml/Custom/ExclusionZone"
     FILES ${CMAKE_CURRENT_SOURCE_DIR}/src/ExclusionZone/ExclusionZoneReviewPage.qml
 )
@@ -219,10 +231,9 @@ qt_add_resources(${CMAKE_PROJECT_NAME} custom_exclusion_zone_qml
 # ${CMAKE_PROJECT_NAME} directly (see CUSTOM_SOURCES below) for QML_ELEMENT/QML_SINGLETON to
 # register under the "QGC" module; the QML page is just a resource referenced by URL.
 
-qgc_set_qt_resource_alias(
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/VehicleRoles/VehicleRoleSettingsPage.qml
-)
-qt_add_resources(${CMAKE_PROJECT_NAME} custom_vehicle_roles_qml
+qgc_set_qt_resource_alias(${CMAKE_CURRENT_SOURCE_DIR}/src/VehicleRoles/VehicleRoleSettingsPage.qml)
+qt_add_resources(
+    ${CMAKE_PROJECT_NAME} custom_vehicle_roles_qml
     PREFIX "/qml/Custom/VehicleRoles"
     FILES ${CMAKE_CURRENT_SOURCE_DIR}/src/VehicleRoles/VehicleRoleSettingsPage.qml
 )
@@ -254,24 +265,19 @@ set(CUSTOM_SOURCES
 # ============================================================================
 
 set(CUSTOM_LIBRARIES
-    CustomModule
-    CustomPlanModule
+    CustomModule CustomPlanModule
     PARENT_SCOPE
 )
 
 set(CUSTOM_INCLUDE_DIRECTORIES
-    ${CMAKE_CURRENT_SOURCE_DIR}/src
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/ExclusionZone
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/MissionManager
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/Settings
+    ${CMAKE_CURRENT_SOURCE_DIR}/src ${CMAKE_CURRENT_SOURCE_DIR}/src/ExclusionZone
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/MissionManager ${CMAKE_CURRENT_SOURCE_DIR}/src/Settings
     ${CMAKE_CURRENT_SOURCE_DIR}/src/VehicleRoles
     PARENT_SCOPE
 )
 
 set(CUSTOM_DEFINITIONS
-    QGC_CUSTOM_BUILD
-    CUSTOMHEADER="CustomPlugin.h"
-    CUSTOMCLASS=CustomPlugin
+    QGC_CUSTOM_BUILD CUSTOMHEADER="CustomPlugin.h" CUSTOMCLASS=CustomPlugin
     PARENT_SCOPE
 )
 
