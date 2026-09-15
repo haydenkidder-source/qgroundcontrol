@@ -1,35 +1,35 @@
 #include "PositionManager.h"
-#include "AppMessages.h"
-#include "QGCCorePlugin.h"
-#include "SimulatedPosition.h"
-// #include "QGCSensors.h"
-#include "QGCLoggingCategory.h"
 
 #include <QtCore/QApplicationStatic>
+#include <QtCore/QIODevice>
 #include <QtCore/QPermissions>
-#include <QtPositioning/QNmeaPositionInfoSource>
+#include <QtCore/QThread>
 
-QGC_LOGGING_CATEGORY(QGCPositionManagerLog, "PositionManager.QGCPositionManager")
+#include "AppMessages.h"
+#include "NMEADecoderSession.h"
+#include "QGCCorePlugin.h"
+#include "QGCLoggingCategory.h"
+#include "SimulatedPosition.h"
 
+QGC_LOGGING_CATEGORY(QGCPositionManagerLog, "GPS.PositionManager.QGCPositionManager")
 Q_APPLICATION_STATIC(QGCPositionManager, _positionManager);
 
-QGCPositionManager::QGCPositionManager(QObject* parent) : QObject(parent), _nmeaStaleTimer(this)
+QGCPositionManager::QGCPositionManager(QObject* parent, RuntimeScheduler* scheduler)
+    : GPSPositionService(parent, scheduler)
+    , _nmeaScheduler(scheduler)
 {
-    _nmeaStaleTimer.setSingleShot(true);
-    _nmeaStaleTimer.setInterval(std::chrono::seconds(5));
-    connect(&_nmeaStaleTimer, &QTimer::timeout, this, [this]() {
-        _positionError(QGeoPositionInfoSource::UpdateTimeoutError);
-        _clearPosition();
-    });
     qCDebug(QGCPositionManagerLog) << this;
 }
 
 QGCPositionManager::~QGCPositionManager()
 {
     qCDebug(QGCPositionManagerLog) << this;
+    _destroying = true;
+    blockSignals(true);
+    resetNmeaSourceDevice();
 }
 
-QGCPositionManager *QGCPositionManager::instance()
+QGCPositionManager* QGCPositionManager::instance()
 {
     return _positionManager();
 }
@@ -37,8 +37,7 @@ QGCPositionManager *QGCPositionManager::instance()
 void QGCPositionManager::init()
 {
     if (QGC::runningUnitTests()) {
-        _simulatedSource = new SimulatedPosition(this);
-        _setPositionSource(QGCPositionSource::Simulated);
+        setSimulatedPositionSource(new SimulatedPosition(this));
     } else {
         _checkPermission();
     }
@@ -46,20 +45,13 @@ void QGCPositionManager::init()
 
 void QGCPositionManager::_setupPositionSources()
 {
-    _defaultSource = QGCCorePlugin::instance()->createPositionSource(this);
-    if (_defaultSource) {
-        _usingPluginSource = true;
-    } else {
-        qCDebug(QGCPositionManagerLog) << Q_FUNC_INFO << QGeoPositionInfoSource::availableSources();
-
-        _defaultSource = QGeoPositionInfoSource::createDefaultSource(this);
-        if (!_defaultSource) {
-            qCWarning(QGCPositionManagerLog) << Q_FUNC_INFO << "No default source available";
-            return;
-        }
+    auto* platformSource = QGCCorePlugin::instance()->createPositionSource(this);
+    const bool custom = platformSource != nullptr;
+    if (!custom) {
+        platformSource = QGeoPositionInfoSource::createDefaultSource(this);
     }
-
-    _setPositionSource(QGCPositionSource::InternalGPS);
+    setInternalPositionSource(platformSource,
+                              platformSource ? SourceStatus::WaitingForFix : SourceStatus::BackendUnavailable, custom);
 }
 
 void QGCPositionManager::_handlePermissionStatus(Qt::PermissionStatus permissionStatus)
@@ -67,7 +59,7 @@ void QGCPositionManager::_handlePermissionStatus(Qt::PermissionStatus permission
     if (permissionStatus == Qt::PermissionStatus::Granted) {
         _setupPositionSources();
     } else {
-        qCWarning(QGCPositionManagerLog) << Q_FUNC_INFO << "Location Permission Denied";
+        setInternalPositionStatus(SourceStatus::PermissionDenied);
     }
 }
 
@@ -75,198 +67,96 @@ void QGCPositionManager::_checkPermission()
 {
     QLocationPermission locationPermission;
     locationPermission.setAccuracy(QLocationPermission::Precise);
-
-    const Qt::PermissionStatus permissionStatus = QCoreApplication::instance()->checkPermission(locationPermission);
-    if (permissionStatus == Qt::PermissionStatus::Undetermined) {
-        QCoreApplication::instance()->requestPermission(locationPermission, this, [this](const QPermission &permission) {
-            _handlePermissionStatus(permission.status());
-        });
+    const auto status = QCoreApplication::instance()->checkPermission(locationPermission);
+    if (status == Qt::PermissionStatus::Undetermined) {
+        const QPointer<QGCPositionManager> guard(this);
+        setInternalPositionStatus(SourceStatus::PermissionRequired);
+        if (guard) {
+            QCoreApplication::instance()->requestPermission(
+                locationPermission, this,
+                [this](const QPermission& permission) { _handlePermissionStatus(permission.status()); });
+        }
     } else {
-        _handlePermissionStatus(permissionStatus);
+        _handlePermissionStatus(status);
     }
 }
 
-void QGCPositionManager::setNmeaSourceDevice(QIODevice *device)
+void QGCPositionManager::setNmeaSourceDevice(QIODevice* device)
 {
-    if (_nmeaSource) {
-        _nmeaSource->stopUpdates();
-        (void) _nmeaSource->disconnect(this);
-
-        if (_currentSource == _nmeaSource) {
-            _currentSource = nullptr;
-        }
-
-        delete _nmeaSource;
-        _nmeaSource = nullptr;
+    if (_destroying) {
+        return;
     }
-
-    _nmeaSource = new QNmeaPositionInfoSource(QNmeaPositionInfoSource::RealTimeMode, this);
-    _nmeaSource->setDevice(device);
-    _nmeaSource->setUserEquivalentRangeError(5.1);
-    _setPositionSource(QGCPositionManager::NmeaGPS);
+    if (QThread::currentThread() != thread() || (device && device->thread() != thread())) {
+        qCWarning(QGCPositionManagerLog) << "NMEA device requires matching thread affinity";
+        return;
+    }
+    const QPointer<QGCPositionManager> guard(this);
+    const QPointer<QIODevice> deviceGuard(device);
+    const quint64 revision = _nmeaRevision + 1;
+    resetNmeaSourceDevice();
+    if (!guard || _nmeaRevision != revision || !deviceGuard) {
+        return;
+    }
+    _nmeaSource = std::make_unique<NMEADecoderSession>(nullptr, _nmeaScheduler);
+    if (!_nmeaSource->start(device)) {
+        _nmeaSource.reset();
+        return;
+    }
+    connect(_nmeaSource.get(), &NMEADecoderSession::activityChanged, this, &QGCPositionManager::nmeaActivityChanged);
+    _nmeaDeviceClosedConnection = connect(
+        device, &QIODevice::aboutToClose, this,
+        [this, revision]() {
+            if (_nmeaRevision == revision) {
+                resetNmeaSourceDevice();
+            }
+        },
+        Qt::QueuedConnection);
+    _nmeaDeviceDestroyedConnection = connect(device, &QObject::destroyed, this, [this, revision]() {
+        if (_nmeaRevision == revision) {
+            resetNmeaSourceDevice();
+        }
+    });
+    auto registration =
+        registerPositionSource(SelectedSource::Nmea, _nmeaSource->positionSource(), _nmeaSource->health());
+    if (guard && _nmeaRevision == revision) {
+        _nmeaRegistration = std::move(registration);
+        emit nmeaSourceChanged();
+    }
 }
 
 void QGCPositionManager::resetNmeaSourceDevice()
 {
-    if (!_nmeaSource) {
+    if (QThread::currentThread() != thread()) {
         return;
     }
-
-    if (_currentSource == _nmeaSource) {
-        // Switch away while the NMEA source is still valid so _setPositionSource() can run its
-        // usual cleanup (stop updates, disconnect, and reset the stale GCS position/accuracy)
-        // before we delete it. Falls back to the platform's default source (e.g. integrated GPS).
-        _setPositionSource(QGCPositionManager::InternalGPS);
-    } else {
-        _nmeaSource->stopUpdates();
-        (void) _nmeaSource->disconnect(this);
-    }
-
-    delete _nmeaSource;
-    _nmeaSource = nullptr;
-}
-
-void QGCPositionManager::_positionUpdated(const QGeoPositionInfo &update)
-{
-    _geoPositionInfo = update;
-    if (_currentSource != _nmeaSource) {
-        _gcsPositioningError = QGeoPositionInfoSource::NoError;
-    }
-
-    QGeoCoordinate newGCSPosition(_gcsPosition);
-
-    if (update.hasAttribute(QGeoPositionInfo::HorizontalAccuracy)) {
-        if ((qAbs(update.coordinate().latitude()) > 0.001) && (qAbs(update.coordinate().longitude()) > 0.001)) {
-            _gcsPositionHorizontalAccuracy = update.attribute(QGeoPositionInfo::HorizontalAccuracy);
-            if (_gcsPositionHorizontalAccuracy <= kMinHorizonalAccuracyMeters) {
-                newGCSPosition.setLatitude(update.coordinate().latitude());
-                newGCSPosition.setLongitude(update.coordinate().longitude());
-                // Stamp the local arrival time so consumers can tell how fresh gcsPosition is.
-                // Updates rejected by the accuracy gate leave the stamp alone, since they leave
-                // the previous coordinate in place as well.
-                _gcsPositionTimestamp = QDateTime::currentDateTimeUtc();
-                _gcsPositioningError = QGeoPositionInfoSource::NoError;
-                if (_currentSource == _nmeaSource) {
-                    _nmeaStaleTimer.start();
-                }
-            }
-            emit gcsPositionHorizontalAccuracyChanged(_gcsPositionHorizontalAccuracy);
+    ++_nmeaRevision;
+    QObject::disconnect(_nmeaDeviceDestroyedConnection);
+    QObject::disconnect(_nmeaDeviceClosedConnection);
+    // Keep the old source alive through retirement signals, even if they replace it or delete this manager.
+    auto source = std::move(_nmeaSource);
+    auto registration = std::move(_nmeaRegistration);
+    const QPointer<QGCPositionManager> guard(this);
+    const quint64 revision = _nmeaRevision;
+    registration.reset();
+    if (guard && revision == _nmeaRevision) {
+        emit nmeaSourceChanged();
+        if (guard && revision == _nmeaRevision) {
+            emit nmeaActivityChanged();
         }
     }
-
-    if (update.hasAttribute(QGeoPositionInfo::VerticalAccuracy)) {
-        _gcsPositionVerticalAccuracy = update.attribute(QGeoPositionInfo::VerticalAccuracy);
-        if (_gcsPositionVerticalAccuracy <= kMinVerticalAccuracyMeters) {
-            newGCSPosition.setAltitude(update.coordinate().altitude());
-        }
-    }
-
-    _gcsPositionAccuracy = sqrt(pow(_gcsPositionHorizontalAccuracy, 2) + pow(_gcsPositionVerticalAccuracy, 2));
-
-    _setGCSPosition(newGCSPosition);
-
-    if (update.hasAttribute(QGeoPositionInfo::DirectionAccuracy)) {
-        _gcsDirectionAccuracy = update.attribute(QGeoPositionInfo::DirectionAccuracy);
-        if (_gcsDirectionAccuracy <= kMinDirectionAccuracyDegrees) {
-            _setGCSHeading(update.attribute(QGeoPositionInfo::Direction));
-        }
-    } else if (_usingPluginSource) {
-        _setGCSHeading(update.attribute(QGeoPositionInfo::Direction));
-    }
-
-    emit positionInfoUpdated(update);
 }
 
-void QGCPositionManager::_positionError(QGeoPositionInfoSource::Error gcsPositioningError)
+GPSSourceHealth* QGCPositionManager::nmeaHealth() const
 {
-    if (_gcsPositioningError == gcsPositioningError) {
-        return;
-    }
-    _gcsPositioningError = gcsPositioningError;
-    if (gcsPositioningError != QGeoPositionInfoSource::NoError) {
-        qCWarning(QGCPositionManagerLog) << Q_FUNC_INFO << "Positioning error:" << gcsPositioningError;
-    }
+    return _nmeaSource ? _nmeaSource->health() : nullptr;
 }
 
-void QGCPositionManager::_setGCSHeading(qreal newGCSHeading)
+bool QGCPositionManager::nmeaReceiving() const
 {
-    if (newGCSHeading != _gcsHeading) {
-        _gcsHeading = newGCSHeading;
-        emit gcsHeadingChanged(_gcsHeading);
-    }
+    return _nmeaSource && _nmeaSource->receiving();
 }
 
-void QGCPositionManager::_setGCSPosition(const QGeoCoordinate& newGCSPosition)
+bool QGCPositionManager::nmeaHasData() const
 {
-    if (newGCSPosition != _gcsPosition) {
-        _gcsPosition = newGCSPosition;
-        emit gcsPositionChanged(_gcsPosition);
-    }
-}
-
-void QGCPositionManager::_clearPosition()
-{
-    _geoPositionInfo = QGeoPositionInfo();
-    _gcsPositionTimestamp = QDateTime();
-    _setGCSPosition(QGeoCoordinate());
-    _setGCSHeading(qQNaN());
-    _gcsPositionHorizontalAccuracy = std::numeric_limits<qreal>::infinity();
-    _gcsPositionVerticalAccuracy = std::numeric_limits<qreal>::infinity();
-    _gcsPositionAccuracy = std::numeric_limits<qreal>::infinity();
-    _gcsDirectionAccuracy = std::numeric_limits<qreal>::infinity();
-    emit positionInfoUpdated(_geoPositionInfo);
-    emit gcsPositionHorizontalAccuracyChanged(_gcsPositionHorizontalAccuracy);
-}
-
-void QGCPositionManager::_setPositionSource(QGCPositionSource source)
-{
-    _nmeaStaleTimer.stop();
-    if (_currentSource != nullptr) {
-        _currentSource->stopUpdates();
-        // Note the receiver-side overload: disconnect(_currentSource) would drop our own signals
-        // to the source (of which there are none), leaving source->this connected and duplicating
-        // it every time a source is re-selected.
-        (void) _currentSource->disconnect(this);
-    }
-    _clearPosition();
-    _gcsPositioningError = QGeoPositionInfoSource::NoError;
-
-    switch (source) {
-    case QGCPositionManager::Log:
-        break;
-    case QGCPositionManager::Simulated:
-        _currentSource = _simulatedSource;
-        break;
-    case QGCPositionManager::NmeaGPS:
-        _currentSource = _nmeaSource;
-        break;
-    case QGCPositionManager::InternalGPS:
-        _currentSource = _defaultSource;
-        break;
-    case QGCPositionManager::ExternalGPS:
-        break;
-    default:
-        _currentSource = _defaultSource;
-        break;
-    }
-
-    if (_currentSource != nullptr) {
-        _currentSource->setPreferredPositioningMethods(QGeoPositionInfoSource::SatellitePositioningMethods);
-        _updateInterval = source == QGCPositionManager::NmeaGPS ? 0 : _currentSource->minimumUpdateInterval();
-        if (source == QGCPositionManager::NmeaGPS) {
-            // Qt's NMEA minimum is 2 ms, which reports timeouts between normal receiver fixes.
-            _currentSource->setUpdateInterval(0);
-            _nmeaStaleTimer.start();
-        }
-#if !defined(Q_OS_DARWIN) && !defined(Q_OS_IOS)
-        _currentSource->setUpdateInterval(_updateInterval);
-#endif
-
-        (void) connect(_currentSource, &QGeoPositionInfoSource::positionUpdated, this, &QGCPositionManager::_positionUpdated);
-        (void) connect(_currentSource, &QGeoPositionInfoSource::errorOccurred, this, &QGCPositionManager::_positionError);
-
-        // (void) connect(QGCCompass::instance(), &QGCCompass::positionUpdated, this, &QGCPositionManager::_positionUpdated);
-
-        _currentSource->startUpdates();
-    }
+    return _nmeaSource && _nmeaSource->hasReceivedData();
 }
