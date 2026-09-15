@@ -7,6 +7,8 @@ import QGroundControl.Controls
 import Custom.Widgets
 
 Item {
+    id: _root
+
     property var parentToolInsets                       // These insets tell you what screen real estate is available for positioning the controls in your overlay
     property var totalToolInsets:   _totalToolInsets    // The insets updated for the custom overlay additions
     property var mapControl
@@ -27,6 +29,31 @@ Item {
     property string _messageTitle:          ""
     property string _messageText:           ""
     property real   _toolsMargin:           ScreenTools.defaultFontPixelWidth * 0.75
+
+    // Rescue-mission trigger (Decision 3): recommend launching the aircraft as a comms relay after
+    // sustained rover heartbeat loss. Advisory only - surfaces the recommendation, no autonomous
+    // arm/takeoff/navigation. Uses VehicleLinkManager.communicationLost (already-tested heartbeat-loss
+    // flag) rather than tapping mavlinkMessage() directly.
+    readonly property var _roverVehicle: {
+        for (var i = 0; i < QGroundControl.multiVehicleManager.vehicles.count; i++) {
+            var v = QGroundControl.multiVehicleManager.vehicles.get(i)
+            if (v.rover) {
+                return v
+            }
+        }
+        return null
+    }
+    readonly property bool roverCommsLost: _roverVehicle ? _roverVehicle.vehicleLinkManager.communicationLost : false
+    // Interim value - not final, ease-of-implementation placeholder per the decisions doc.
+    readonly property int relayRecommendationDelaySecs: 60
+
+    onRoverCommsLostChanged: {
+        if (roverCommsLost) {
+            _relayRecommendationTimer.restart()
+        } else {
+            _relayRecommendationTimer.stop()
+        }
+    }
 
     function secondsToHHMMSS(timeS) {
         var sec_num = parseInt(timeS, 10);
@@ -239,6 +266,26 @@ Item {
             vehicle:            _activeVehicle
             showHeading:        false
             anchors.centerIn:   parent
+        }
+    }
+
+    Timer {
+        id:         _relayRecommendationTimer
+        interval:   relayRecommendationDelaySecs * 1000
+        repeat:     false
+        onTriggered: {
+            // Wording intentionally doesn't say "launch" - Stallion's normal operating state is
+            // already airborne on routine patrol, not parked waiting to be launched. The actual
+            // trigger condition-set for this feature is still open (see program scope doc) - this
+            // is a wording fix only, not a rework of when/why this fires.
+            QGroundControl.showMessageDialog(_root, qsTr("Rover Communications Lost"),
+                qsTr("The rover has had no telemetry for over %1 seconds. Review aircraft status and consider a relay-related action if needed.").arg(relayRecommendationDelaySecs))
+        }
+    }
+
+    Component.onCompleted: {
+        if (roverCommsLost) {
+            _relayRecommendationTimer.restart()
         }
     }
 }
