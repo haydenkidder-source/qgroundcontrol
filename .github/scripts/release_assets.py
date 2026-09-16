@@ -12,40 +12,33 @@ ensure_tools_dir(__file__)
 from common.gh_actions import gh_error
 from common.io import read_json, verify_sha256_sidecar, write_text_if_changed
 
+# Only Linux and Windows packages are required; see release_builds.py's
+# WORKFLOWS comment for why MacOS/Android/iOS don't gate a release.
 REQUIRED_PACKAGES: tuple[tuple[str, str], ...] = (
     ("Linux x86_64 AppImage", "QGroundControl-x86_64/*.AppImage"),
     ("Linux aarch64 AppImage", "QGroundControl-aarch64/*.AppImage"),
-    ("macOS disk image", "QGroundControl/*.dmg"),
     ("Windows AMD64 installer", "QGroundControl-installer-AMD64/*.exe"),
     ("Windows ARM64 installer", "QGroundControl-installer-ARM64/*.exe"),
     (
         "Windows AMD64/ARM64 installer",
         "QGroundControl-installer-AMD64-ARM64/*.exe",
     ),
-    ("Android APK", "QGroundControl-linux/*.apk"),
-    ("iOS IPA", "QGroundControl-ios/*.ipa"),
 )
 
 REQUIRED_PLATFORM_SBOMS: tuple[str, ...] = (
     "QGroundControl-x86_64.sbom.spdx.json",
     "QGroundControl-aarch64.sbom.spdx.json",
-    "QGroundControl-macos.sbom.spdx.json",
     "QGroundControl-installer-AMD64-windows.sbom.spdx.json",
     "QGroundControl-installer-ARM64-windows.sbom.spdx.json",
     "QGroundControl-installer-AMD64-ARM64-windows.sbom.spdx.json",
-    "QGroundControl-linux.sbom.spdx.json",
-    "QGroundControl-ios.sbom.spdx.json",
 )
 
 REQUIRED_DEPENDENCY_SBOMS: tuple[str, ...] = (
     "QGroundControl-x86_64.dependencies.cdx.json",
     "QGroundControl-aarch64.dependencies.cdx.json",
-    "QGroundControl-macos.dependencies.cdx.json",
     "QGroundControl-installer-AMD64-windows.dependencies.cdx.json",
     "QGroundControl-installer-ARM64-windows.dependencies.cdx.json",
     "QGroundControl-installer-AMD64-ARM64-windows.dependencies.cdx.json",
-    "QGroundControl-linux.dependencies.cdx.json",
-    "QGroundControl-ios.dependencies.cdx.json",
 )
 
 
