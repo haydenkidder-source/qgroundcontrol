@@ -4,6 +4,7 @@ import QtQuick.Layouts
 
 import QGroundControl
 import QGroundControl.Controls
+import QGroundControl.AnalyzeView
 
 AnalyzePage {
     id:                 exclusionZoneReviewPage
@@ -15,12 +16,13 @@ AnalyzePage {
     property var    _controller:      ExclusionZoneController
     property var    _targetVehicle:   _controller.targetVehicle
 
+    property bool _importFailed: false
+    property string _pushResult: ""
+
     KMLOrSHPFileDialog {
         id: importDialog
         onAcceptedForLoad: (file) => {
-            if (!_controller.importFromFile(file)) {
-                importFailedLabel.visible = true
-            }
+            exclusionZoneReviewPage._importFailed = !exclusionZoneReviewPage._controller.importFromFile(file)
             close()
         }
     }
@@ -57,8 +59,7 @@ AnalyzePage {
     Connections {
         target: _controller
         function onPushFinished(success, message) {
-            pushResultLabel.text = success ? qsTr("Push succeeded.") : qsTr("Push failed: %1").arg(message)
-            pushResultLabel.visible = true
+            exclusionZoneReviewPage._pushResult = success ? qsTr("Push succeeded.") : qsTr("Push failed: %1").arg(message)
         }
     }
 
@@ -77,8 +78,7 @@ AnalyzePage {
                 }
 
                 QGCLabel {
-                    id:         importFailedLabel
-                    visible:    false
+                    visible:    exclusionZoneReviewPage._importFailed
                     color:      qgcPal.colorRed
                     text:       qsTr("Import failed — see log for details.")
                 }
@@ -143,8 +143,8 @@ AnalyzePage {
             }
 
             QGCLabel {
-                id:         pushResultLabel
-                visible:    false
+                text:       exclusionZoneReviewPage._pushResult
+                visible:    text.length > 0
                 wrapMode:   Text.WordWrap
                 Layout.preferredWidth: ScreenTools.defaultFontPixelWidth * 40
             }
