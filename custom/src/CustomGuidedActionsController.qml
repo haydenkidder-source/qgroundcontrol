@@ -79,6 +79,18 @@ QtObject {
             if (!_activeVehicle) {
                 break
             }
+            if (!_activeVehicle.rover) {
+                QGroundControl.showMessageDialog(mainWindow, returnToAutoTitle, qsTr("Active vehicle is not a rover."))
+                break
+            }
+            if (_activeVehicle.vehicleLinkManager.communicationLost) {
+                QGroundControl.showMessageDialog(mainWindow, returnToAutoTitle, qsTr("Cannot return to Auto: no telemetry from the rover."))
+                break
+            }
+            if (_activeVehicle.flightModes.indexOf("Auto") === -1) {
+                QGroundControl.showMessageDialog(mainWindow, returnToAutoTitle, qsTr("Rover does not report an Auto flight mode."))
+                break
+            }
             _activeVehicle.flightMode = "Auto"
             break
         default:
