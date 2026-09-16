@@ -11,6 +11,7 @@ from _helpers import REPO_ROOT
 from common.io import ensure_sha256_sidecar, sha256_file
 from release_assets import (
     REQUIRED_DEPENDENCY_SBOMS,
+    REQUIRED_PACKAGES,
     REQUIRED_PLATFORM_SBOMS,
     collect_release_assets,
 )
@@ -19,11 +20,11 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 PACKAGE_PATHS = (
-    "QGroundControl-x86_64/QGroundControl-x86_64.AppImage",
-    "QGroundControl-aarch64/QGroundControl-aarch64.AppImage",
-    "QGroundControl-installer-AMD64/QGroundControl-installer-AMD64.exe",
-    "QGroundControl-installer-ARM64/QGroundControl-installer-ARM64.exe",
-    "QGroundControl-installer-AMD64-ARM64/QGroundControl-installer-AMD64-ARM64.exe",
+    "Custom-QGroundControl-x86_64/Custom-QGroundControl-x86_64.AppImage",
+    "Custom-QGroundControl-aarch64/Custom-QGroundControl-aarch64.AppImage",
+    "Custom-QGroundControl-installer-AMD64/Custom-QGroundControl-installer-AMD64.exe",
+    "Custom-QGroundControl-installer-ARM64/Custom-QGroundControl-installer-ARM64.exe",
+    "Custom-QGroundControl-installer-AMD64-ARM64/Custom-QGroundControl-installer-AMD64-ARM64.exe",
 )
 
 SPDX_DOCUMENT = '{"spdxVersion": "SPDX-2.3"}\n'
@@ -101,7 +102,7 @@ def test_collect_release_assets_rejects_missing_sbom_or_duplicate_package(tmp_pa
         collect_release_assets(artifacts, source_sboms)
 
     missing_sbom.write_text(SPDX_DOCUMENT, encoding="utf-8")
-    duplicate = artifacts / "QGroundControl-x86_64/duplicate.AppImage"
+    duplicate = artifacts / "Custom-QGroundControl-x86_64/duplicate.AppImage"
     duplicate.write_bytes(b"duplicate")
     ensure_sha256_sidecar(duplicate)
     duplicate.with_name(f"{duplicate.name}.zsync").write_text("zsync\n", encoding="utf-8")
@@ -212,3 +213,35 @@ def test_release_rejects_manifest_for_another_payload(tmp_path):
     manifest.write_text(json.dumps(data))
     with pytest.raises(ValueError, match="does not match package"):
         collect_release_assets(artifacts, sboms)
+
+
+def test_release_requirements_match_uploaded_workflow_packages() -> None:
+    packages = set()
+    subjects = set()
+    for platform in ("linux", "windows"):
+        workflow = yaml.safe_load((REPO_ROOT / f".github/workflows/{platform}.yml").read_text())
+        for job in workflow["jobs"].values():
+            uploads = [
+                step["with"]
+                for step in job.get("steps", [])
+                if step.get("uses") == "./.github/actions/attest-and-upload"
+            ]
+            for upload in uploads:
+                for entry in job["strategy"]["matrix"]["include"]:
+                    package = entry["package"]
+
+                    def resolve(value: str, package: str = package) -> str:
+                        return value.replace("${{ matrix.package }}", package)
+
+                    packages.add(
+                        resolve(upload["package-name"]) + "/" + resolve(upload["artifact-name"])
+                    )
+                    subjects.add(resolve(upload.get("subject-name", upload["package-name"])))
+    assert packages == set(PACKAGE_PATHS)
+    assert {pattern.split("/")[0] for _, pattern in REQUIRED_PACKAGES} == {
+        package.split("/")[0] for package in packages
+    }
+    assert set(REQUIRED_PLATFORM_SBOMS) == {f"{subject}.sbom.spdx.json" for subject in subjects}
+    assert set(REQUIRED_DEPENDENCY_SBOMS) == {
+        f"{subject}.dependencies.cdx.json" for subject in subjects
+    }

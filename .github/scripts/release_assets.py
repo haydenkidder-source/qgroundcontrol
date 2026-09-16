@@ -15,30 +15,30 @@ from common.io import read_json, verify_sha256_sidecar, write_text_if_changed
 # Only Linux and Windows packages are required; see release_builds.py's
 # WORKFLOWS comment for why MacOS/Android/iOS don't gate a release.
 REQUIRED_PACKAGES: tuple[tuple[str, str], ...] = (
-    ("Linux x86_64 AppImage", "QGroundControl-x86_64/*.AppImage"),
-    ("Linux aarch64 AppImage", "QGroundControl-aarch64/*.AppImage"),
-    ("Windows AMD64 installer", "QGroundControl-installer-AMD64/*.exe"),
-    ("Windows ARM64 installer", "QGroundControl-installer-ARM64/*.exe"),
+    ("Linux x86_64 AppImage", "Custom-QGroundControl-x86_64/*.AppImage"),
+    ("Linux aarch64 AppImage", "Custom-QGroundControl-aarch64/*.AppImage"),
+    ("Windows AMD64 installer", "Custom-QGroundControl-installer-AMD64/*.exe"),
+    ("Windows ARM64 installer", "Custom-QGroundControl-installer-ARM64/*.exe"),
     (
         "Windows AMD64/ARM64 installer",
-        "QGroundControl-installer-AMD64-ARM64/*.exe",
+        "Custom-QGroundControl-installer-AMD64-ARM64/*.exe",
     ),
 )
 
 REQUIRED_PLATFORM_SBOMS: tuple[str, ...] = (
-    "QGroundControl-x86_64.sbom.spdx.json",
-    "QGroundControl-aarch64.sbom.spdx.json",
-    "QGroundControl-installer-AMD64-windows.sbom.spdx.json",
-    "QGroundControl-installer-ARM64-windows.sbom.spdx.json",
-    "QGroundControl-installer-AMD64-ARM64-windows.sbom.spdx.json",
+    "Custom-QGroundControl-x86_64.sbom.spdx.json",
+    "Custom-QGroundControl-aarch64.sbom.spdx.json",
+    "Custom-QGroundControl-installer-AMD64-windows.sbom.spdx.json",
+    "Custom-QGroundControl-installer-ARM64-windows.sbom.spdx.json",
+    "Custom-QGroundControl-installer-AMD64-ARM64-windows.sbom.spdx.json",
 )
 
 REQUIRED_DEPENDENCY_SBOMS: tuple[str, ...] = (
-    "QGroundControl-x86_64.dependencies.cdx.json",
-    "QGroundControl-aarch64.dependencies.cdx.json",
-    "QGroundControl-installer-AMD64-windows.dependencies.cdx.json",
-    "QGroundControl-installer-ARM64-windows.dependencies.cdx.json",
-    "QGroundControl-installer-AMD64-ARM64-windows.dependencies.cdx.json",
+    "Custom-QGroundControl-x86_64.dependencies.cdx.json",
+    "Custom-QGroundControl-aarch64.dependencies.cdx.json",
+    "Custom-QGroundControl-installer-AMD64-windows.dependencies.cdx.json",
+    "Custom-QGroundControl-installer-ARM64-windows.dependencies.cdx.json",
+    "Custom-QGroundControl-installer-AMD64-ARM64-windows.dependencies.cdx.json",
 )
 
 
