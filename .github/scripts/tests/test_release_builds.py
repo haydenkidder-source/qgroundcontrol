@@ -107,3 +107,38 @@ def test_failed_dispatch_does_not_create_snapshot(tmp_path):
     ):
         wait_for_builds("o/r", "abc", "v1", tmp_path / "runs.json")
     assert not (tmp_path / "runs.json").exists()
+
+
+def test_successful_jobs_wait_for_completed_run_before_snapshot(tmp_path):
+    from subprocess import CompletedProcess
+
+    runs = [run(name, created_at="2099-01-01T00:00:00Z") for name in WORKFLOWS]
+    polls = {item["id"]: 0 for item in runs}
+    output = tmp_path / "runs.json"
+
+    def gh(*args):
+        if args[0] != "api":
+            return CompletedProcess([], 0, "")
+        run_id = int(args[1].split("/")[-1])
+        polls[run_id] += 1
+        current = dict(runs[run_id - 1])
+        if polls[run_id] == 1:
+            current.update(status="in_progress", conclusion=None)
+        return CompletedProcess([], 0, json.dumps(current))
+
+    def sleep(_seconds):
+        assert not output.exists()
+
+    with (
+        patch("release_builds.gh", side_effect=gh),
+        patch("release_builds.list_workflow_runs_for_sha", return_value=runs),
+        patch(
+            "release_builds.list_run_jobs",
+            side_effect=lambda repo, run_id: _jobs_for(runs[run_id - 1]["name"]),
+        ),
+        patch("release_builds.time.sleep", side_effect=sleep) as pause,
+    ):
+        wait_for_builds("o/r", "abc", "v1", output)
+    pause.assert_called_once()
+    assert json.loads(output.read_text()) == runs
+    assert all(count == 2 for count in polls.values())

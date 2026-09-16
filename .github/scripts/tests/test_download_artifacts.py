@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import download_artifacts as mod
+import pytest
 from _helpers import completed
 
 
@@ -460,8 +461,10 @@ def test_strict_snapshot_rejects_changed_run_attempt(tmp_path):
     gh.assert_called_once_with("api", "repos/o/r/actions/runs/42")
 
 
+@pytest.mark.parametrize("prefix", ["Custom-QGroundControl", ""])
 def test_strict_snapshot_with_failed_conclusion_but_matching_artifacts_succeeds(
     tmp_path: Path,
+    prefix: str,
 ) -> None:
     """release_builds.py already verified the release-relevant jobs succeeded, so a
     snapshot run whose own aggregate conclusion is "failure" (e.g. linux.yml's
@@ -504,7 +507,7 @@ def test_strict_snapshot_with_failed_conclusion_but_matching_artifacts_succeeds(
                 str(snapshot),
                 "--strict-runs",
                 "--artifact-prefixes",
-                "Custom-QGroundControl",
+                prefix,
             ]
         )
 

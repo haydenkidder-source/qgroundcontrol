@@ -99,7 +99,10 @@ def wait_for_builds(repo: str, sha: str, tag: str, output: Path, timeout: int = 
             current = json.loads(gh("api", f"repos/{repo}/actions/runs/{run['id']}").stdout)
             if current["head_sha"] != sha or current["head_branch"] != tag:
                 raise RuntimeError("Release run identity changed")
-            if _required_jobs_status(repo, current, REQUIRED_JOBS[name]) == "success":
+            if (
+                _required_jobs_status(repo, current, REQUIRED_JOBS[name]) == "success"
+                and current["status"] == "completed"
+            ):
                 done[name] = current
         if len(done) == len(WORKFLOWS):
             write_json(output, list(done.values()))
