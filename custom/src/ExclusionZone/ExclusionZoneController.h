@@ -2,6 +2,7 @@
 
 #include <QtCore/QMetaObject>
 #include <QtCore/QObject>
+#include <QtCore/QPointer>
 #include <QtQmlIntegration/QtQmlIntegration>
 
 class GeoFenceManager;
@@ -41,7 +42,7 @@ public:
 
     QmlObjectListModel* stagedZones() const { return _stagedZones; }
 
-    Vehicle* targetVehicle() const { return _targetVehicle; }
+    Vehicle* targetVehicle() const;
 
     void setTargetVehicle(Vehicle* vehicle);
 
@@ -69,13 +70,15 @@ signals:
 private:
     void _mergeAndSend(GeoFenceManager* fenceMgr, const QList<StagedExclusionZone*>& approvedZones);
 
-    QmlObjectListModel* _stagedZones = nullptr;
-    Vehicle* _targetVehicle = nullptr;
-    QString _lastFenceError;
+    void _clearTransaction();
 
-    // Re-bound on every pushApproved() call so at most one push's completion handlers are ever
-    // live on a GeoFenceManager, regardless of how many times pushApproved() has been called or
-    // how many different target vehicles it's been pointed at.
+    QmlObjectListModel* _stagedZones = nullptr;
+    QPointer<Vehicle> _targetVehicle;
+    QPointer<Vehicle> _transactionVehicle;
+    bool _pushInProgress = false;
+    QMetaObject::Connection _targetDestroyedConnection;
+    QMetaObject::Connection _transactionDestroyedConnection;
+
     QMetaObject::Connection _fenceLoadCompleteConnection;
     QMetaObject::Connection _fenceLoadErrorConnection;
     QMetaObject::Connection _fenceErrorConnection;
