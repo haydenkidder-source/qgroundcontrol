@@ -217,7 +217,7 @@ def test_native_package_finalizer_moves_metadata_and_creates_launcher(
     )
 
     assert (tmp_path / "usr/share/applications/org.mavlink.qgroundcontrol.desktop").is_file()
-    launcher = tmp_path / "usr/bin/QGroundControl"
+    launcher = tmp_path / "usr/bin/Custom-QGroundControl"
     assert launcher.is_symlink()
     assert launcher.readlink().as_posix() == EXPECTED_LAUNCHER_TARGET
 
@@ -242,7 +242,7 @@ def test_native_package_finalizer_discovers_cpack_component_root(
         text=True,
     )
 
-    assert (package_root / "usr/bin/QGroundControl").is_symlink()
+    assert (package_root / "usr/bin/Custom-QGroundControl").is_symlink()
 
 
 def test_native_package_finalizer_rejects_missing_runtime_payload(tmp_path: Path) -> None:

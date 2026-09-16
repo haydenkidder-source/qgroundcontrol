@@ -40,7 +40,7 @@ foreach(qgc_root IN LISTS _qgc_package_roots)
         )
     endif()
 
-    set(_qgc_launcher "${qgc_root}/usr/bin/QGroundControl")
+    set(_qgc_launcher "${qgc_root}/usr/bin/${CPACK_PACKAGE_NAME}")
     if(EXISTS "${_qgc_launcher}" OR IS_SYMLINK "${_qgc_launcher}")
         message(FATAL_ERROR "QGC: native package launcher already exists: ${_qgc_launcher}")
     endif()

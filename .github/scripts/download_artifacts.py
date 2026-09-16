@@ -251,6 +251,11 @@ def main(argv: list[str] | None = None) -> int:
                     break
             if selected_run is not None:
                 runs.append(selected_run)
+    elif args.strict_runs:
+        grouped_runs = group_runs_by_name(
+            all_runs, workflows, event=event, status="completed", conclusion=""
+        )
+        runs = [grouped_runs[name][0] for name in workflows if grouped_runs.get(name)]
     else:
         runs = select_latest_successful_runs(all_runs, workflows, event=event)
 

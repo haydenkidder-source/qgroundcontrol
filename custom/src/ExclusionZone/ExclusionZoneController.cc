@@ -12,6 +12,7 @@
 #include "AppSettings.h"
 #include "GeoFenceManager.h"
 #include "GeoJsonHelper.h"
+#include "MultiVehicleManager.h"
 #include "QGCFenceCircle.h"
 #include "QGCFencePolygon.h"
 #include "QGCLoggingCategory.h"
@@ -24,16 +25,54 @@
 QGC_LOGGING_CATEGORY(ExclusionZoneLog, "Custom.ExclusionZone")
 
 ExclusionZoneController::ExclusionZoneController(QObject* parent)
-    : QObject(parent), _stagedZones(new QmlObjectListModel(this))
-{}
+    : QObject(parent)
+    , _stagedZones(new QmlObjectListModel(this))
+{
+    connect(MultiVehicleManager::instance(), &MultiVehicleManager::vehicleRemoved, this, [this](Vehicle* vehicle) {
+        if (_targetVehicle == vehicle) {
+            setTargetVehicle(nullptr);
+        }
+        if (_pushInProgress && _transactionVehicle == vehicle) {
+            _clearTransaction();
+            emit pushFinished(false, tr("Target vehicle was removed."));
+        }
+    });
+}
 
 ExclusionZoneController::~ExclusionZoneController() {}
+
+Vehicle* ExclusionZoneController::targetVehicle() const
+{
+    return _targetVehicle.data();
+}
+
+void ExclusionZoneController::_clearTransaction()
+{
+    disconnect(_fenceLoadCompleteConnection);
+    disconnect(_fenceLoadErrorConnection);
+    disconnect(_fenceErrorConnection);
+    disconnect(_fenceSendCompleteConnection);
+    disconnect(_transactionDestroyedConnection);
+    _transactionVehicle.clear();
+    _pushInProgress = false;
+}
 
 void ExclusionZoneController::setTargetVehicle(Vehicle* vehicle)
 {
     if (_targetVehicle != vehicle) {
+        disconnect(_targetDestroyedConnection);
         _targetVehicle = vehicle;
+        if (vehicle) {
+            _targetDestroyedConnection = connect(vehicle, &QObject::destroyed, this, [this]() {
+                _targetVehicle.clear();
+                emit targetVehicleChanged(nullptr);
+            });
+        }
         emit targetVehicleChanged(_targetVehicle);
+        if (!vehicle && _pushInProgress) {
+            _clearTransaction();
+            emit pushFinished(false, tr("Target vehicle was cleared."));
+        }
     }
 }
 
@@ -82,6 +121,11 @@ void ExclusionZoneController::setApproved(int index, bool approved)
 
 bool ExclusionZoneController::pushApproved()
 {
+    if (_pushInProgress) {
+        emit pushFinished(false, tr("An exclusion zone push is already in progress."));
+        return false;
+    }
+
     if (!_targetVehicle) {
         emit pushFinished(false, tr("No target vehicle selected."));
         return false;
@@ -109,18 +153,19 @@ bool ExclusionZoneController::pushApproved()
         return false;
     }
 
-    disconnect(_fenceLoadCompleteConnection);
-    disconnect(_fenceLoadErrorConnection);
-    disconnect(_fenceErrorConnection);
-    disconnect(_fenceSendCompleteConnection);
+    _pushInProgress = true;
+    _transactionVehicle = _targetVehicle;
+    _transactionDestroyedConnection = connect(_transactionVehicle, &QObject::destroyed, this, [this]() {
+        _clearTransaction();
+        emit pushFinished(false, tr("Target vehicle was destroyed."));
+    });
 
     // Load the vehicle's current fence first. sendToVehicle() replaces the entire fence with
     // whatever it's given, so the approved zones must be merged into the live fence rather than
     // sent by themselves, or the push would silently delete the vehicle's inclusion polygon, any
     // other zones, and its breach-return point.
     _fenceLoadErrorConnection = connect(fenceMgr, &GeoFenceManager::error, this, [this](int, const QString& msg) {
-        disconnect(_fenceLoadCompleteConnection);
-        disconnect(_fenceLoadErrorConnection);
+        _clearTransaction();
         emit pushFinished(false, tr("Failed to load current fence: %1").arg(msg));
     });
     _fenceLoadCompleteConnection =
@@ -177,6 +222,7 @@ void ExclusionZoneController::_mergeAndSend(GeoFenceManager* fenceMgr, const QLi
     QFile auditFile(filePath);
     if (!auditFile.open(QIODevice::WriteOnly)) {
         qCWarning(ExclusionZoneLog) << "Failed to open audit file for write:" << filePath;
+        _clearTransaction();
         emit pushFinished(false, tr("Failed to write audit file: %1").arg(filePath));
         return;
     }
@@ -189,6 +235,7 @@ void ExclusionZoneController::_mergeAndSend(GeoFenceManager* fenceMgr, const QLi
     QFile auditFileReadBack(filePath);
     if (!auditFileReadBack.open(QIODevice::ReadOnly)) {
         qCWarning(ExclusionZoneLog) << "Failed to read back audit file:" << filePath;
+        _clearTransaction();
         emit pushFinished(false, tr("Failed to read back audit file: %1").arg(filePath));
         return;
     }
@@ -197,6 +244,7 @@ void ExclusionZoneController::_mergeAndSend(GeoFenceManager* fenceMgr, const QLi
     auditFileReadBack.close();
     if (parseError.error != QJsonParseError::NoError || !auditDoc.isObject()) {
         qCWarning(ExclusionZoneLog) << "Audit file read-back failed to parse:" << parseError.errorString();
+        _clearTransaction();
         emit pushFinished(false, tr("Audit file read-back failed to parse: %1").arg(parseError.errorString()));
         return;
     }
@@ -211,6 +259,7 @@ void ExclusionZoneController::_mergeAndSend(GeoFenceManager* fenceMgr, const QLi
             qCWarning(ExclusionZoneLog) << "Audit round-trip failed:" << loadError;
             sendPolygons->deleteLater();
             sendCircles->deleteLater();
+            _clearTransaction();
             emit pushFinished(false, tr("Audit round-trip failed: %1").arg(loadError));
             return;
         }
@@ -222,6 +271,7 @@ void ExclusionZoneController::_mergeAndSend(GeoFenceManager* fenceMgr, const QLi
             qCWarning(ExclusionZoneLog) << "Audit round-trip failed:" << loadError;
             sendPolygons->deleteLater();
             sendCircles->deleteLater();
+            _clearTransaction();
             emit pushFinished(false, tr("Audit round-trip failed: %1").arg(loadError));
             return;
         }
@@ -235,6 +285,7 @@ void ExclusionZoneController::_mergeAndSend(GeoFenceManager* fenceMgr, const QLi
             qCWarning(ExclusionZoneLog) << "Audit round-trip breach-return failed:" << breachError;
             sendPolygons->deleteLater();
             sendCircles->deleteLater();
+            _clearTransaction();
             emit pushFinished(false, tr("Audit round-trip breach-return failed: %1").arg(breachError));
             return;
         }
@@ -244,10 +295,13 @@ void ExclusionZoneController::_mergeAndSend(GeoFenceManager* fenceMgr, const QLi
     // throwaway PlanMasterController/GeoFenceController. sendToVehicle() copies every
     // polygon/circle by value synchronously before the async MAVLink exchange starts, so
     // sendPolygons/sendCircles don't need to outlive this call.
-    _fenceErrorConnection =
-        connect(fenceMgr, &GeoFenceManager::error, this, [this](int, const QString& msg) { _lastFenceError = msg; });
+    _fenceErrorConnection = connect(fenceMgr, &GeoFenceManager::error, this, [this](int, const QString& msg) {
+        _clearTransaction();
+        emit pushFinished(false, msg);
+    });
     _fenceSendCompleteConnection =
         connect(fenceMgr, &GeoFenceManager::sendComplete, this, [this, approvedZones](bool error) {
+            _clearTransaction();
             if (!error) {
                 for (StagedExclusionZone* zone : approvedZones) {
                     _stagedZones->removeOne(zone);
@@ -255,7 +309,7 @@ void ExclusionZoneController::_mergeAndSend(GeoFenceManager* fenceMgr, const QLi
                 }
                 emit approvedCountChanged();
             }
-            emit pushFinished(!error, error ? _lastFenceError : QString());
+            emit pushFinished(!error, error ? tr("Failed to send fence.") : QString());
         });
 
     fenceMgr->sendToVehicle(sendBreachReturn, *sendPolygons, *sendCircles);
