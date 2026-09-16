@@ -155,7 +155,7 @@ jobs:
         uses: ./.github/actions/download-all-artifacts
         with:
           head-sha: ${{ github.sha }}
-          workflows: Linux,Windows,MacOS,Android,iOS
+          workflows: Linux,Windows
           event: workflow_dispatch
           runs-file: release-build-runs.json
           strict-runs: 'true'

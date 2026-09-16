@@ -21,12 +21,9 @@ if TYPE_CHECKING:
 PACKAGE_PATHS = (
     "QGroundControl-x86_64/QGroundControl-x86_64.AppImage",
     "QGroundControl-aarch64/QGroundControl-aarch64.AppImage",
-    "QGroundControl/QGroundControl.dmg",
     "QGroundControl-installer-AMD64/QGroundControl-installer-AMD64.exe",
     "QGroundControl-installer-ARM64/QGroundControl-installer-ARM64.exe",
     "QGroundControl-installer-AMD64-ARM64/QGroundControl-installer-AMD64-ARM64.exe",
-    "QGroundControl-linux/QGroundControl.apk",
-    "QGroundControl-ios/QGroundControl.ipa",
 )
 
 SPDX_DOCUMENT = '{"spdxVersion": "SPDX-2.3"}\n'
@@ -76,7 +73,7 @@ def test_collect_release_assets_requires_complete_validated_set(tmp_path: Path) 
 
     assets = collect_release_assets(artifacts, source_sboms)
 
-    assert len(assets) == 44
+    assert len(assets) == 29
     assert assets == sorted(assets, key=lambda path: path.as_posix())
     assert all(path.is_file() for path in assets)
 
@@ -139,7 +136,7 @@ def test_release_uses_platform_sboms_without_reattesting() -> None:
     assert steps["Download artifacts"]["uses"] == "./.github/actions/download-all-artifacts"
     assert steps["Download artifacts"]["with"] == {
         "head-sha": "${{ github.sha }}",
-        "workflows": "Linux,Windows,MacOS,Android,iOS",
+        "workflows": "Linux,Windows",
         "event": "workflow_dispatch",
         "runs-file": "release-build-runs.json",
         "strict-runs": "true",

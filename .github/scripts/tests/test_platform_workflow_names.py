@@ -35,9 +35,12 @@ PLATFORM_FILES: dict[str, str] = {
     "Android": "android.yml",
 }
 
-# iOS produces release artifacts but is intentionally excluded from the
-# build-results workflow's regular PR platform set.
-RELEASE_PLATFORM_FILES: dict[str, str] = PLATFORM_FILES | {"iOS": "ios.yml"}
+# Only Linux and Windows gate a release; MacOS/Android/iOS still build on
+# every push via PLATFORM_FILES but don't block releasing what does work.
+RELEASE_PLATFORM_FILES: dict[str, str] = {
+    "Linux": "linux.yml",
+    "Windows": "windows.yml",
+}
 
 
 def _workflow_name(path: Path) -> str:

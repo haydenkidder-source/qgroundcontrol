@@ -17,12 +17,13 @@ ensure_tools_dir(__file__)
 from common.gh_actions import gh, list_workflow_runs_for_sha
 from common.io import write_json
 
+# Only the platforms this fork actually ships gate a release. MacOS/Android/
+# iOS still build on every push via their own workflows, but a missing
+# code-signing setup (MacOS/iOS) or emulator flake (Android) must not block
+# releasing the platforms that do work.
 WORKFLOWS = {
     "Linux": "linux.yml",
     "Windows": "windows.yml",
-    "MacOS": "macos.yml",
-    "Android": "android.yml",
-    "iOS": "ios.yml",
 }
 
 
