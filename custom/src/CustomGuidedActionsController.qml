@@ -28,6 +28,78 @@ QtObject {
     // that declares its own "property var _guidedController: globals.guidedControllerFlyView".
     readonly property var _activeVehicle: QGroundControl.multiVehicleManager.activeVehicle
 
+    readonly property Timer _assumeRoverControlTimer: Timer {
+        interval: 3000
+        repeat: false
+
+        property var _vehicle: null
+
+        function _reset() {
+            stop()
+            _vehicle = null
+        }
+
+        function _warn() {
+            _reset()
+            QGroundControl.showMessageDialog(mainWindow, _root.assumeRoverControlTitle,
+                qsTr("The change to Manual mode was not confirmed. " +
+                     "Verify the rover's actual state before assuming manual control."))
+        }
+
+        onTriggered: _warn()
+
+        readonly property Connections _modeConnection: Connections {
+            target: _root._assumeRoverControlTimer._vehicle
+
+            function onFlightModeChanged(flightMode) {
+                if (target && !target.vehicleLinkManager.communicationLost && flightMode === "Manual") {
+                    _root._assumeRoverControlTimer._reset()
+                }
+            }
+        }
+    }
+
+    readonly property Timer _returnToAutoTimer: Timer {
+        interval: 3000
+        repeat: false
+
+        property var _vehicle: null
+
+        function _reset() {
+            stop()
+            _vehicle = null
+        }
+
+        function _warn() {
+            _reset()
+            QGroundControl.showMessageDialog(mainWindow, _root.returnToAutoTitle,
+                qsTr("The change to Auto mode was not confirmed. " +
+                     "Verify the rover's actual state before assuming autonomous control has resumed."))
+        }
+
+        onTriggered: _warn()
+
+        readonly property Connections _modeConnection: Connections {
+            target: _root._returnToAutoTimer._vehicle
+
+            function onFlightModeChanged(flightMode) {
+                if (target && !target.vehicleLinkManager.communicationLost && flightMode === "Auto") {
+                    _root._returnToAutoTimer._reset()
+                }
+            }
+        }
+    }
+
+    on_ActiveVehicleChanged: {
+        // Changing vehicles cannot confirm an outstanding request on the previous rover.
+        if (_assumeRoverControlTimer && _assumeRoverControlTimer.running) {
+            _assumeRoverControlTimer._warn()
+        }
+        if (_returnToAutoTimer && _returnToAutoTimer.running) {
+            _returnToAutoTimer._warn()
+        }
+    }
+
     function customConfirmAction(actionCode, actionData, mapIndicator, confirmDialog) {
         switch (actionCode) {
         case actionCustomButton:
@@ -73,12 +145,33 @@ QtObject {
                 QGroundControl.showMessageDialog(mainWindow, assumeRoverControlTitle, qsTr("Rover does not report a Manual flight mode."))
                 break
             }
+            _returnToAutoTimer._reset()
+            _assumeRoverControlTimer._reset()
+            _assumeRoverControlTimer._vehicle = _activeVehicle
+            // Watch before sending so even an immediate confirmation is observed.
+            _assumeRoverControlTimer.start()
             _activeVehicle.flightMode = "Manual"
             break
         case actionReturnToAuto:
             if (!_activeVehicle) {
                 break
             }
+            if (!_activeVehicle.rover) {
+                QGroundControl.showMessageDialog(mainWindow, returnToAutoTitle, qsTr("Active vehicle is not a rover."))
+                break
+            }
+            if (_activeVehicle.vehicleLinkManager.communicationLost) {
+                QGroundControl.showMessageDialog(mainWindow, returnToAutoTitle, qsTr("Cannot return to Auto: no telemetry from the rover."))
+                break
+            }
+            if (_activeVehicle.flightModes.indexOf("Auto") === -1) {
+                QGroundControl.showMessageDialog(mainWindow, returnToAutoTitle, qsTr("Rover does not report an Auto flight mode."))
+                break
+            }
+            _assumeRoverControlTimer._reset()
+            _returnToAutoTimer._reset()
+            _returnToAutoTimer._vehicle = _activeVehicle
+            _returnToAutoTimer.start()
             _activeVehicle.flightMode = "Auto"
             break
         default:
