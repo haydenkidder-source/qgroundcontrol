@@ -9,9 +9,6 @@ on:
       - 'v*'
     paths-ignore:
       - 'docs/**'
-  pull_request:
-    paths-ignore:
-      - 'docs/**'
   workflow_dispatch:
     inputs:
       debug_runner:

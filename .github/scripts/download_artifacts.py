@@ -201,13 +201,17 @@ def main(argv: list[str] | None = None) -> int:
         if not args.runs_file:
             print("Error: strict downloads require a run snapshot", file=sys.stderr)
             return 1
+        # Not gated on the run's own conclusion: the caller (release_builds.py)
+        # already verified the specific release-relevant jobs succeeded before
+        # writing this snapshot. A workflow's aggregate conclusion is failure
+        # if ANY job in it fails, including unrelated ones (e.g. linux.yml's
+        # own flaky test job) that this snapshot's runs may still carry.
         for workflow in workflows:
             selected = [run for run in all_runs if run.get("name") == workflow]
             if (
                 len(selected) != 1
                 or selected[0].get("head_sha") != head_sha
                 or selected[0].get("status") != "completed"
-                or selected[0].get("conclusion") != "success"
                 or (event and selected[0].get("event") != event)
             ):
                 print(f"Error: invalid release snapshot for {workflow}", file=sys.stderr)
@@ -215,8 +219,7 @@ def main(argv: list[str] | None = None) -> int:
             saved = selected[0]
             current = json.loads(gh("api", f"repos/{repo}/actions/runs/{saved['id']}").stdout)
             if any(
-                current.get(key) != saved.get(key)
-                for key in ("head_sha", "run_attempt", "status", "conclusion")
+                current.get(key) != saved.get(key) for key in ("head_sha", "run_attempt", "status")
             ):
                 print(
                     f"Error: release run was rerun after selection: {saved['id']}", file=sys.stderr
@@ -231,7 +234,10 @@ def main(argv: list[str] | None = None) -> int:
             workflows,
             event=event,
             status="completed",
-            conclusion="" if args.include_failed else "success",
+            # In strict-runs mode all_runs is already exactly the pre-verified
+            # snapshot (one run per workflow), so the conclusion filter here
+            # would only wrongly exclude a run over an unrelated failed job.
+            conclusion="" if (args.include_failed or args.strict_runs) else "success",
         )
         for workflow_name in workflows:
             candidates = grouped_runs.get(workflow_name, [])

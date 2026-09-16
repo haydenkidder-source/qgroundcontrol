@@ -458,3 +458,55 @@ def test_strict_snapshot_rejects_changed_run_attempt(tmp_path):
             == 1
         )
     gh.assert_called_once_with("api", "repos/o/r/actions/runs/42")
+
+
+def test_strict_snapshot_with_failed_conclusion_but_matching_artifacts_succeeds(
+    tmp_path: Path,
+) -> None:
+    """release_builds.py already verified the release-relevant jobs succeeded, so a
+    snapshot run whose own aggregate conclusion is "failure" (e.g. linux.yml's
+    unrelated flaky test job) must still be usable here."""
+    saved = {
+        "name": "Linux",
+        "id": 42,
+        "head_sha": "abc123",
+        "status": "completed",
+        "conclusion": "failure",
+        "run_attempt": 1,
+    }
+    snapshot = tmp_path / "runs.json"
+    snapshot.write_text(json.dumps([saved]))
+
+    downloaded = tmp_path / "Custom-QGroundControl.AppImage"
+    downloaded.write_text("binary", encoding="utf-8")
+
+    with (
+        patch.object(mod, "gh", return_value=completed(stdout=json.dumps(saved))),
+        patch.object(
+            mod,
+            "list_run_artifacts",
+            return_value=[{"name": "Custom-QGroundControl", "size_in_bytes": 1}],
+        ),
+        patch.object(mod, "download_run_artifacts", return_value=True) as download_mock,
+        patch.object(mod, "list_downloaded_files", return_value=[downloaded]),
+    ):
+        rc = mod.main(
+            [
+                "--repo",
+                "o/r",
+                "--head-sha",
+                "abc123",
+                "--output-dir",
+                str(tmp_path),
+                "--workflows",
+                "Linux",
+                "--runs-file",
+                str(snapshot),
+                "--strict-runs",
+                "--artifact-prefixes",
+                "Custom-QGroundControl",
+            ]
+        )
+
+    assert rc == 0
+    assert download_mock.call_args.args[0] == 42

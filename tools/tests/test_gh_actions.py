@@ -60,6 +60,33 @@ def test_list_run_artifacts_rejects_invalid_run_id() -> None:
         raise AssertionError("Expected ValueError for invalid run_id")
 
 
+def test_list_run_jobs_parses_ndjson_stream() -> None:
+    payload = (
+        json.dumps({"name": "Release linux_gcc_64", "conclusion": "success"})
+        + "\n"
+        + json.dumps({"name": "Test + Coverage linux_gcc_64 Debug", "conclusion": "failure"})
+    )
+    with patch.object(mod, "gh", return_value=completed(stdout=payload)) as gh_mock:
+        jobs = mod.list_run_jobs("owner/repo", 77)
+
+    assert [j["name"] for j in jobs] == [
+        "Release linux_gcc_64",
+        "Test + Coverage linux_gcc_64 Debug",
+    ]
+    called_args = gh_mock.call_args[0]
+    assert ".jobs[]?" in called_args
+    gh_mock.assert_called_once()
+
+
+def test_list_run_jobs_rejects_invalid_run_id() -> None:
+    try:
+        mod.list_run_jobs("owner/repo", "not-an-int")
+    except ValueError as exc:
+        assert "run_id must be an integer" in str(exc)
+    else:
+        raise AssertionError("Expected ValueError for invalid run_id")
+
+
 def test_require_repository_prefers_override_and_requires_value(capsys) -> None:
     with patch.dict(
         os.environ,

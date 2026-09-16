@@ -42,6 +42,22 @@ def list_workflow_runs_for_sha(repo: str, head_sha: str) -> list[dict[str, Any]]
     )
 
 
+def list_run_jobs(repo: str, run_id: int | str) -> list[dict[str, Any]]:
+    """List jobs for a workflow run across all pages."""
+    try:
+        run_id_int = int(run_id)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"run_id must be an integer, got {run_id!r}") from exc
+    if run_id_int <= 0:
+        raise ValueError(f"run_id must be positive, got {run_id_int}")
+
+    return _paginate_items(
+        f"repos/{repo}/actions/runs/{run_id_int}/jobs",
+        "jobs",
+        {"per_page": "100"},
+    )
+
+
 def list_run_artifacts(repo: str, run_id: int | str) -> list[dict[str, Any]]:
     """List artifacts for a workflow run across all pages."""
     try:
