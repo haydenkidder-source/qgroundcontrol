@@ -28,6 +28,10 @@ QtObject {
     // that declares its own "property var _guidedController: globals.guidedControllerFlyView".
     readonly property var _activeVehicle: QGroundControl.multiVehicleManager.activeVehicle
 
+    property var _confirmationVehicle: null
+    property var _confirmationDialog: null
+    property int _confirmationAction: -1
+
     readonly property Timer _assumeRoverControlTimer: Timer {
         interval: 3000
         repeat: false
@@ -91,6 +95,13 @@ QtObject {
     }
 
     on_ActiveVehicleChanged: {
+        if (_confirmationDialog) {
+            if (_confirmationDialog.action === _confirmationAction) {
+                _confirmationDialog.confirmCancelled()
+            }
+            _confirmationDialog = null
+        }
+        _confirmationVehicle = null
         // Changing vehicles cannot confirm an outstanding request on the previous rover.
         if (_assumeRoverControlTimer && _assumeRoverControlTimer.running) {
             _assumeRoverControlTimer._warn()
@@ -121,10 +132,27 @@ QtObject {
             return false // false = action not handled here
         }
 
+        if (actionCode === actionAssumeRoverControl || actionCode === actionReturnToAuto) {
+            _confirmationVehicle = _activeVehicle
+            _confirmationDialog = confirmDialog
+            _confirmationAction = actionCode
+        } else {
+            _confirmationVehicle = null
+            _confirmationDialog = null
+        }
         return true // true = action handled here
     }
 
     function customExecuteAction(actionCode, actionData, sliderOutputValue, optionCheckedode) {
+        if (actionCode === actionAssumeRoverControl || actionCode === actionReturnToAuto) {
+            const targetMatches = _confirmationVehicle && _confirmationVehicle === _activeVehicle
+                && _confirmationAction === actionCode
+            _confirmationVehicle = null
+            _confirmationDialog = null
+            if (!targetMatches) {
+                return true
+            }
+        }
         switch (actionCode) {
         case actionCustomButton:
             QGroundControl.showMessageDialog(mainWindow, "Custom Action", "Custom action executed.")
