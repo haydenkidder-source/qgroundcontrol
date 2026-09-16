@@ -184,9 +184,14 @@ def test_manual_linux_reuses_coverage_build_for_excluded_tests() -> None:
 def test_application_builds_have_no_scheduled_trigger(platform: str) -> None:
     workflow = yaml.load(_read(f".github/workflows/{platform}.yml"), Loader=yaml.BaseLoader)
     assert "schedule" not in workflow["on"]
-    assert {"push", "pull_request", "workflow_dispatch"} <= workflow["on"].keys()
+    assert {"push", "workflow_dispatch"} <= workflow["on"].keys()
     if platform == "linux":
         assert "merge_group" in workflow["on"]
+        assert "pull_request" in workflow["on"]
+    else:
+        # Docker no longer builds on every PR - it's part of the release/push
+        # matrix, not one of the two platforms (Linux, Windows) PRs need.
+        assert "pull_request" not in workflow["on"]
 
 
 def test_cache_cleanup_runs_every_six_hours() -> None:
