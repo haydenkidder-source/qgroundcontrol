@@ -304,8 +304,32 @@ qt_add_resources(
 )
 
 if(QGC_BUILD_TESTING)
-    target_sources(${CMAKE_PROJECT_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/test/COPControllerTest.cc
-                                                 ${CMAKE_CURRENT_SOURCE_DIR}/test/COPControllerTest.h
+    target_sources(
+        ${CMAKE_PROJECT_NAME}
+        PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/test/COPControllerTest.cc
+                ${CMAKE_CURRENT_SOURCE_DIR}/test/COPControllerTest.h ${CMAKE_CURRENT_SOURCE_DIR}/test/COPStressTest.cc
+                ${CMAKE_CURRENT_SOURCE_DIR}/test/COPStressTest.h
+    )
+    cmake_language(
+        DEFER
+        DIRECTORY
+        "${CMAKE_SOURCE_DIR}"
+        CALL
+        add_qgc_test
+        COPStressTest
+        LABELS
+        Unit
+    )
+    cmake_language(
+        DEFER
+        DIRECTORY
+        "${CMAKE_SOURCE_DIR}"
+        CALL
+        add_qgc_test
+        COPStressUITest
+        LABELS
+        Integration
+        Vehicle
     )
     cmake_language(
         DEFER
