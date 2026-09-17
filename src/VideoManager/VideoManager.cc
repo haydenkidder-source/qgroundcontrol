@@ -828,6 +828,10 @@ void VideoManager::stopVideo()
 
 void VideoManager::_startReceiver(VideoReceiver *receiver)
 {
+    if (!QGCCorePlugin::instance()->startStandardVideoReceivers()) {
+        return;
+    }
+
     if (!receiver) {
         qCDebug(VideoManagerLog) << "VideoReceiver is NULL";
         return;
@@ -884,6 +888,10 @@ void VideoManager::_initVideoReceiver(VideoReceiver *receiver, QQuickWindow *win
         switch (status) {
         case VideoReceiver::STATUS_OK:
             receiver->setStarted(true);
+            if (!QGCCorePlugin::instance()->startStandardVideoReceivers()) {
+                receiver->stop();
+                return;
+            }
             if (receiver->sink()) {
                 receiver->startDecoding(receiver->sink());
             }
