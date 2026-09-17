@@ -59,7 +59,8 @@ def _create_complete_release(tmp_path: Path) -> tuple[Path, list[Path]]:
         sbom.write_text(SPDX_DOCUMENT, encoding="utf-8")
 
     for sbom_name in REQUIRED_DEPENDENCY_SBOMS:
-        sbom = artifacts / sbom_name.removesuffix(".dependencies.cdx.json") / sbom_name
+        artifact_name = sbom_name.removesuffix(".dependencies.cdx.json")
+        sbom = artifacts / artifact_name / sbom_name
         sbom.parent.mkdir(parents=True, exist_ok=True)
         sbom.write_text(CYCLONEDX_DEPENDENCY_DOCUMENT, encoding="utf-8")
 
