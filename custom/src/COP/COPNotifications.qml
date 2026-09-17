@@ -21,6 +21,10 @@ Rectangle {
         anchors.margins: ScreenTools.defaultFontPixelWidth
         ColumnLayout {
             QGCLabel { text: qsTr("Notifications (%1)").arg(COPController.messages.length) }
+            QGCLabel {
+                visible: COPController.droppedMessages > 0
+                text: qsTr("%1 older notifications omitted").arg(COPController.droppedMessages)
+            }
             QGCButton {
                 text: qsTr("Acknowledge")
                 enabled: COPController.unacknowledged

@@ -296,7 +296,11 @@ void COPStressUITest::_lastControlRequestWins()
     controller->assumeControl();
     controller->selectVehicle(a->sysid());
     controller->assumeControl();
-    QTRY_VERIFY_WITH_TIMEOUT(switched.count() > 0, TestTimeout::mediumMs());
+    QTimer settled;
+    settled.setSingleShot(true);
+    QSignalSpy settledSpy(&settled, &QTimer::timeout);
+    settled.start(100);
+    QVERIFY(settledSpy.wait(TestTimeout::mediumMs()));
     QCOMPARE(manager->activeVehicle(), a->vehicle());
 }
 
@@ -322,7 +326,7 @@ void COPStressUITest::_disconnectOtherPreservesControl()
     QPointer<Vehicle> removed = removedEntry->vehicle();
     stallion->disconnect();
     QTRY_VERIFY_WITH_TIMEOUT(removed.isNull(), TestTimeout::longMs());
-    QCOMPARE(manager->activeVehicle(), selected->vehicle());
+    QTRY_COMPARE_WITH_TIMEOUT(manager->activeVehicle(), selected->vehicle(), TestTimeout::mediumMs());
 }
 
 UT_REGISTER_TEST(COPStressTest, TestLabel::Unit)

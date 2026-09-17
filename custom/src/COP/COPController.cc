@@ -29,6 +29,7 @@ COPVehicle::COPVehicle(int sysid, VehicleRoleController* roles, QObject* parent)
     : QObject(parent)
     , _sysid(sysid)
     , _roles(roles)
+    , _videoUri(QSettings().value(QStringLiteral("COP/Video/%1").arg(sysid)).toString())
 {}
 
 void COPVehicle::setVideoUri(const QString& uri)
@@ -143,6 +144,17 @@ void COPController::initialize(VehicleRoleController* roles)
     auto* manager = MultiVehicleManager::instance();
     connect(manager, &MultiVehicleManager::vehicleAdded, this, &COPController::_vehicleAdded);
     connect(manager, &MultiVehicleManager::vehicleRemoved, this, &COPController::_vehicleRemoved);
+    connect(manager, &MultiVehicleManager::activeVehicleChanged, this, [this, manager](Vehicle* vehicle) {
+        if (_activationInFlight == vehicle) {
+            _activationInFlight.clear();
+            _queueActivation(_controlRequestToken);
+        }
+        const QPointer<Vehicle> restore = _activeBeforeRemoval;
+        _activeBeforeRemoval.clear();
+        if (restore && restore != vehicle && manager->vehicles()->contains(restore)) {
+            _requestActivation(restore);
+        }
+    });
     for (int i = 0; i < manager->vehicles()->count(); ++i) {
         _vehicleAdded(manager->vehicles()->value<Vehicle*>(i));
     }
@@ -203,7 +215,7 @@ void COPController::_vehicleAdded(Vehicle* vehicle)
         notify(tr("%1: %2").arg(entry->label(), lost ? tr("Communication lost") : tr("Communication restored")));
         Vehicle* current = entry->vehicle();
         if (!lost && current && _pendingSysid == entry->sysid()) {
-            MultiVehicleManager::instance()->setActiveVehicle(current);
+            _requestActivation(current);
             _pendingSysid = 0;
             emit selectionChanged();
         }
@@ -214,7 +226,7 @@ void COPController::_vehicleAdded(Vehicle* vehicle)
         }
     });
     if (_pendingSysid == vehicle->id()) {
-        MultiVehicleManager::instance()->setActiveVehicle(vehicle);
+        _requestActivation(vehicle);
         _pendingSysid = 0;
     }
     emit selectionChanged();
@@ -225,12 +237,24 @@ void COPController::_vehicleRemoved(Vehicle* vehicle)
     if (!vehicle) {
         return;
     }
+    auto* manager = MultiVehicleManager::instance();
+    Vehicle* active = manager->activeVehicle();
+    if (active && active != vehicle && manager->vehicles()->contains(active) && !_requestedVehicle &&
+        !_activationInFlight) {
+        _activeBeforeRemoval = active;
+    } else {
+        _activeBeforeRemoval.clear();
+    }
     if (auto* entry = _find(vehicle->id()); entry && entry->vehicle() == vehicle) {
         entry->setVehicle(nullptr);
         disconnect(vehicle, nullptr, this, nullptr);
         disconnect(vehicle->vehicleLinkManager(), nullptr, this, nullptr);
         notify(tr("%1 disconnected; showing last received state.").arg(entry->label()));
     }
+    connect(vehicle, &QObject::destroyed, this, [this]() {
+        _activeBeforeRemoval.clear();
+        _queueActivation(_controlRequestToken);
+    });
     emit selectionChanged();
 }
 
@@ -239,6 +263,10 @@ void COPController::selectVehicle(int sysid)
     if (sysid != 0 && !_find(sysid)) {
         return;
     }
+    ++_controlRequestToken;
+    _requestedVehicle.clear();
+    _activeBeforeRemoval.clear();
+    _pendingSysid = 0;
     _selectedSysid = sysid;
     if (sysid == 0) {
         VideoManager::instance()->stopVideo();
@@ -255,16 +283,46 @@ void COPController::assumeControl()
     if (!entry) {
         return;
     }
+    ++_controlRequestToken;
+    _requestedVehicle.clear();
+    _activeBeforeRemoval.clear();
     Vehicle* vehicle = entry->connected() ? entry->vehicle() : nullptr;
     _pendingSysid = vehicle ? 0 : entry->sysid();
     if (vehicle) {
-        MultiVehicleManager::instance()->setActiveVehicle(vehicle);
+        _requestActivation(vehicle);
     }
     emit selectionChanged();
 }
 
+void COPController::_requestActivation(Vehicle* vehicle)
+{
+    _requestedVehicle = vehicle;
+    _queueActivation(++_controlRequestToken);
+}
+
+void COPController::_queueActivation(quint64 token)
+{
+    QTimer::singleShot(0, this, [this, token]() {
+        if (token != _controlRequestToken || _activationInFlight || !_requestedVehicle) {
+            return;
+        }
+        auto* manager = MultiVehicleManager::instance();
+        Vehicle* vehicle = _requestedVehicle;
+        _requestedVehicle.clear();
+        if (!vehicle || !manager->vehicles()->contains(vehicle) || vehicle->vehicleLinkManager()->communicationLost() ||
+            manager->activeVehicle() == vehicle) {
+            return;
+        }
+        // Wait for the manager's deferred switch before submitting the next request.
+        _activationInFlight = vehicle;
+        manager->setActiveVehicle(vehicle);
+    });
+}
+
 void COPController::cancelControl()
 {
+    ++_controlRequestToken;
+    _requestedVehicle.clear();
     _pendingSysid = 0;
     emit selectionChanged();
 }
@@ -276,8 +334,13 @@ void COPController::notify(const QString& message)
     }
     _messages.prepend(
         QVariantMap{{QStringLiteral("text"), message}, {QStringLiteral("time"), QDateTime::currentDateTime()}});
-    if (_messages.size() > 200) {
+    ++_unacknowledgedCount;
+    while (_messages.size() > qMax(200, qMin(_unacknowledgedCount, 1000))) {
         _messages.removeLast();
+    }
+    if (_unacknowledgedCount > 1000) {
+        _unacknowledgedCount = 1000;
+        ++_droppedMessages;
     }
     _unacknowledged = true;
     emit messagesChanged();
@@ -287,5 +350,10 @@ void COPController::notify(const QString& message)
 void COPController::acknowledge()
 {
     _unacknowledged = false;
+    _unacknowledgedCount = 0;
+    _droppedMessages = 0;
+    while (_messages.size() > 200) {
+        _messages.removeLast();
+    }
     emit messagesChanged();
 }

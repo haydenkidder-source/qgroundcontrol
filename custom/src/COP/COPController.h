@@ -77,6 +77,7 @@ class COPController : public QObject
     Q_PROPERTY(int pendingSysid READ pendingSysid NOTIFY selectionChanged)
     Q_PROPERTY(COPVehicle* selected READ selected NOTIFY selectionChanged)
     Q_PROPERTY(QVariantList messages READ messages NOTIFY messagesChanged)
+    Q_PROPERTY(quint64 droppedMessages READ droppedMessages NOTIFY messagesChanged)
     Q_PROPERTY(bool unacknowledged READ unacknowledged NOTIFY messagesChanged)
 
 public:
@@ -93,6 +94,8 @@ public:
     COPVehicle* selected() const;
 
     QVariantList messages() const { return _messages; }
+
+    quint64 droppedMessages() const { return _droppedMessages; }
 
     bool unacknowledged() const { return _unacknowledged; }
 
@@ -113,9 +116,17 @@ private:
     void _vehicleAdded(Vehicle* vehicle);
     void _vehicleRemoved(Vehicle* vehicle);
     void _syncRoles();
+    void _requestActivation(Vehicle* vehicle);
+    void _queueActivation(quint64 token);
     QmlObjectListModel _vehicles;
     QPointer<VehicleRoleController> _roles;
+    QPointer<Vehicle> _activeBeforeRemoval;
+    QPointer<Vehicle> _requestedVehicle;
+    QPointer<Vehicle> _activationInFlight;
+    quint64 _controlRequestToken = 0;
     QVariantList _messages;
+    int _unacknowledgedCount = 0;
+    quint64 _droppedMessages = 0;
     int _selectedSysid = 0;
     int _pendingSysid = 0;
     bool _initialized = false;

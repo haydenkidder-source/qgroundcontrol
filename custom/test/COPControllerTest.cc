@@ -80,7 +80,7 @@ void COPControllerTest::_notificationQueue()
     for (int i = 0; i < 205; ++i) {
         controller.notify(QString::number(i));
     }
-    QCOMPARE(controller.messages().size(), 200);
+    QCOMPARE(controller.messages().size(), 205);
     QCOMPARE(controller.messages().first().toMap().value(QStringLiteral("text")).toString(), QStringLiteral("204"));
     QVERIFY(controller.unacknowledged());
     controller.acknowledge();
@@ -88,6 +88,14 @@ void COPControllerTest::_notificationQueue()
     QCOMPARE(controller.messages().size(), 200);
     controller.notify(QStringLiteral("Next"));
     QVERIFY(controller.unacknowledged());
+    for (int i = 0; i < 1005; ++i) {
+        controller.notify(QString::number(i));
+    }
+    QCOMPARE(controller.messages().size(), 1000);
+    QCOMPARE(controller.droppedMessages(), quint64(6));
+    controller.acknowledge();
+    QCOMPARE(controller.messages().size(), 200);
+    QCOMPARE(controller.droppedMessages(), quint64(0));
 }
 
 void COPControllerTest::_referencePoint()
