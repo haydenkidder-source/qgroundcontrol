@@ -19,11 +19,7 @@ if(NOT GIT_FOUND OR NOT EXISTS "${CMAKE_SOURCE_DIR}/.git")
     set(QGC_APP_VERSION_PATCH "0")
     set(QGC_APP_VERSION_DEV "0")
     string(TIMESTAMP QGC_APP_DATE "%Y-%m-%dT%H:%M:%S%z" UTC)
-    configure_file(
-        "${CMAKE_SOURCE_DIR}/src/qgc_version.h.in"
-        "${CMAKE_BINARY_DIR}/qgc_version.h"
-        @ONLY
-    )
+    configure_file("${CMAKE_SOURCE_DIR}/src/qgc_version.h.in" "${CMAKE_BINARY_DIR}/qgc_version.h" @ONLY)
     return()
 endif()
 
@@ -31,18 +27,15 @@ execute_process(
     COMMAND "${GIT_EXECUTABLE}" rev-parse --absolute-git-dir
     WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
     OUTPUT_VARIABLE _qgc_git_dir
-    OUTPUT_STRIP_TRAILING_WHITESPACE
-    COMMAND_ERROR_IS_FATAL ANY
+    OUTPUT_STRIP_TRAILING_WHITESPACE COMMAND_ERROR_IS_FATAL ANY
 )
 execute_process(
     COMMAND "${GIT_EXECUTABLE}" rev-parse --git-common-dir
     WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
     OUTPUT_VARIABLE _qgc_git_common_dir
-    OUTPUT_STRIP_TRAILING_WHITESPACE
-    COMMAND_ERROR_IS_FATAL ANY
+    OUTPUT_STRIP_TRAILING_WHITESPACE COMMAND_ERROR_IS_FATAL ANY
 )
-get_filename_component(_qgc_git_common_dir "${_qgc_git_common_dir}" ABSOLUTE
-    BASE_DIR "${CMAKE_SOURCE_DIR}")
+get_filename_component(_qgc_git_common_dir "${_qgc_git_common_dir}" ABSOLUTE BASE_DIR "${CMAKE_SOURCE_DIR}")
 set(_qgc_git_configure_dependencies "${_qgc_git_dir}/HEAD" "${_qgc_git_dir}/index")
 if(EXISTS "${_qgc_git_dir}/commondir")
     list(APPEND _qgc_git_configure_dependencies "${_qgc_git_dir}/commondir")
@@ -50,8 +43,11 @@ endif()
 if(EXISTS "${_qgc_git_common_dir}/packed-refs")
     list(APPEND _qgc_git_configure_dependencies "${_qgc_git_common_dir}/packed-refs")
 endif()
-file(GLOB_RECURSE _qgc_git_tag_refs CONFIGURE_DEPENDS LIST_DIRECTORIES false
-    "${_qgc_git_common_dir}/refs/tags/*")
+file(
+    GLOB_RECURSE _qgc_git_tag_refs CONFIGURE_DEPENDS
+    LIST_DIRECTORIES false
+    "${_qgc_git_common_dir}/refs/tags/*"
+)
 list(APPEND _qgc_git_configure_dependencies ${_qgc_git_tag_refs})
 file(READ "${_qgc_git_dir}/HEAD" _qgc_git_head LIMIT 4096)
 if(_qgc_git_head MATCHES "^ref: ([^\r\n]+)")
@@ -63,8 +59,11 @@ if(_qgc_git_head MATCHES "^ref: ([^\r\n]+)")
         list(APPEND _qgc_git_configure_dependencies "${_qgc_git_ref}")
     endif()
 endif()
-set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
-    ${_qgc_git_configure_dependencies})
+set_property(
+    DIRECTORY
+    APPEND
+    PROPERTY CMAKE_CONFIGURE_DEPENDS ${_qgc_git_configure_dependencies}
+)
 
 # Optionally update submodules during configuration
 if(GIT_SUBMODULE)
@@ -93,8 +92,7 @@ execute_process(
     COMMAND "${GIT_EXECUTABLE}" log -1 --format=%D%n%h
     WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
     OUTPUT_VARIABLE _git_info
-    OUTPUT_STRIP_TRAILING_WHITESPACE
-    ERROR_QUIET
+    OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET
 )
 if(_git_info)
     string(REGEX REPLACE "\n.*" "" _git_refs "${_git_info}")
@@ -131,8 +129,7 @@ execute_process(
     COMMAND "${GIT_EXECUTABLE}" describe --always --tags
     WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
     OUTPUT_VARIABLE QGC_APP_VERSION_STR
-    OUTPUT_STRIP_TRAILING_WHITESPACE
-    ERROR_QUIET
+    OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET
 )
 if(NOT QGC_APP_VERSION_STR)
     set(QGC_APP_VERSION_STR "v0.0.0")
@@ -154,8 +151,7 @@ execute_process(
     COMMAND "${GIT_EXECUTABLE}" describe --always --tags --abbrev=0
     WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
     OUTPUT_VARIABLE QGC_APP_VERSION
-    OUTPUT_STRIP_TRAILING_WHITESPACE
-    ERROR_QUIET
+    OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET
 )
 if(NOT QGC_APP_VERSION)
     set(QGC_APP_VERSION "v0.0.0")
@@ -177,8 +173,7 @@ execute_process(
     COMMAND "${GIT_EXECUTABLE}" log -1 --format=%aI "${QGC_APP_DATE_VERSION}"
     WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
     OUTPUT_VARIABLE QGC_APP_DATE
-    OUTPUT_STRIP_TRAILING_WHITESPACE
-    ERROR_QUIET
+    OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET
 )
 if(NOT QGC_APP_DATE)
     string(TIMESTAMP QGC_APP_DATE "%Y-%m-%dT%H:%M:%S%z" UTC)
@@ -188,8 +183,10 @@ endif()
 # ----------------------------------------------------------------------------
 # Parse Version Components (Major.Minor.Patch)
 # ----------------------------------------------------------------------------
-# Strip 'v' prefix if present (e.g., v1.2.3 -> 1.2.3)
-string(REGEX REPLACE "^v" "" QGC_APP_VERSION_CLEAN "${QGC_APP_VERSION}")
+# Strip a leading 'v'/'V' if present (e.g., v1.2.3 -> 1.2.3). Case-insensitive
+# because git describe returns whatever a tag's actual case is, and this
+# project's own tags aren't all guaranteed to use the lowercase convention.
+string(REGEX REPLACE "^[vV]" "" QGC_APP_VERSION_CLEAN "${QGC_APP_VERSION}")
 
 # Extract version components using regex
 if(QGC_APP_VERSION_CLEAN MATCHES "^([0-9]+)\\.([0-9]+)\\.([0-9]+)")
@@ -199,7 +196,9 @@ if(QGC_APP_VERSION_CLEAN MATCHES "^([0-9]+)\\.([0-9]+)\\.([0-9]+)")
     set(QGC_APP_VERSION_PATCH "${CMAKE_MATCH_3}")
 else()
     # Fallback if version doesn't match expected format
-    message(WARNING "QGC: Could not parse semantic version from Git tag: '${QGC_APP_VERSION_CLEAN}'. Using fallback 0.0.0")
+    message(
+        WARNING "QGC: Could not parse semantic version from Git tag: '${QGC_APP_VERSION_CLEAN}'. Using fallback 0.0.0"
+    )
     set(QGC_APP_VERSION "0.0.0")
     set(QGC_APP_VERSION_MAJOR "0")
     set(QGC_APP_VERSION_MINOR "0")
@@ -210,8 +209,4 @@ endif()
 # ----------------------------------------------------------------------------
 # Generate Version Header
 # ----------------------------------------------------------------------------
-configure_file(
-    "${CMAKE_SOURCE_DIR}/src/qgc_version.h.in"
-    "${CMAKE_BINARY_DIR}/qgc_version.h"
-    @ONLY
-)
+configure_file("${CMAKE_SOURCE_DIR}/src/qgc_version.h.in" "${CMAKE_BINARY_DIR}/qgc_version.h" @ONLY)
