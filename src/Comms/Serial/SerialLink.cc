@@ -67,6 +67,7 @@ void SerialConfiguration::copyFrom(const LinkConfiguration *source)
     setPortName(serialSource->portName());
     setPortDisplayName(serialSource->portDisplayName());
     setUsbDirect(serialSource->usbDirect());
+    setSikRadio(serialSource->sikRadio());
     setdtrForceLow(serialSource->dtrForceLow());
 }
 
@@ -343,6 +344,16 @@ bool SerialWorker::_configurePort()
             return false;
         }
         qCDebug(SerialLinkLog) << "DTR is unavailable on" << _settings.portName;
+        _port->clearError();
+    }
+    // Some drivers (Android FTDI, Windows with no flow control) leave RTS low after open. A radio with RTS/CTS
+    // enabled sees CTS low and never transmits, so assert it explicitly. Fails harmlessly under HardwareControl,
+    // where the driver owns RTS.
+    if (!_port->setRequestToSend(true)) {
+        if (_port->error() != QSerialPort::UnsupportedOperationError) {
+            return false;
+        }
+        qCDebug(SerialLinkLog) << "RTS is unavailable on" << _settings.portName;
         _port->clearError();
     }
     return true;

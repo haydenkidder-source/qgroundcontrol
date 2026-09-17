@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
+import pytest
 import yaml
 from _helpers import REPO_ROOT
+from android_matrix import LINUX_EMULATOR_JOB, build_matrix
 
 
 def _read(path: str) -> str:
@@ -29,6 +32,115 @@ def test_custom_linux_image_is_declared() -> None:
         "name": "qgc-runs-on-ubuntu24-x64-*",
     }
     assert config["runners"]["linux-x64-builder-prebaked"]["image"] == "qgc-ubuntu24-x64"
+
+
+def test_runner_pools_have_on_demand_capacity_and_cache() -> None:
+    config = _load_yaml(".github/runs-on.yml")
+    for pool, runner in config["runners"].items():
+        assert runner["family"]
+        assert all(isinstance(family, str) and family for family in runner["family"])
+        for resource in ("cpu", "ram"):
+            assert runner[resource]
+            assert all(type(value) is int and value > 0 for value in runner[resource])
+        assert runner["spot"] is False
+        assert "s3-cache" in runner["extras"]
+        assert re.fullmatch(r"[1-9]\d*gb", runner["volume"])
+        platform, arch = pool.split("-")[:2]
+        image = runner["image"]
+        if image in config["images"]:
+            assert config["images"][image]["platform"] == platform
+            assert config["images"][image]["arch"] == arch
+        else:
+            assert image.endswith(f"-{arch}")
+            assert image.startswith("windows" if platform == "windows" else "ubuntu")
+
+
+@pytest.mark.parametrize(
+    "pool",
+    [
+        "linux-x64-builder-60gb",
+        "linux-x64-builder-prebaked",
+        "linux-x64-tester",
+        "linux-x64-vm-builder",
+        "windows-x64-builder",
+    ],
+)
+def test_memory_heavy_pools_retain_a_16_gib_floor(pool: str) -> None:
+    assert min(_load_yaml(".github/runs-on.yml")["runners"][pool]["ram"]) >= 16
+
+
+def test_analysis_pool_provides_16_cpus_and_matching_memory() -> None:
+    runner = _load_yaml(".github/runs-on.yml")["runners"]["linux-x64-analyzer"]
+    assert runner["cpu"] == [16]
+    assert min(runner["ram"]) >= 64
+
+
+@pytest.mark.parametrize("pool", ["linux-x64-emulator", "linux-x64-vm-builder"])
+def test_virtualized_pools_require_nested_virtualization(pool: str) -> None:
+    runner = _load_yaml(".github/runs-on.yml")["runners"][pool]
+    assert runner["nested-virt"] is True
+    assert runner["image"].endswith("-x64")
+
+
+def test_vm_builds_do_not_use_the_smaller_android_emulator_pool() -> None:
+    workflow = _load_yaml(".github/workflows/vm-builds.yml")
+    assert LINUX_EMULATOR_JOB["runson_runner"] == "linux-x64-emulator"
+    for job in workflow["jobs"].values():
+        route = job["runs-on"]
+        assert "/runner=linux-x64-vm-builder" in route
+        assert "linux-x64-emulator" not in route
+        assert "github.repository_owner == 'mavlink'" in route
+        assert "github.event" not in route
+        assert "|| 'ubuntu-latest'" in route
+        cache_step = next(step for step in job["steps"] if step.get("uses") == "runs-on/action@v2")
+        assert "if" not in cache_step
+    for event in ("push", "pull_request"):
+        assert ".github/runs-on.yml" in workflow["on"][event]["paths"]
+
+
+def test_vagrant_cleanup_requires_attempted_startup_and_surfaces_errors() -> None:
+    workflow = _load_yaml(".github/workflows/vm-builds.yml")
+    steps = workflow["jobs"]["vagrant-build"]["steps"]
+    build = next(step for step in steps if step.get("id") == "build")
+    cleanup = next(step for step in steps if step["name"] == "Destroy VM")
+
+    assert build["run"] == "sg libvirt -c 'vagrant up --provider=libvirt'"
+    assert steps.index(build) < steps.index(cleanup)
+    assert cleanup["if"] == (
+        "${{ always() && steps.build.outcome != 'skipped' && steps.build.outcome != '' }}"
+    )
+    assert cleanup["working-directory"] == build["working-directory"] == "deploy/vagrant"
+    assert cleanup["run"] == "sg libvirt -c 'vagrant destroy -f'"
+    assert not cleanup.get("continue-on-error", False)
+
+
+@pytest.mark.parametrize(
+    "workflow",
+    [
+        "linux.yml",
+        "custom-build.yml",
+        "docker.yml",
+        "android.yml",
+        "windows.yml",
+        "runner-images.yml",
+        "vm-builds.yml",
+    ],
+)
+def test_workflows_use_central_runner_definitions(workflow: str) -> None:
+    text = _read(f".github/workflows/{workflow}")
+    assert "runner=" in text
+    assert not re.search(r"/(?:family|cpu|ram|spot|image|volume|extras|nested-virt)=", text)
+    configured = _load_yaml(".github/runs-on.yml")["runners"]
+    references = re.findall(r"(?:linux|windows)-(?:x64|arm64)-[\w-]+", text)
+    for pool in references:
+        assert pool in configured
+
+
+def test_android_matrix_references_defined_runners() -> None:
+    configured = _load_yaml(".github/runs-on.yml")["runners"]
+    for leg in build_matrix(is_pr=False):
+        if pool := leg["runson_runner"]:
+            assert pool in configured
 
 
 def test_runner_image_workflow_uses_current_commit_and_dedicated_role() -> None:
@@ -104,6 +216,10 @@ def test_managed_runner_routes_are_opt_in() -> None:
     pool = warm_pool["pools"]["qgc-windows-x64-builder"]
     assert pool["runner"] == "windows-x64-builder"
     assert pool["schedule"]
+    assert (
+        warm_pool["runners"]["windows-x64-builder"]
+        == _load_yaml(".github/runs-on.yml")["runners"]["windows-x64-builder"]
+    )
 
 
 def test_cpp_codeql_wraps_native_build():
