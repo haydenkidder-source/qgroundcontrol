@@ -122,7 +122,11 @@ jobs:
         uses: actions/checkout@v7
         with:
           # Native package versions come from git describe and require reachable tags.
+          # actions/checkout only fetches tags reachable this way when fetch-tags is
+          # explicitly true - otherwise a non-tag ref (e.g. a branch dispatch) sees no
+          # tags at all, even with fetch-depth: 0, and version resolution falls back to 0.0.0.
           fetch-depth: 0
+          fetch-tags: true
           persist-credentials: false
 
       - name: Install Visual Studio Build Tools
