@@ -243,6 +243,12 @@ qt_add_resources(
 # ============================================================================
 
 set(CUSTOM_SOURCES
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/COP/COPReferencePoint.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/COP/COPReferencePoint.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/COP/COPVideoSession.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/COP/COPVideoSession.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/COP/COPController.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/COP/COPController.h
     ${CMAKE_CURRENT_SOURCE_DIR}/src/CustomPlugin.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/src/CustomPlugin.h
     ${CMAKE_CURRENT_SOURCE_DIR}/src/ExclusionZone/ExclusionZoneController.cc
@@ -265,14 +271,14 @@ set(CUSTOM_SOURCES
 # ============================================================================
 
 set(CUSTOM_LIBRARIES
-    CustomModule CustomPlanModule
+    CustomModule CustomPlanModule GeographicLib::GeographicLib
     PARENT_SCOPE
 )
 
 set(CUSTOM_INCLUDE_DIRECTORIES
     ${CMAKE_CURRENT_SOURCE_DIR}/src ${CMAKE_CURRENT_SOURCE_DIR}/src/ExclusionZone
     ${CMAKE_CURRENT_SOURCE_DIR}/src/MissionManager ${CMAKE_CURRENT_SOURCE_DIR}/src/Settings
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/VehicleRoles
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/VehicleRoles ${CMAKE_CURRENT_SOURCE_DIR}/src/COP
     PARENT_SCOPE
 )
 
@@ -285,3 +291,65 @@ set(CUSTOM_QT_COMPONENTS
     Core
     PARENT_SCOPE
 )
+
+set(COP_QML_FILES
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/COP/COPNavigation.qml ${CMAKE_CURRENT_SOURCE_DIR}/src/COP/COPPage.qml
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/COP/COPNotifications.qml ${CMAKE_CURRENT_SOURCE_DIR}/src/COP/COPVideoGrid.qml
+)
+qgc_set_qt_resource_alias(${COP_QML_FILES})
+qt_add_resources(
+    ${CMAKE_PROJECT_NAME} custom_cop_qml
+    PREFIX "/qml/Custom/COP"
+    FILES ${COP_QML_FILES}
+)
+
+if(QGC_BUILD_TESTING)
+    target_sources(
+        ${CMAKE_PROJECT_NAME}
+        PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/test/COPControllerTest.cc
+                ${CMAKE_CURRENT_SOURCE_DIR}/test/COPControllerTest.h ${CMAKE_CURRENT_SOURCE_DIR}/test/COPStressTest.cc
+                ${CMAKE_CURRENT_SOURCE_DIR}/test/COPStressTest.h
+    )
+    cmake_language(
+        DEFER
+        DIRECTORY
+        "${CMAKE_SOURCE_DIR}"
+        CALL
+        add_qgc_test
+        COPStressTest
+        LABELS
+        Unit
+    )
+    cmake_language(
+        DEFER
+        DIRECTORY
+        "${CMAKE_SOURCE_DIR}"
+        CALL
+        add_qgc_test
+        COPStressUITest
+        LABELS
+        Integration
+        Vehicle
+    )
+    cmake_language(
+        DEFER
+        DIRECTORY
+        "${CMAKE_SOURCE_DIR}"
+        CALL
+        add_qgc_test
+        COPControllerTest
+        LABELS
+        Unit
+    )
+    cmake_language(
+        DEFER
+        DIRECTORY
+        "${CMAKE_SOURCE_DIR}"
+        CALL
+        add_qgc_test
+        COPVehicleLifecycleTest
+        LABELS
+        Integration
+        Vehicle
+    )
+endif()

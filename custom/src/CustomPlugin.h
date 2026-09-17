@@ -89,6 +89,10 @@ public:
     void registerCustomSettings(SettingsManager* settingsManager) final;
     /// Adds the Exclusion Zones review/approve/push page and the Vehicle Roles page to the Analyze view.
     const QVariantList& analyzePages() final;
+    bool startStandardVideoReceivers() const final;
+    QUrl navigationHeader() const final;
+    QUrl flyViewOverlay() const final;
+    QUrl notificationFooter() const final;
 
 private slots:
     void _advancedChanged(bool advanced);

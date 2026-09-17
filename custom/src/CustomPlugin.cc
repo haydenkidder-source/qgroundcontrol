@@ -5,6 +5,7 @@
 #include <QtQml/QQmlFile>
 
 #include "AppSettings.h"
+#include "COPController.h"
 #include "CustomSettings.h"
 #include "PerimeterScanComplexItem.h"
 #include "PerimeterScanPlanCreator.h"
@@ -332,4 +333,24 @@ const QVariantList& CustomPlugin::analyzePages()
     }();
 
     return customAnalyzeList;
+}
+
+QUrl CustomPlugin::navigationHeader() const
+{
+    return QUrl(QStringLiteral("qrc:/qml/Custom/COP/COPNavigation.qml"));
+}
+
+QUrl CustomPlugin::flyViewOverlay() const
+{
+    return QUrl(QStringLiteral("qrc:/qml/Custom/COP/COPPage.qml"));
+}
+
+QUrl CustomPlugin::notificationFooter() const
+{
+    return QUrl(QStringLiteral("qrc:/qml/Custom/COP/COPNotifications.qml"));
+}
+
+bool CustomPlugin::startStandardVideoReceivers() const
+{
+    return COPController::instance()->selectedSysid() != 0;
 }
