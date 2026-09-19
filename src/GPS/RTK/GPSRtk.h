@@ -6,8 +6,6 @@
 
 #include "GPSCorrectionSourceRegistration.h"
 #include "GPSProvider.h"
-#include "satellite_info.h"
-#include "sensor_gps.h"
 
 class GPSRTKFactGroup;
 class FactGroup;
@@ -28,7 +26,7 @@ public:
 #endif
     /// Inject before connecting; the caller retains ownership.
     void setCorrectionManager(GPSCorrectionManager* manager);
-    void connectReceiver(GPSReceiverType type, GPSProvider::TransportFactory transportFactory,
+    void connectReceiver(GPSType type, GPSProvider::TransportFactory transportFactory,
                          const QString& sourceInstance = {});
     void disconnectGPS();
     bool connected() const;
@@ -38,16 +36,16 @@ public:
 
     struct SatelliteCounts
     {
-        uint8_t inView = 0;
+        uint16_t inView = 0;
         int used = 0;
     };
 
     /// Clamp count to the array bound and tally used-in-solution satellites.
-    static SatelliteCounts countSatellites(const satellite_info_s& msg);
+    static SatelliteCounts countSatellites(const GPSSatelliteReport& msg);
 
 private slots:
-    void _satelliteInfoUpdate(const satellite_info_s& msg);
-    void _sensorGpsUpdate(const sensor_gps_s& msg);
+    void _satelliteInfoUpdate(const GPSSatelliteReport& msg);
+    void _sensorGpsUpdate(const GPSPositionReport& msg);
     void _onGPSConnect();
     void _onGPSDisconnect();
     void _onGPSConnectionError(GPSConnectionError error);

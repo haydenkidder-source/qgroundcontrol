@@ -601,7 +601,11 @@ def test_strict_snapshot_rejects_changed_run_attempt(tmp_path):
             )
             == 1
         )
-    gh.assert_called_once_with("api", "repos/o/r/actions/runs/42")
+    gh.assert_called_once_with(
+        "api",
+        "repos/o/r/actions/runs/42",
+        retry_transient=True,
+    )
 
 
 @pytest.mark.parametrize("prefix", ["Custom-QGroundControl", ""])

@@ -188,12 +188,13 @@ endif()
 # project's own tags aren't all guaranteed to use the lowercase convention.
 string(REGEX REPLACE "^[vV]" "" QGC_APP_VERSION_CLEAN "${QGC_APP_VERSION}")
 
-# Extract version components using regex
+# Extract version components using regex. Only the numeric prefix goes to
+# project(VERSION); suffixed marker tags like v5.2.0-dev stay in QGC_APP_VERSION_STR.
 if(QGC_APP_VERSION_CLEAN MATCHES "^([0-9]+)\\.([0-9]+)\\.([0-9]+)")
-    set(QGC_APP_VERSION "${QGC_APP_VERSION_CLEAN}")
     set(QGC_APP_VERSION_MAJOR "${CMAKE_MATCH_1}")
     set(QGC_APP_VERSION_MINOR "${CMAKE_MATCH_2}")
     set(QGC_APP_VERSION_PATCH "${CMAKE_MATCH_3}")
+    set(QGC_APP_VERSION "${QGC_APP_VERSION_MAJOR}.${QGC_APP_VERSION_MINOR}.${QGC_APP_VERSION_PATCH}")
 else()
     # Fallback if version doesn't match expected format
     message(

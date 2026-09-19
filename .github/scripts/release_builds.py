@@ -96,7 +96,13 @@ def wait_for_builds(repo: str, sha: str, tag: str, output: Path, timeout: int = 
         for name, run in selected.items():
             if name in done:
                 continue
-            current = json.loads(gh("api", f"repos/{repo}/actions/runs/{run['id']}").stdout)
+            current = json.loads(
+                gh(
+                    "api",
+                    f"repos/{repo}/actions/runs/{run['id']}",
+                    retry_transient=True,
+                ).stdout
+            )
             if current["head_sha"] != sha or current["head_branch"] != tag:
                 raise RuntimeError("Release run identity changed")
             if (

@@ -2,7 +2,7 @@
 
 #include "GPSCorrectionManager.h"
 #include "GPSManager.h"
-#include "RTCMParser.h"
+#include "RTCMFramer.h"
 #include <GeographicLib/Geocentric.hpp>
 
 namespace {
@@ -40,7 +40,7 @@ COPReferencePoint::COPReferencePoint(QObject* parent)
 
 QGeoCoordinate COPReferencePoint::decode(const QByteArray& frame)
 {
-    if (frame.size() < 25 || static_cast<quint8>(frame[0]) != RTCMParser::kPreamble) {
+    if (frame.size() < 25 || static_cast<quint8>(frame[0]) != RTCMFramer::PREAMBLE) {
         return {};
     }
     const auto message = bits(frame, 24, 12);
@@ -49,7 +49,8 @@ QGeoCoordinate COPReferencePoint::decode(const QByteArray& frame)
         frame.size() != payloadSize + 6) {
         return {};
     }
-    const auto crc = RTCMParser::crc24q(reinterpret_cast<const uint8_t*>(frame.constData()), frame.size() - 3);
+    const auto crc = RTCMFramer::crc24q(
+        {reinterpret_cast<const uint8_t*>(frame.constData()), static_cast<size_t>(frame.size() - 3)});
     if (crc != bits(frame, (frame.size() - 3) * 8, 24)) {
         return {};
     }

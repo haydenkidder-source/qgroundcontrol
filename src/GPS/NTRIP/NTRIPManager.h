@@ -9,11 +9,11 @@
 #include <QtQmlIntegration/QtQmlIntegration>
 
 #include "GPSCorrectionSourceRegistration.h"
+#include "NTRIPConfiguration.h"
 #include "NTRIPConnectionStats.h"
 #include "NTRIPGgaProvider.h"
 #include "NTRIPSourceTableController.h"
 #include "NTRIPTransport.h"
-#include "NTRIPTransportConfig.h"
 #include "RTCMFrameDecoder.h"
 
 Q_DECLARE_LOGGING_CATEGORY(NTRIPManagerLog)
@@ -74,7 +74,7 @@ public:
     {
         StartRequested,       ///< startNTRIP() called or settings enable went true.
         StopRequested,        ///< stopNTRIP() called or settings enable went false.
-        ConfigInvalid,        ///< NTRIPTransportConfig::isValid() returned false.
+        ConfigInvalid,        ///< Connection configuration failed validation.
         TransportConnected,   ///< NTRIPTransport emitted connected().
         RTCMBeforeConnected,  ///< RTCM data arrived before the connected() signal was processed.
         TransportError,       ///< NTRIPTransport emitted a retryable error.
@@ -125,6 +125,8 @@ public:
     /// Inject before init(); the caller retains ownership.
     void setCorrectionManager(GPSCorrectionManager* manager);
 
+    void setGgaPositionProvider(NTRIPGgaProvider::PositionSource source, NTRIPGgaProvider::PositionProvider provider);
+
     void startNTRIP();
     void stopNTRIP();
 
@@ -138,15 +140,15 @@ signals:
 private:
     /// Dispatch an event. Returns true if a transition was found and taken.
     /// Events with no matching row for the current state are ignored (debug log).
-    bool _dispatch(Event ev, const QString& detail = {});
+    bool _dispatch(Event ev, const QString& detail = {}, std::chrono::milliseconds retryAfter = {});
 
     /// Commit a state change. Updates _connectionStatus/_statusMessage and
     /// emits change signals *before* invoking entry actions so recursive
     /// dispatches from entry actions observe the new state, not the old.
-    void _enterState(ConnectionStatus to, const QString& detail);
+    void _enterState(ConnectionStatus to, const QString& detail, std::chrono::milliseconds retryAfter = {});
 
     /// Per-state side effects (start transport, tear down, schedule reconnect, etc.).
-    void _onEnterState(ConnectionStatus from, ConnectionStatus to);
+    void _onEnterState(ConnectionStatus from, ConnectionStatus to, std::chrono::milliseconds retryAfter);
 
     /// Default user-visible message for a state. Callers may override via detail.
     static QString _defaultMessageFor(ConnectionStatus state);
@@ -161,24 +163,25 @@ private:
     static constexpr int kMaxReconnectMs = 30000;
     static constexpr int kMaxReconnectAttempts = 100;
 
-    void _scheduleReconnect();
+    void _scheduleReconnect(std::chrono::milliseconds retryAfter = {});
 
     void _cancelReconnect() { _reconnectTimer.stop(); }
 
     void _resetReconnectAttempts() { _reconnectAttempts = 0; }
 
-    int _reconnectBackoffMs() const;
+    int _reconnectBackoffMs(std::chrono::milliseconds retryAfter = {}) const;
 
     bool _reconnectExhausted() const { return _reconnectAttempts >= kMaxReconnectAttempts; }
 
     /// Reconfigure the manager-owned NTRIP sink without restarting transport.
-    void _applyUdpForwarderConfig(const NTRIPTransportConfig& config);
+    void _applyUdpForwarderConfig(const NTRIPUdpForwardConfig& config);
 
-    void _onTransportError(NTRIPError code, const QString& detail);
+    void _onTransportError(const NTRIPFailure& failure);
     void _onPlaintextCredentialsWarning();
     void _setSecurityWarning(const QString& warning);
     void _rtcmDataReceived(const RTCMFrameDecoder::Result& frame);
     void _onSettingChanged();
+    NTRIPConfiguration _configFromSettings() const;
     bool _isEnabled() const;
 
     NTRIPGgaProvider _ggaProvider{this};
@@ -195,7 +198,7 @@ private:
     QPointer<GPSCorrectionManager> _correctionManager;
     GPSCorrectionSourceRegistration _correctionRegistration;
 
-    NTRIPTransportConfig _runningConfig;
+    NTRIPConfiguration _runningConfig;
     NTRIPSettings* _settings = nullptr;
 
     NTRIPSourceTableController _sourceTableController{this};
@@ -205,4 +208,5 @@ private:
     QChronoTimer _reconnectTimer{this};
     int _reconnectAttempts = 0;
     bool _initialized = false;
+    quint64 _stateRevision = 0;
 };

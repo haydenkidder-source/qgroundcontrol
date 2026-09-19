@@ -6,7 +6,7 @@
 #include "COPController.h"
 #include "COPReferencePoint.h"
 #include "LinkManager.h"
-#include "RTCMParser.h"
+#include "RTCMFramer.h"
 #include "SettingsManager.h"
 #include "VehicleLinkManager.h"
 
@@ -114,7 +114,7 @@ void COPControllerTest::_referencePoint()
     setBits(24, 12, 1005);
     // WGS84 equator, longitude 180 degrees; exercises signed ECEF extraction.
     setBits(58, 38, static_cast<quint64>(-63781370000LL));
-    const auto crc = RTCMParser::crc24q(reinterpret_cast<const uint8_t*>(frame.constData()), 22);
+    const auto crc = RTCMFramer::crc24q({reinterpret_cast<const uint8_t*>(frame.constData()), 22});
     setBits(176, 24, crc);
     const auto coordinate = COPReferencePoint::decode(frame);
     QVERIFY(coordinate.isValid());

@@ -1,20 +1,34 @@
 #pragma once
 
+#include <atomic>
+#include <cstdint>
+#include <functional>
+#include <memory>
+
 #include <QtCore/QByteArray>
 #include <QtCore/QMetaType>
 #include <QtCore/QObject>
 #include <QtCore/QString>
 #include <QtCore/QThread>
 
-#include <atomic>
-#include <cstdint>
-#include <functional>
-#include <memory>
+#include "GPSDriverReports.h"
+#include "GPSReceiverConfig.h"
+#include "GPSSurveyInStatus.h"
+#include "GPSType.h"
 
-#include "GPSDriver.h"
-#include "GPSReceiverTypes.h"
+Q_DECLARE_METATYPE(GPSPositionReport)
+Q_DECLARE_METATYPE(GPSSatelliteReport)
 
 class GPSTransport;
+
+enum class GPSConnectionError
+{
+    None = 0,
+    OpenFailed = 1,
+    ConfigFailed = 2,
+    DeviceError = 3,
+};
+Q_DECLARE_METATYPE(GPSConnectionError)
 
 class GPSProvider : public QThread
 {
@@ -24,24 +38,27 @@ public:
     /// Consumed by run(), so transport construction, I/O and destruction share the worker thread.
     using TransportFactory = std::function<std::unique_ptr<GPSTransport>(const std::atomic_bool&)>;
 
-    GPSProvider(TransportFactory transportFactory, GPSReceiverType type, const GPSReceiverConfig& config,
+    GPSProvider(TransportFactory transportFactory, GPSType type, const GPSReceiverConfig& config,
                 QObject* parent = nullptr);
 
     void stop() { _requestStop = true; }
 
 signals:
-    void satelliteInfoUpdate(const satellite_info_s &message);
-    void sensorGpsUpdate(const sensor_gps_s &message);
+    void satelliteInfoUpdate(const GPSSatelliteReport& message);
+    void sensorGpsUpdate(const GPSPositionReport& message);
     void RTCMDataUpdate(const QByteArray& message, qint64 receivedAtMs);
     void surveyInStatus(const GPSSurveyInStatus &status);
     void connectionError(GPSConnectionError error);
     void receiverReady();
 
 private:
+    friend class GPSProviderTest;
+
     void run() final;
+    void _handleSurveyIn(const GPSSurveyReport& report);
 
     TransportFactory _transportFactory;
-    GPSReceiverType _type;
+    GPSType _type;
     std::atomic_bool _requestStop = false;
     GPSReceiverConfig _config{};
 
