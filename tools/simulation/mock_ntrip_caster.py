@@ -40,7 +40,7 @@ log = logging.getLogger("mock-ntrip")
 # RTCM3 frame builder
 # ---------------------------------------------------------------------------
 
-# CRC-24Q lookup table (same algorithm as RTCMParser::crc24q)
+# CRC-24Q lookup table (same algorithm as RTCMFramer::crc24q)
 _CRC24Q_TABLE = [0] * 256
 
 

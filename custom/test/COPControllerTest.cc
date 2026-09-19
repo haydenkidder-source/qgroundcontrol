@@ -165,7 +165,8 @@ void COPVehicleLifecycleTest::_disconnectAndReconnect()
     }
     QCOMPARE(controller.messages().size(), notificationCount);
     for (int severity : {MAV_SEVERITY_EMERGENCY, MAV_SEVERITY_ALERT}) {
-        emit currentVehicle->textMessageReceived(sysid, 1, severity, QStringLiteral("Immediate action required"), QString());
+        emit currentVehicle->textMessageReceived(sysid, 1, severity, QStringLiteral("Immediate action required"),
+                                                 QString());
     }
     QCOMPARE(controller.messages().size(), notificationCount + 2);
     emit currentVehicle->vehicleLinkManager()->communicationLostChanged(true);
