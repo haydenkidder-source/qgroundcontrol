@@ -31,6 +31,7 @@ private slots:
     void _threeVehicleChurn();
     void _lastControlRequestWins();
     void _disconnectOtherPreservesControl();
+    void _navigationAndLayout();
 
 private:
     MockLink* _start(MAV_TYPE type, bool increment = true);

@@ -1,6 +1,7 @@
 pragma ComponentBehavior: Bound
 
 import QtQuick
+import QtQuick.Controls
 import QtQuick.Layouts
 
 import QGC
@@ -77,6 +78,15 @@ Rectangle {
                                               : qsTr("%1 — disconnected, last received state").arg(root.selected.label)
             }
             QGCButton {
+                text: qsTr("Name / role…")
+                enabled: root.selected !== null
+                onClicked: {
+                    if (root.selected && root.hostWindow && root.hostWindow.allowViewSwitch()) {
+                        editVehicleDialog.open({ sysid: root.selected.sysid })
+                    }
+                }
+            }
+            QGCButton {
                 primary: true
                 text: COPController.pendingSysid === COPController.selectedSysid
                       ? qsTr("Waiting for connection…") : qsTr("Assume Control")
@@ -92,6 +102,43 @@ Rectangle {
                 text: qsTr("Cancel pending control")
                 visible: COPController.pendingSysid !== 0
                 onClicked: COPController.cancelControl()
+            }
+        }
+    }
+
+    QGCPopupDialogFactory {
+        id: editVehicleDialog
+        dialogComponent: editVehicleComponent
+    }
+
+    Component {
+        id: editVehicleComponent
+
+        QGCPopupDialog {
+            id: dialog
+            required property int sysid
+            title: qsTr("Vehicle %1 — name and role").arg(sysid)
+            buttons: Dialog.Save | Dialog.Cancel
+            acceptButtonEnabled: roleCombo.currentIndex >= 0
+            onAccepted: VehicleRoleController.addEntry(sysid, roleCombo.currentText, nickname.text)
+
+            ColumnLayout {
+                width: Math.min(ScreenTools.defaultFontPixelWidth * 40, dialog.maxContentAvailableWidth)
+                QGCLabel { text: qsTr("Nickname") }
+                QGCTextField {
+                    id: nickname
+                    Layout.fillWidth: true
+                    text: VehicleRoleController.nameForSysid(dialog.sysid)
+                    placeholderText: qsTr("Nickname (optional)")
+                }
+                QGCLabel { text: qsTr("Role") }
+                QGCComboBox {
+                    id: roleCombo
+                    Layout.fillWidth: true
+                    model: VehicleRoleController.availableRoles
+                    currentIndex: VehicleRoleController.availableRoles.indexOf(
+                                      VehicleRoleController.roleForSysid(dialog.sysid))
+                }
             }
         }
     }

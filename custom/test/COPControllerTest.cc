@@ -156,6 +156,17 @@ void COPVehicleLifecycleTest::_disconnectAndReconnect()
     QVERIFY(entry);
     QVERIFY(entry->connected());
     QCOMPARE(entry->vehicle(), vehicle());
+    Vehicle* currentVehicle = vehicle();
+    QVERIFY(currentVehicle);
+    const int notificationCount = controller.messages().size();
+    for (int severity = MAV_SEVERITY_CRITICAL; severity <= MAV_SEVERITY_DEBUG; ++severity) {
+        emit currentVehicle->textMessageReceived(sysid, 1, severity, QStringLiteral("Compass not healthy"), QString());
+    }
+    QCOMPARE(controller.messages().size(), notificationCount);
+    for (int severity : {MAV_SEVERITY_EMERGENCY, MAV_SEVERITY_ALERT}) {
+        emit currentVehicle->textMessageReceived(sysid, 1, severity, QStringLiteral("Immediate action required"), QString());
+    }
+    QCOMPARE(controller.messages().size(), notificationCount + 2);
     const int count = controller.vehicles()->count();
     const QString mode = entry->flightMode();
     _disconnectMockLink();

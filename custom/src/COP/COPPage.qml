@@ -40,12 +40,19 @@ Rectangle {
                     .arg(root.selected.flightMode || qsTr("Unknown")) : qsTr("No vehicle selected")
         }
         RowLayout {
+            id: regions
             Layout.fillWidth: true
             Layout.fillHeight: true
+            Layout.minimumHeight: 0
             FlightMap {
                 id: map
+                objectName: "copMap"
                 Layout.fillWidth: true
                 Layout.fillHeight: true
+                Layout.minimumWidth: 0
+                Layout.minimumHeight: 0
+                Layout.preferredWidth: root.width * 0.6
+                clip: true
                 mapName: "COP"
                 allowVehicleLocationCenter: false
                 MapQuickItem {
@@ -91,13 +98,24 @@ Rectangle {
             }
             ColumnLayout {
                 visible: root.overview
-                Layout.preferredWidth: root.width * 0.45
+                Layout.minimumWidth: 0
+                Layout.minimumHeight: 0
+                Layout.preferredWidth: root.width * 0.4
+                Layout.fillWidth: true
                 Layout.fillHeight: true
-                QGCLabel { text: qsTr("Connected vehicle video") }
+                clip: true
+                QGCLabel {
+                    Layout.fillWidth: true
+                    elide: Text.ElideRight
+                    text: qsTr("Connected vehicle video")
+                }
                 // Video tiles are installed independently of the active vehicle's FlyView receiver.
                 Loader {
+                    objectName: "copVideoRegion"
                     Layout.fillWidth: true
                     Layout.fillHeight: true
+                    Layout.minimumWidth: 0
+                    Layout.minimumHeight: 0
                     source: "COPVideoGrid.qml"
                 }
             }

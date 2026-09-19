@@ -191,13 +191,11 @@ ApplicationWindow {
 
     // This variant is only meant to be called by QGCApplication
     function _showMessageDialog(dialogTitle, dialogText) {
-        QGroundControl.corePlugin.operatorNotification(dialogTitle + ": " + dialogText)
         _showMessageDialogWorker(mainWindow, dialogTitle, dialogText)
     }
 
     // This variant is only meant to be called by QGCApplication. Ok reboots the active vehicle.
     function _showRebootVehicleDialog(dialogTitle, dialogText) {
-        QGroundControl.corePlugin.operatorNotification(dialogTitle + ": " + dialogText)
         _showMessageDialogWorker(mainWindow, dialogTitle,
                                  dialogText + " " + qsTr("Click Ok to reboot the vehicle now."),
                                  Dialog.Ok | Dialog.Cancel,
@@ -329,6 +327,7 @@ ApplicationWindow {
     }
 
     header: Loader {
+        height: item ? item.implicitHeight : 0
         source: QGroundControl.corePlugin.navigationHeader
         onLoaded: item.hostWindow = mainWindow
     }
@@ -336,13 +335,15 @@ ApplicationWindow {
     FlyView {
         id:                     flyView
         objectName:             "mainView_fly"
-        enabled:                !flyViewOverlayLoader.item || !flyViewOverlayLoader.item.visible
+        contentCovered:         flyViewOverlayLoader.item && flyViewOverlayLoader.item.visible
         anchors.fill:           parent
     }
 
     Loader {
         id: flyViewOverlayLoader
         anchors.fill: parent
+        anchors.topMargin: ScreenTools.toolbarHeight
+        clip: true
         visible: flyView.visible
         source: QGroundControl.corePlugin.flyViewOverlay
         onLoaded: item.hostWindow = mainWindow
@@ -356,8 +357,11 @@ ApplicationWindow {
     }
 
     footer: Column {
+        height: implicitHeight
         Loader {
-            width: parent.width
+            anchors.right: parent.right
+            width: Math.min(parent.width, item ? item.implicitWidth : 0)
+            height: item ? item.implicitHeight : 0
             source: QGroundControl.corePlugin.notificationFooter
             onLoaded: item.hostWindow = mainWindow
         }
@@ -500,7 +504,6 @@ ApplicationWindow {
     //-- Critical Vehicle Message Popup
 
     function showCriticalVehicleMessage(message) {
-        QGroundControl.corePlugin.operatorNotification(message)
         if (suppressCriticalVehicleMessages) {
             return
         }

@@ -44,10 +44,11 @@ QtObject {
         }
 
         function _warn() {
+            const message = qsTr("The change to Manual mode was not confirmed. " +
+                                 "Verify the rover's actual state before assuming manual control.")
+            QGroundControl.corePlugin.operatorNotification(qsTr("Vehicle %1: %2").arg(_vehicle ? _vehicle.id : "?").arg(message))
             _reset()
-            QGroundControl.showMessageDialog(mainWindow, _root.assumeRoverControlTitle,
-                qsTr("The change to Manual mode was not confirmed. " +
-                     "Verify the rover's actual state before assuming manual control."))
+            QGroundControl.showMessageDialog(mainWindow, _root.assumeRoverControlTitle, message)
         }
 
         onTriggered: _warn()
@@ -75,10 +76,11 @@ QtObject {
         }
 
         function _warn() {
+            const message = qsTr("The change to Auto mode was not confirmed. " +
+                                 "Verify the rover's actual state before assuming autonomous control has resumed.")
+            QGroundControl.corePlugin.operatorNotification(qsTr("Vehicle %1: %2").arg(_vehicle ? _vehicle.id : "?").arg(message))
             _reset()
-            QGroundControl.showMessageDialog(mainWindow, _root.returnToAutoTitle,
-                qsTr("The change to Auto mode was not confirmed. " +
-                     "Verify the rover's actual state before assuming autonomous control has resumed."))
+            QGroundControl.showMessageDialog(mainWindow, _root.returnToAutoTitle, message)
         }
 
         onTriggered: _warn()

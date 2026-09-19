@@ -10,7 +10,9 @@ import QGroundControl.Controls
 
 Flickable {
     id: root
+    contentWidth: width
     contentHeight: grid.implicitHeight
+    flickableDirection: Flickable.VerticalFlick
     clip: true
     readonly property bool hasConnectedVehicle: {
         for (let i = 0; i < COPController.vehicles.count; ++i) {
@@ -40,9 +42,15 @@ Flickable {
                 required property var object
                 visible: object.connected
                 Layout.fillWidth: true
-                QGCLabel { text: tile.object.label }
+                Layout.minimumWidth: 0
+                QGCLabel {
+                    Layout.fillWidth: true
+                    elide: Text.ElideRight
+                    text: tile.object.label
+                }
                 QGCTextField {
                     Layout.fillWidth: true
+                    Layout.minimumWidth: 0
                     text: tile.object.videoUri
                     placeholderText: qsTr("Video URI (empty: vehicle advertised stream)")
                     onEditingFinished: tile.object.videoUri = text
@@ -50,6 +58,7 @@ Flickable {
                 VideoOutput {
                     id: output
                     Layout.fillWidth: true
+                    Layout.minimumWidth: 0
                     Layout.preferredHeight: width * 9 / 16
                     fillMode: VideoOutput.PreserveAspectFit
                     COPVideoSession {

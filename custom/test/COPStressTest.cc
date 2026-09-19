@@ -4,6 +4,7 @@
 #include <QtCore/QTimer>
 #include <QtQml/QQmlApplicationEngine>
 #include <QtQuick/QQuickItem>
+#include <QtQuick/QQuickWindow>
 #include <QtTest/QSignalSpy>
 
 #include "AppSettings.h"
@@ -327,6 +328,49 @@ void COPStressUITest::_disconnectOtherPreservesControl()
     stallion->disconnect();
     QTRY_VERIFY_WITH_TIMEOUT(removed.isNull(), TestTimeout::longMs());
     QTRY_COMPARE_WITH_TIMEOUT(manager->activeVehicle(), selected->vehicle(), TestTimeout::mediumMs());
+}
+
+void COPStressUITest::_navigationAndLayout()
+{
+    // A single startUI() lifetime is used for all window sizes (rather than QTest data rows,
+    // each of which would tear down and recreate the QML engine): COPController is a
+    // process-persistent singleton, and recreating the engine while it stays alive between rows
+    // left freshly-constructed QML bindings unable to observe its notify()-driven property
+    // changes, even though the same reactivity works correctly within one engine's lifetime.
+    startUI();
+    QVERIFY(!QTest::currentTestFailed());
+    QVERIFY(_selectTab(0));
+    auto* controller = COPController::instance();
+    const int priorMessageCount = controller->messages().size();
+    controller->notify(QStringLiteral("Communication lost: review vehicle status"));
+    QCOMPARE(controller->messages().size(), priorMessageCount + 1);
+    auto* fly = findItem(_rootItem, QStringLiteral("mainView_fly"));
+    auto* map = findItem(_rootItem, QStringLiteral("copMap"));
+    auto* video = findItem(_rootItem, QStringLiteral("copVideoRegion"));
+    auto* notifications = findItem(_rootItem, QStringLiteral("copNotifications"));
+    auto* logo = findItem(_rootItem, QStringLiteral("toolbar_qgcLogo"));
+    QVERIFY(fly && map && video && notifications && logo);
+    QVERIFY(logo->isEnabled());
+    const auto sceneRect = [](QQuickItem* item) { return item->mapRectToScene(item->boundingRect()); };
+
+    for (const QSize windowSize : {QSize(1280, 800), QSize(800, 600), QSize(480, 600)}) {
+        _window->resize(windowSize);
+        QTRY_VERIFY_WITH_TIMEOUT(map->width() >= fly->width() * 0.4, TestTimeout::shortMs());
+        QTRY_VERIFY_WITH_TIMEOUT(video->width() >= fly->width() * 0.2, TestTimeout::shortMs());
+        QVERIFY(sceneRect(map).left() >= sceneRect(fly).left());
+        QVERIFY(sceneRect(map).right() <= sceneRect(video).left());
+        QVERIFY(sceneRect(video).right() <= sceneRect(fly).right());
+        QVERIFY(sceneRect(logo).bottom() <= sceneRect(map).top());
+        QVERIFY(sceneRect(notifications).bottom() <= _window->height());
+    }
+
+    _window->resize(1280, 1000);
+    QVERIFY(clickToolSelectDropdownButton(QStringLiteral("toolbar_viewAnalyze")));
+    QVERIFY(clickButton(QStringLiteral("analyzeButton_Vehicle Roles")));
+    QVERIFY(clickToolSelectDropdownButton(QStringLiteral("toolbar_viewSettings")));
+    QVERIFY(clickToolSelectDropdownButton(QStringLiteral("toolbar_viewConfigure")));
+    QVERIFY(clickToolSelectDropdownButton(QStringLiteral("toolbar_viewPlan")));
+    QVERIFY(clickToolSelectDropdownButton(QStringLiteral("toolbar_viewFly")));
 }
 
 UT_REGISTER_TEST(COPStressTest, TestLabel::Unit)

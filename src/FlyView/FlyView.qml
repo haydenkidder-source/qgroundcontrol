@@ -24,6 +24,7 @@ Item {
     // These should only be used by MainRootWindow
     property var planController:    _planController
     property var guidedController:  _guidedController
+    property bool contentCovered:  false
 
     PlanMasterController {
         id:                     _planController
@@ -71,6 +72,7 @@ Item {
     Item {
         id:                 mapHolder
         anchors.fill:       parent
+        enabled:            !_root.contentCovered
 
         // Map engine switch (issue #14901): QtLocation FlyViewMap or the
         // experimental GeoMap engine, only one instantiated at a time. The
