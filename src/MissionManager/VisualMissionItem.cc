@@ -16,15 +16,6 @@ VisualMissionItem::VisualMissionItem(PlanMasterController* masterController, boo
     _commonInit();
 }
 
-VisualMissionItem::VisualMissionItem(const VisualMissionItem& other, bool flyView)
-    : QObject                   (other._masterController)
-    , _flyView                  (flyView)
-{
-    *this = other;
-
-    _commonInit();
-}
-
 void VisualMissionItem::_commonInit(void)
 {
     // Don't get terrain altitude information for submarines or boats

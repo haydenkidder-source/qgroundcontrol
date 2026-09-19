@@ -117,7 +117,7 @@ void QGCCachedTileSet::_doneWithDownload()
             qCWarning(QGCCachedTileSetLog) << "_savedTileCount=0";
         }
 
-        setUniqueTileSize(_uniqueTileCount * avg);
+        setUniqueTileSize(static_cast<quint64>(_uniqueTileCount) * avg);
     }
 
     setDownloading(false);
@@ -243,8 +243,8 @@ void QGCCachedTileSet::_networkReplyFinished()
 
     if (_savedTileCount % 10 == 0) {
         const quint32 avg = _savedTileSize / _savedTileCount;
-        setTotalTileSize(avg * _totalTileCount);
-        setUniqueTileSize(avg * _uniqueTileCount);
+        setTotalTileSize(static_cast<quint64>(avg) * _totalTileCount);
+        setUniqueTileSize(static_cast<quint64>(avg) * _uniqueTileCount);
     }
 
     _prepareDownload();

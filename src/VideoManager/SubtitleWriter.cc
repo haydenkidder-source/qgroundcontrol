@@ -126,9 +126,9 @@ void SubtitleWriter::_captureTelemetry()
     // This splits the screen in N parts and uses the N-1 internal parts to align the subtitles to.
     // Should we try to get the resolution from the pipeline? This seems to work fine with other resolutions too.
     static constexpr int offsetFactor = 100; // Used to reduce the borders in the layout
-    static constexpr float nRows = 3; // number of rows used for displaying data
+    static constexpr int nRows = 3;          // number of rows used for displaying data
     static const int rowWidth = (_size.width() + offsetFactor) / (nRows + 1);
-    const int nValuesByRow = ceil(_facts.length() / nRows);
+    const qsizetype nValuesByRow = _facts.size() / nRows + (_facts.size() % nRows != 0);
 
     QStringList stringColumns;
 

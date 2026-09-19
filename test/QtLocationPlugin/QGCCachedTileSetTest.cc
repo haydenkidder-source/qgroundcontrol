@@ -1,8 +1,10 @@
 #include "QGCCachedTileSetTest.h"
-#include "PropertyTestHelper.h"
+
 #include <QtTest/QSignalSpy>
 
+#include "PropertyTestHelper.h"
 #include "QGCCachedTileSet.h"
+#include "QGCTile.h"
 
 void QGCCachedTileSetTest::_testConstructorSetsName()
 {
@@ -243,6 +245,25 @@ void QGCCachedTileSetTest::_testSetSelectedEmitsSignal()
     ts.setSelected(false);
     QCOMPARE(spy.count(), 2);
     QVERIFY(!ts.selected());
+}
+
+void QGCCachedTileSetTest::_testDownloadCompletionLargeTileSet()
+{
+    QGCCachedTileSet ts(QStringLiteral("large"));
+    ts.setSavedTileCount(100000);
+    ts.setSavedTileSize(10000000000ULL);
+    ts.setUniqueTileCount(90000);
+    ts.setDownloading(true);
+    QSignalSpy completeSpy(&ts, &QGCCachedTileSet::completeChanged);
+
+    const QQueue<QGCTile*> tiles;
+    QVERIFY(QMetaObject::invokeMethod(&ts, "_tileListFetched", Qt::DirectConnection, Q_ARG(QQueue<QGCTile*>, tiles)));
+
+    QCOMPARE(ts.totalTilesSize(), 10000000000ULL);
+    QCOMPARE(ts.uniqueTileSize(), 9000000000ULL);
+    QVERIFY(ts.complete());
+    QVERIFY(!ts.downloading());
+    QCOMPARE(completeSpy.count(), 1);
 }
 
 UT_REGISTER_TEST(QGCCachedTileSetTest, TestLabel::Unit)
