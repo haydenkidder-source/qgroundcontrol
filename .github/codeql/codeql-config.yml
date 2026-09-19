@@ -18,6 +18,11 @@ paths-ignore:
   - '**/libs/**'
   - '**/3rdparty/**'
   - '**/build/**'
+  # CPM_SOURCE_CACHE (CMakeLists.txt) and the aqtinstall Qt SDK (tools/setup/install_qt.py)
+  # both land inside the workspace and get compiled, so the C++ extractor picks them up
+  # despite not being listed under `paths` above — vendored/SDK code, not ours to fix.
+  - '**/.cache/**'
+  - '**/.qt/**'
   # Vendored Android Java sources — upstream libsdl/freedesktop, not ours to fix.
   - 'android/src/org/libsdl/**'
   - 'android/src/org/freedesktop/**'
