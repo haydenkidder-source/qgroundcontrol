@@ -40,7 +40,6 @@ Rectangle {
                     .arg(root.selected.flightMode || qsTr("Unknown")) : qsTr("No vehicle selected")
         }
         RowLayout {
-            id: regions
             Layout.fillWidth: true
             Layout.fillHeight: true
             Layout.minimumHeight: 0

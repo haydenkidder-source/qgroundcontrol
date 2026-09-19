@@ -1,29 +1,13 @@
 #include "COPController.h"
 
-#include <QtCore/QApplicationStatic>
 #include <QtCore/QSettings>
 #include <QtCore/QTimer>
-#include <QtQml/QQmlEngine>
 
 #include "AudioOutput.h"
 #include "MultiVehicleManager.h"
 #include "QGCCorePlugin.h"
 #include "VehicleLinkManager.h"
 #include "VideoManager.h"
-
-Q_APPLICATION_STATIC(COPController, copControllerInstance)
-
-COPController* COPController::instance()
-{
-    return copControllerInstance();
-}
-
-COPController* COPController::create(QQmlEngine*, QJSEngine*)
-{
-    auto* controller = instance();
-    QQmlEngine::setObjectOwnership(controller, QQmlEngine::CppOwnership);
-    return controller;
-}
 
 COPVehicle::COPVehicle(int sysid, VehicleRoleController* roles, QObject* parent)
     : QObject(parent)
