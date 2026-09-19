@@ -42,8 +42,10 @@ arrives, no reference marker is shown. Field layout was checked against
 
 The footer retains up to 200 acknowledged messages and up to 1,000 outstanding messages
 with timestamps. If outstanding messages exceed that limit, it displays the number omitted
-until the operator acknowledges them. Vehicle status text,
-link loss/restoration, the rover relay advisory, and application messages enter this queue.
+until the operator acknowledges them. Emergency/alert vehicle status text, communication
+loss/disconnection, the rover relay advisory, and explicit operator notifications enter this
+queue. Routine health/status messages and general application dialogs stay in their existing
+vehicle message displays and dialogs; link restoration does not add a notification.
 New messages request an AudioOutput alert, respecting QGC's audio mute and volume settings,
 and turn the border orange. Acknowledgement clears the highlight and retains the latest
 200 messages as read history.

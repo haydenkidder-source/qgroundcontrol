@@ -4,6 +4,7 @@
 #include <QtCore/QTimer>
 #include <QtQml/QQmlApplicationEngine>
 #include <QtQuick/QQuickItem>
+#include <QtQuick/QQuickWindow>
 #include <QtTest/QSignalSpy>
 
 #include "AppSettings.h"
@@ -81,6 +82,18 @@ void COPStressTest::_unacknowledgedBurstIsNotDiscarded()
 
 MockLink* COPStressUITest::_start(MAV_TYPE type, bool increment)
 {
+    if (_links.isEmpty()) {
+        auto* manager = MultiVehicleManager::instance();
+        connect(manager, &MultiVehicleManager::vehicleAdded, _window, [this, manager](Vehicle* vehicle) {
+            if (vehicle && manager->vehicles()->count() > 1) {
+                expectAppMessage(QRegularExpression(QStringLiteral("Connected to Vehicle %1").arg(vehicle->id())));
+                QTimer::singleShot(0, _window, [this]() {
+                    QVERIFY(acceptDialog());
+                    verifyExpectedLogMessage();
+                });
+            }
+        });
+    }
     // Same shared configuration/createConnectedLink ownership as VehicleLinkManagerTest::_startMockLink.
     auto config = std::make_shared<MockConfiguration>(QStringLiteral("COP stress %1").arg(_configs.size()));
     config->setDynamic(true);
@@ -125,9 +138,20 @@ QQuickItem* findText(QQuickItem* root, const QString& text)
     return nullptr;
 }
 
-COPVehicle* entryFor(int sysid)
+}  // namespace
+
+COPController* COPStressUITest::_controller() const
 {
-    auto* model = COPController::instance()->vehicles();
+    return _engine ? _engine->singletonInstance<COPController*>("QGC", "COPController") : nullptr;
+}
+
+COPVehicle* COPStressUITest::_entryFor(int sysid) const
+{
+    auto* controller = _controller();
+    if (!controller) {
+        return nullptr;
+    }
+    auto* model = controller->vehicles();
     for (int i = 0; i < model->count(); ++i) {
         auto* entry = model->value<COPVehicle*>(i);
         if (entry && entry->sysid() == sysid) {
@@ -136,11 +160,10 @@ COPVehicle* entryFor(int sysid)
     }
     return nullptr;
 }
-}  // namespace
 
 bool COPStressUITest::_selectTab(int sysid)
 {
-    auto* entry = entryFor(sysid);
+    auto* entry = _entryFor(sysid);
     const QString text = sysid == 0 ? QStringLiteral("COP") : entry ? entry->label() : QString();
     auto* button = findText(_rootItem, text);
     return button && _clickItemAt(button, 0.5, 0.5, text);
@@ -148,7 +171,9 @@ bool COPStressUITest::_selectTab(int sysid)
 
 void COPStressUITest::cleanup()
 {
-    COPController::instance()->cancelControl();
+    if (auto* controller = _controller()) {
+        controller->cancelControl();
+    }
     for (const auto& link : _links) {
         if (link) {
             link->disconnect();
@@ -171,7 +196,8 @@ void COPStressUITest::_threeVehicleChurn()
     QVERIFY(!QTest::currentTestFailed());
     LinkManager::instance()->setConnectionsAllowed();
     auto* manager = MultiVehicleManager::instance();
-    auto* controller = COPController::instance();
+    auto* controller = _controller();
+    QVERIFY(controller);
     QPointer<MockLink> rover = _start(MAV_TYPE_GROUND_ROVER);
     QPointer<MockLink> hex = _start(MAV_TYPE_QUADROTOR);
     // Keep the next ID unconsumed, following COPVehicleLifecycleTest's same-ID reconnect precedent.
@@ -197,10 +223,10 @@ void COPStressUITest::_threeVehicleChurn()
     switching.start();
     QTRY_COMPARE_WITH_TIMEOUT(manager->vehicles()->count(), 3, TestTimeout::longMs());
     for (int id : {roverId, hexId, stallionId}) {
-        QTRY_VERIFY_WITH_TIMEOUT(entryFor(id) && entryFor(id)->vehicle(), TestTimeout::longMs());
-        QTRY_VERIFY_WITH_TIMEOUT(entryFor(id)->vehicle()->isInitialConnectComplete(), TestTimeout::longMs());
-        QTRY_VERIFY_WITH_TIMEOUT(entryFor(id)->coordinate().isValid(), TestTimeout::longMs());
-        QCOMPARE(entryFor(id)->coordinate(), entryFor(id)->vehicle()->coordinate());
+        QTRY_VERIFY_WITH_TIMEOUT(_entryFor(id) && _entryFor(id)->vehicle(), TestTimeout::longMs());
+        QTRY_VERIFY_WITH_TIMEOUT(_entryFor(id)->vehicle()->isInitialConnectComplete(), TestTimeout::longMs());
+        QTRY_VERIFY_WITH_TIMEOUT(_entryFor(id)->coordinate().isValid(), TestTimeout::longMs());
+        QCOMPARE(_entryFor(id)->coordinate(), _entryFor(id)->vehicle()->coordinate());
     }
     switching.stop();
     QVERIFY(_selectTab(0));
@@ -222,7 +248,7 @@ void COPStressUITest::_threeVehicleChurn()
     } else {
         stallion->disconnect();
     }
-    auto* retained = entryFor(stallionId);
+    auto* retained = _entryFor(stallionId);
     QVERIFY(retained);
     QTRY_VERIFY_WITH_TIMEOUT(!retained->vehicle(), TestTimeout::longMs());
     QVERIFY(_selectTab(stallionId));
@@ -235,18 +261,21 @@ void COPStressUITest::_threeVehicleChurn()
     stallion = _start(MAV_TYPE_FIXED_WING, false);
     QVERIFY(stallion);
     QCOMPARE(stallion->vehicleId(), stallionId);
+    bool returningLinkDropped = false;
     const auto drop = connect(manager, &MultiVehicleManager::vehicleAdded, this, [&](Vehicle* vehicle) {
         if (vehicle && vehicle->id() == stallionId && stallion) {
             stallion->disconnect();
+            returningLinkDropped = true;
         }
     });
     switching.start();
+    QTRY_VERIFY_WITH_TIMEOUT(returningLinkDropped, TestTimeout::longMs());
     QTRY_COMPARE_WITH_TIMEOUT(controller->pendingSysid(), 0, TestTimeout::longMs());
     QTRY_COMPARE_WITH_TIMEOUT(manager->vehicles()->count(), 2, TestTimeout::longMs());
     QTRY_VERIFY_WITH_TIMEOUT(!retained->vehicle(), TestTimeout::longMs());
     disconnect(drop);
     switching.stop();
-    QCOMPARE(entryFor(stallionId), retained);
+    QCOMPARE(_entryFor(stallionId), retained);
     stallion = _start(MAV_TYPE_FIXED_WING, true);
     QVERIFY(stallion);
     QCOMPARE(stallion->vehicleId(), stallionId);
@@ -256,18 +285,18 @@ void COPStressUITest::_threeVehicleChurn()
     QVERIFY(extra);
     const int extraId = extra->vehicleId();
     QTRY_COMPARE_WITH_TIMEOUT(manager->vehicles()->count(), 4, TestTimeout::longMs());
-    QVERIFY(entryFor(extraId));
-    QCOMPARE(entryFor(extraId)->label(), QStringLiteral("Vehicle %1").arg(extraId));
+    QVERIFY(_entryFor(extraId));
+    QCOMPARE(_entryFor(extraId)->label(), QStringLiteral("Vehicle %1").arg(extraId));
     const int tabCount = controller->vehicles()->count();
     for (const auto& link : {hex, QPointer<MockLink>(extra), rover, stallion}) {
         QVERIFY(link);
         const int id = link->vehicleId();
-        QPointer<Vehicle> oldVehicle = entryFor(id)->vehicle();
+        QPointer<Vehicle> oldVehicle = _entryFor(id)->vehicle();
         switching.start();
         link->disconnect();
         QTRY_VERIFY_WITH_TIMEOUT(oldVehicle.isNull(), TestTimeout::longMs());
-        QVERIFY(!entryFor(id)->connected());
-        QVERIFY(!entryFor(id)->vehicle());
+        QVERIFY(!_entryFor(id)->connected());
+        QVERIFY(!_entryFor(id)->vehicle());
         QCOMPARE(controller->vehicles()->count(), tabCount);
     }
     switching.stop();
@@ -283,10 +312,11 @@ void COPStressUITest::_lastControlRequestWins()
     auto* second = _start(MAV_TYPE_QUADROTOR);
     QVERIFY(first && second);
     auto* manager = MultiVehicleManager::instance();
-    auto* controller = COPController::instance();
+    auto* controller = _controller();
+    QVERIFY(controller);
     QTRY_COMPARE_WITH_TIMEOUT(manager->vehicles()->count(), 2, TestTimeout::longMs());
-    auto* a = entryFor(first->vehicleId());
-    auto* b = entryFor(second->vehicleId());
+    auto* a = _entryFor(first->vehicleId());
+    auto* b = _entryFor(second->vehicleId());
     QVERIFY(a && b && a->vehicle() && b->vehicle());
     manager->setActiveVehicle(a->vehicle());
     QTRY_COMPARE_WITH_TIMEOUT(manager->activeVehicle(), a->vehicle(), TestTimeout::longMs());
@@ -314,19 +344,68 @@ void COPStressUITest::_disconnectOtherPreservesControl()
     QPointer<MockLink> stallion = _start(MAV_TYPE_FIXED_WING);
     QVERIFY(rover && hex && stallion);
     auto* manager = MultiVehicleManager::instance();
-    auto* controller = COPController::instance();
+    auto* controller = _controller();
+    QVERIFY(controller);
     QTRY_COMPARE_WITH_TIMEOUT(manager->vehicles()->count(), 3, TestTimeout::longMs());
-    auto* selected = entryFor(hex->vehicleId());
+    auto* selected = _entryFor(hex->vehicleId());
     QVERIFY(selected && selected->vehicle());
     controller->selectVehicle(selected->sysid());
+    QVERIFY(QGCCorePlugin::instance()->startStandardVideoReceivers());
     controller->assumeControl();
     QTRY_COMPARE_WITH_TIMEOUT(manager->activeVehicle(), selected->vehicle(), TestTimeout::longMs());
-    auto* removedEntry = entryFor(stallion->vehicleId());
+    auto* removedEntry = _entryFor(stallion->vehicleId());
     QVERIFY(removedEntry && removedEntry->vehicle());
     QPointer<Vehicle> removed = removedEntry->vehicle();
     stallion->disconnect();
     QTRY_VERIFY_WITH_TIMEOUT(removed.isNull(), TestTimeout::longMs());
     QTRY_COMPARE_WITH_TIMEOUT(manager->activeVehicle(), selected->vehicle(), TestTimeout::mediumMs());
+}
+
+void COPStressUITest::_navigationAndLayout()
+{
+    // Exercise resizing and navigation within the same window lifetime.
+    startUI();
+    QVERIFY(!QTest::currentTestFailed());
+    QVERIFY(_selectTab(0));
+    auto* controller = _controller();
+    QVERIFY(controller);
+    QVERIFY(!QGCCorePlugin::instance()->startStandardVideoReceivers());
+    const int priorMessageCount = controller->messages().size();
+    controller->notify(QStringLiteral("Communication lost: review vehicle status"));
+    QCOMPARE(controller->messages().size(), priorMessageCount + 1);
+    auto* fly = findItem(_rootItem, QStringLiteral("mainView_fly"));
+    auto* map = findItem(_rootItem, QStringLiteral("copMap"));
+    auto* video = findItem(_rootItem, QStringLiteral("copVideoRegion"));
+    auto* notifications = findItem(_rootItem, QStringLiteral("copNotifications"));
+    auto* logo = findItem(_rootItem, QStringLiteral("toolbar_qgcLogo"));
+    QVERIFY(fly && map && video && notifications && logo);
+    QVERIFY(logo->isEnabled());
+    QTRY_VERIFY_WITH_TIMEOUT(notifications->height() > 0, TestTimeout::shortMs());
+    auto* header = qvariant_cast<QQuickItem*>(_window->property("header"));
+    QVERIFY(header);
+    const auto sceneRect = [](QQuickItem* item) { return item->mapRectToScene(item->boundingRect()); };
+
+    for (const QSize windowSize : {QSize(1280, 800), QSize(800, 600), QSize(480, 600)}) {
+        _window->resize(windowSize);
+        QTRY_VERIFY_WITH_TIMEOUT(map->width() >= fly->width() * 0.4, TestTimeout::shortMs());
+        QTRY_VERIFY_WITH_TIMEOUT(video->width() >= fly->width() * 0.2, TestTimeout::shortMs());
+        QVERIFY(sceneRect(map).left() >= sceneRect(fly).left());
+        QVERIFY(sceneRect(map).right() <= sceneRect(video).left());
+        QVERIFY(sceneRect(video).right() <= sceneRect(fly).right());
+        QVERIFY(sceneRect(header).bottom() <= sceneRect(logo).top());
+        QVERIFY(sceneRect(logo).bottom() <= sceneRect(map).top());
+        QVERIFY(sceneRect(fly).bottom() <= sceneRect(notifications).top());
+        QTRY_VERIFY_WITH_TIMEOUT(qRound(sceneRect(notifications).bottom()) <= _window->height(),
+                                 TestTimeout::shortMs());
+    }
+
+    _window->resize(1280, 1000);
+    QVERIFY(clickToolSelectDropdownButton(QStringLiteral("toolbar_viewAnalyze")));
+    QVERIFY(clickButton(QStringLiteral("analyzeButton_Vehicle Roles")));
+    QVERIFY(clickToolSelectDropdownButton(QStringLiteral("toolbar_viewSettings")));
+    QVERIFY(clickToolSelectDropdownButton(QStringLiteral("toolbar_viewConfigure")));
+    QVERIFY(clickToolSelectDropdownButton(QStringLiteral("toolbar_viewPlan")));
+    QVERIFY(clickToolSelectDropdownButton(QStringLiteral("toolbar_viewFly")));
 }
 
 UT_REGISTER_TEST(COPStressTest, TestLabel::Unit)

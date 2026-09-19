@@ -8,6 +8,7 @@
 #include "LinkManager.h"
 #include "RTCMParser.h"
 #include "SettingsManager.h"
+#include "VehicleLinkManager.h"
 
 void COPControllerTest::init()
 {
@@ -156,6 +157,21 @@ void COPVehicleLifecycleTest::_disconnectAndReconnect()
     QVERIFY(entry);
     QVERIFY(entry->connected());
     QCOMPARE(entry->vehicle(), vehicle());
+    Vehicle* currentVehicle = vehicle();
+    QVERIFY(currentVehicle);
+    const int notificationCount = controller.messages().size();
+    for (int severity = MAV_SEVERITY_CRITICAL; severity <= MAV_SEVERITY_DEBUG; ++severity) {
+        emit currentVehicle->textMessageReceived(sysid, 1, severity, QStringLiteral("Compass not healthy"), QString());
+    }
+    QCOMPARE(controller.messages().size(), notificationCount);
+    for (int severity : {MAV_SEVERITY_EMERGENCY, MAV_SEVERITY_ALERT}) {
+        emit currentVehicle->textMessageReceived(sysid, 1, severity, QStringLiteral("Immediate action required"), QString());
+    }
+    QCOMPARE(controller.messages().size(), notificationCount + 2);
+    emit currentVehicle->vehicleLinkManager()->communicationLostChanged(true);
+    QCOMPARE(controller.messages().size(), notificationCount + 3);
+    emit currentVehicle->vehicleLinkManager()->communicationLostChanged(false);
+    QCOMPARE(controller.messages().size(), notificationCount + 3);
     const int count = controller.vehicles()->count();
     const QString mode = entry->flightMode();
     _disconnectMockLink();

@@ -9,21 +9,29 @@ import QGroundControl.Controls
 
 Rectangle {
     id: root
-    implicitHeight: ScreenTools.defaultFontPixelHeight * 5
+    objectName: "copNotifications"
+    implicitWidth: ScreenTools.defaultFontPixelWidth * 64
+    implicitHeight: COPController.messages.length > 0
+                    ? notificationLayout.implicitHeight + ScreenTools.defaultFontPixelWidth * 2 : 0
+    width: implicitWidth
+    height: implicitHeight
+    clip: true
     color: QGroundControl.globalPalette.windowShade
     border.color: COPController.unacknowledged ? QGroundControl.globalPalette.colorOrange
                                                : QGroundControl.globalPalette.windowShadeDark
     border.width: ScreenTools.defaultFontPixelWidth / 3
     property var hostWindow
 
-    RowLayout {
+    ColumnLayout {
+        id: notificationLayout
         anchors.fill: parent
         anchors.margins: ScreenTools.defaultFontPixelWidth
-        ColumnLayout {
-            QGCLabel { text: qsTr("Notifications (%1)").arg(COPController.messages.length) }
+        RowLayout {
+            Layout.fillWidth: true
             QGCLabel {
-                visible: COPController.droppedMessages > 0
-                text: qsTr("%1 older notifications omitted").arg(COPController.droppedMessages)
+                Layout.fillWidth: true
+                elide: Text.ElideRight
+                text: qsTr("Notifications (%1)").arg(COPController.messages.length)
             }
             QGCButton {
                 text: qsTr("Acknowledge")
@@ -31,9 +39,17 @@ Rectangle {
                 onClicked: COPController.acknowledge()
             }
         }
+        QGCLabel {
+            Layout.fillWidth: true
+            visible: COPController.droppedMessages > 0
+            wrapMode: Text.WordWrap
+            text: qsTr("%1 older notifications omitted").arg(COPController.droppedMessages)
+        }
         ListView {
             Layout.fillWidth: true
             Layout.fillHeight: true
+            Layout.minimumWidth: 0
+            Layout.preferredHeight: Math.min(contentHeight, ScreenTools.defaultFontPixelHeight * 5)
             clip: true
             spacing: ScreenTools.defaultFontPixelHeight / 4
             model: COPController.messages
@@ -44,17 +60,6 @@ Rectangle {
                 textFormat: Text.PlainText
                 text: Qt.formatTime(modelData.time, "hh:mm:ss") + "  " + modelData.text
             }
-            QGCLabel {
-                anchors.centerIn: parent
-                visible: COPController.messages.length === 0
-                text: qsTr("No operator notifications")
-            }
-        }
-    }
-    Connections {
-        target: QGroundControl
-        function onShowMessageDialogRequested(owner, title, text, buttons, acceptFunction, closeFunction) {
-            COPController.notify(title + ": " + text)
         }
     }
 }

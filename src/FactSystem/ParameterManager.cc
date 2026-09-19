@@ -686,10 +686,10 @@ void ParameterManager::_startParameterDownload(uint8_t componentId)
         if (!_anyComponentWaiting()) {
             _waitingParamTimeoutTimer.stop();
         }
-        if (ftpManager->download(MAV_COMP_ID_AUTOPILOT1,
-                                 QStringLiteral("@PARAM/param.pck?withdefaults=1"),
-                                 QStandardPaths::writableLocation(QStandardPaths::TempLocation),
-                                 QStringLiteral("param.pck"),
+        const QString downloadName =
+            QStringLiteral("param-%1-%2.pck").arg(QCoreApplication::applicationPid()).arg(_vehicle->id());
+        if (ftpManager->download(MAV_COMP_ID_AUTOPILOT1, QStringLiteral("@PARAM/param.pck?withdefaults=1"),
+                                 QStandardPaths::writableLocation(QStandardPaths::TempLocation), downloadName,
                                  false /* No filesize check */)) {
             _ftpDownloadInProgress = true;
             (void) connect(ftpManager, &FTPManager::commandProgress, this, &ParameterManager::_ftpDownloadProgress);
@@ -1587,7 +1587,10 @@ void ParameterManager::_loadOfflineEditingParams()
         }
 
         const QStringList paramData = line.split("\t");
-        Q_ASSERT(paramData.count() == 5);
+        if (paramData.count() != 5) {
+            qCWarning(ParameterManagerLog) << "Invalid offline parameter row in" << paramFilename;
+            return;
+        }
 
         const int offlineDefaultComponentId = paramData.at(1).toInt();
         _vehicle->setOfflineEditingDefaultComponentId(offlineDefaultComponentId);

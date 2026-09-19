@@ -11,7 +11,7 @@ Item {
     anchors.bottom: parent.bottom
     width:          escIndicatorRow.width
 
-    property bool showIndicator: _escs.count > 0
+    property bool showIndicator: _escs && _escs.count > 0
 
     property var  _activeVehicle:   QGroundControl.multiVehicleManager.activeVehicle
     property var  _escs:            _activeVehicle ? _activeVehicle.escs : null
@@ -39,13 +39,15 @@ Item {
     }
 
     function _getEscHealthStatus() {
+        if (!_escs || _escs.count === 0) return true
+
         // Health is good if all expected motors are online and have no failure flags
         if (_onlineMotorCount !== _motorCount) return false
 
         // Check failure flags for each motor (4 per group)
-        for (let index = 0; index < 4; index++) {
+        for (let index = 0; index < Math.min(4, _escs.count); index++) {
             if ((_onlineBitmask & (1 << index)) !== 0) { // Motor is online
-                if (_escs.get(index).failureFlags > 0) { // Any failure flag set means unhealthy
+                if (_escs.get(index).failureFlags.rawValue > 0) { // Any failure flag set means unhealthy
                     return false
                 }
             }

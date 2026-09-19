@@ -7,6 +7,9 @@
 #include "MockLink.h"
 #include "QmlUITestBase.h"
 
+class COPController;
+class COPVehicle;
+
 class COPStressTest : public UnitTest
 {
     Q_OBJECT
@@ -31,8 +34,11 @@ private slots:
     void _threeVehicleChurn();
     void _lastControlRequestWins();
     void _disconnectOtherPreservesControl();
+    void _navigationAndLayout();
 
 private:
+    COPController* _controller() const;
+    COPVehicle* _entryFor(int sysid) const;
     MockLink* _start(MAV_TYPE type, bool increment = true);
     bool _selectTab(int sysid);
     QList<SharedLinkConfigurationPtr> _configs;

@@ -1,29 +1,13 @@
 #include "COPController.h"
 
-#include <QtCore/QApplicationStatic>
 #include <QtCore/QSettings>
 #include <QtCore/QTimer>
-#include <QtQml/QQmlEngine>
 
 #include "AudioOutput.h"
 #include "MultiVehicleManager.h"
 #include "QGCCorePlugin.h"
 #include "VehicleLinkManager.h"
 #include "VideoManager.h"
-
-Q_APPLICATION_STATIC(COPController, copControllerInstance)
-
-COPController* COPController::instance()
-{
-    return copControllerInstance();
-}
-
-COPController* COPController::create(QQmlEngine*, QJSEngine*)
-{
-    auto* controller = instance();
-    QQmlEngine::setObjectOwnership(controller, QQmlEngine::CppOwnership);
-    return controller;
-}
 
 COPVehicle::COPVehicle(int sysid, VehicleRoleController* roles, QObject* parent)
     : QObject(parent)
@@ -195,8 +179,11 @@ void COPController::_vehicleAdded(Vehicle* vehicle)
     }
     entry->setVehicle(vehicle);
     connect(vehicle, &Vehicle::textMessageReceived, this,
-            [this, entry](int, int, int, const QString& text, const QString&) {
-                notify(tr("%1: %2").arg(entry->label(), text));
+            [this, entry](int, int, int severity, const QString& text, const QString&) {
+                // Emergency/Alert require immediate action; subsystem health remains in Vehicle's message display.
+                if (severity >= MAV_SEVERITY_EMERGENCY && severity <= MAV_SEVERITY_ALERT) {
+                    notify(tr("%1: %2").arg(entry->label(), text));
+                }
             });
     auto* links = vehicle->vehicleLinkManager();
     auto* relayTimer = new QTimer(vehicle);
@@ -212,7 +199,9 @@ void COPController::_vehicleAdded(Vehicle* vehicle)
                    .arg(entry->label()));
     });
     connect(links, &VehicleLinkManager::communicationLostChanged, this, [this, entry, relayTimer](bool lost) {
-        notify(tr("%1: %2").arg(entry->label(), lost ? tr("Communication lost") : tr("Communication restored")));
+        if (lost) {
+            notify(tr("%1: Communication lost").arg(entry->label()));
+        }
         Vehicle* current = entry->vehicle();
         if (!lost && current && _pendingSysid == entry->sysid()) {
             _requestActivation(current);

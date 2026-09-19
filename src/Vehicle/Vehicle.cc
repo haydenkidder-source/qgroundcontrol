@@ -464,6 +464,9 @@ void Vehicle::_stopCommandProcessing()
 {
     qCDebug(VehicleLog) << "_stopCommandProcessing - stopping timers and clearing pending commands";
 
+    // A replacement with the same sysid must not attach its link to this retiring vehicle.
+    disconnect(MAVLinkProtocol::instance(), &MAVLinkProtocol::messageReceived, this, &Vehicle::_mavlinkMessageReceived);
+
     // Stop timers AND disconnect their signals to prevent any pending callbacks
     // from being delivered after this point. This is critical during vehicle destruction
     // where a queued callback could access a partially-destroyed vehicle.
@@ -1066,8 +1069,12 @@ void Vehicle::_handleExtendedSysState(mavlink_message_t& message)
 bool Vehicle::_apmArmingNotRequired()
 {
     QString armingRequireParam("ARMING_REQUIRE");
-    return _parameterManager->parameterExists(ParameterManager::defaultComponentId, armingRequireParam) &&
-            _parameterManager->getParameter(ParameterManager::defaultComponentId, armingRequireParam)->rawValue().toInt() == 0;
+    if (!_parameterManager->parameterExists(ParameterManager::defaultComponentId, armingRequireParam)) {
+        return false;
+    }
+    const Fact* armingRequired =
+        _parameterManager->getParameter(ParameterManager::defaultComponentId, armingRequireParam);
+    return armingRequired && armingRequired->rawValue().toInt() == 0;
 }
 
 void Vehicle::_handleSysStatus(mavlink_message_t& message)
@@ -1411,7 +1418,9 @@ int Vehicle::motorCount()
 {
     uint8_t frameType = 0;
     if (_vehicleType == MAV_TYPE_SUBMARINE) {
-        frameType = parameterManager()->getParameter(_compID, "FRAME_CONFIG")->rawValue().toInt();
+        if (const Fact* frameConfig = parameterManager()->getParameter(_compID, "FRAME_CONFIG")) {
+            frameType = frameConfig->rawValue().toInt();
+        }
     }
     return QGCMAVLink::motorCount(_vehicleType, frameType);
 }

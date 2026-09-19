@@ -11,9 +11,6 @@
 #include "Vehicle.h"
 #include "VehicleRoleController.h"
 
-class QQmlEngine;
-class QJSEngine;
-
 class COPVehicle : public QObject
 {
     Q_OBJECT
@@ -82,8 +79,6 @@ class COPController : public QObject
 
 public:
     explicit COPController(QObject* parent = nullptr);
-    static COPController* instance();
-    static COPController* create(QQmlEngine*, QJSEngine*);
 
     QmlObjectListModel* vehicles() { return &_vehicles; }
 
