@@ -17,6 +17,7 @@ public:
 private slots:
     void _performTestCases();
     void _duplicateCommand();
+    void _retryAckWindows();
 
 private:
     struct TestCase_t
