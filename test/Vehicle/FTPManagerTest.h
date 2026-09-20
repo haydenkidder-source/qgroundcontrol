@@ -14,6 +14,7 @@ private slots:
     void _testLostPackets();
     void _testListDirectory();
     void _testListDirectoryWithTime();
+    void _testListDirectoryWithTimeFallback_data();
     void _testListDirectoryWithTimeFallback();
     void _testListDirectoryNoResponse();
     void _testListDirectoryNakResponse();

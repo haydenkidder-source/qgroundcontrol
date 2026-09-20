@@ -113,6 +113,25 @@ public:
     /// server Naks it with kErrUnknownCommand so the client fallback to kCmdListDirectory can be tested.
     void setListDirectoryWithTimeSupported(bool supported) { _listDirectoryWithTimeSupported = supported; }
 
+    enum class ListWithTimeFailure
+    {
+        UnknownCommand,
+        Fail,
+        NoResponse,
+        MalformedNak,
+        InvalidOpcode,
+        BadSequence
+    };
+
+    void setListWithTimeFailure(ListWithTimeFailure failure, uint32_t offset = 0)
+    {
+        _listDirectoryWithTimeSupported = false;
+        _listWithTimeFailure = failure;
+        _listWithTimeFailureOffset = offset;
+    }
+
+    int listWithTimeRequestCount() const { return _listWithTimeRequestCount; }
+
     /// Array of failure modes you can cycle through for testing. By looping through this array you can avoid
     /// hardcoding the specific error modes in your unit test. This way when new error modes are added your unit test
     /// code may not need to be modified.
@@ -180,6 +199,9 @@ private:
     int _burstReadDelayMs = 0;                  ///< Per-burst delay to simulate a slow link
     ErrorMode_t _errMode = errModeNone;         ///< Currently set error mode, as specified by setErrorMode
     bool _listDirectoryWithTimeSupported = true; ///< Whether the server implements kCmdListDirectoryWithTime
+    ListWithTimeFailure _listWithTimeFailure = ListWithTimeFailure::UnknownCommand;
+    uint32_t _listWithTimeFailureOffset = 0;
+    int _listWithTimeRequestCount = 0;
     bool _paramPckEnabled = true;               ///< Serve @PARAM/param.pck; false NAKs errno ENOENT
     bool _singleSessionEnforced = false;
     bool _ignoreResetSessions = false;

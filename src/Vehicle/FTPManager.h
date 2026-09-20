@@ -48,7 +48,7 @@ public:
     /// Signals listDirectoryComplete
     bool listDirectory(uint8_t fromCompId, const QString& fromURI);
 
-    /// true when the vehicle NAK'ed kCmdListDirectoryWithTime, i.e. directory listings carry no modification times.
+    /// True after timestamped listings fail or time out; plain listings are used for this connection.
     bool listDirectoryWithTimeUnsupported() const { return _listDirWithTimeSupport == WithTimeSupport_t::Unsupported; }
 
     /// Deletes a file on the vehicle.
@@ -207,6 +207,7 @@ private:
     void    _listDirectoryBegin         (void);
     void    _listDirectoryAckOrNak      (const MavlinkFTP::Request* ackOrNak);
     void    _listDirectoryTimeout       (void);
+    void _listDirectoryFallback(void);
     void    _openFileROBegin            (void);
     void    _openFileROAckOrNak         (const MavlinkFTP::Request* ackOrNak);
     void    _openFileROTimeout          (void);
