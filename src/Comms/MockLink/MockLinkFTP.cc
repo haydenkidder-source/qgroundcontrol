@@ -141,9 +141,8 @@ void MockLinkFTP::_openCommand(uint8_t senderSystemId, uint8_t senderComponentId
         return;
     }
 
-    const size_t cchPath = strnlen(reinterpret_cast<char*>(request->data), sizeof(request->data));
-    Q_ASSERT(cchPath != sizeof(request->data));
-    Q_UNUSED(cchPath); // Fix initialized-but-not-referenced warning on release builds
+    // ensureNullTemination() above guarantees a terminator within bounds, so strnlen can never
+    // return sizeof(request->data); nothing further to check here.
 
     _currentFile.close();
 
@@ -296,8 +295,13 @@ void MockLinkFTP::_readCommand(uint8_t senderSystemId, uint8_t senderComponentId
     const QByteArray bytes = _currentFile.read(cBytesToRead);
     (void) memcpy(response.data, bytes.constData(), cBytesToRead);
 
-    // We should always have written something, otherwise there is something wrong with the code above
-    Q_ASSERT(cBytesToRead);
+    if (cBytesToRead == 0) {
+        // Should never happen given the EOF check above, but a malformed request or a torn read
+        // shouldn't be reported as a successful zero-byte ack.
+        qCWarning(MockLinkFTPLog) << "MockLinkFTP: ReadFile computed zero bytes to read, NAK Fail";
+        _sendNak(senderSystemId, senderComponentId, MavlinkFTP::kErrFail, outgoingSeqNumber, MavlinkFTP::kCmdReadFile);
+        return;
+    }
 
     response.hdr.session = _sessionId;
     response.hdr.size = cBytesToRead;
@@ -375,8 +379,13 @@ void MockLinkFTP::_burstReadCommand(uint8_t senderSystemId, uint8_t senderCompon
         _currentFile.seek(burstOffset);
 
         const uint8_t cBytes = static_cast<uint8_t>(qMin(maxRead, _currentFile.size() - burstOffset));
+        if (cBytes == 0) {
+            // Should never happen given the loop condition above, but stop bursting rather than
+            // send a bogus zero-size ack packet.
+            qCWarning(MockLinkFTPLog) << "MockLinkFTP: BurstReadFile computed zero bytes to read, stopping burst";
+            break;
+        }
         const QByteArray bytes = _currentFile.read(cBytes);
-        Q_ASSERT(cBytes); // We should always have written something, otherwise there is something wrong with the code above
 
         (void) memcpy(response.data, bytes.constData(), cBytes);
 
