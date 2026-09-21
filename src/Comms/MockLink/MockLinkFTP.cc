@@ -47,9 +47,26 @@ void MockLinkFTP::_listCommand(uint8_t senderSystemId, uint8_t senderComponentId
     const uint16_t outgoingSeqNumber = _nextSeqNumber(seqNumber);
     const MavlinkFTP::OpCode_t listOpCode = withTime ? MavlinkFTP::kCmdListDirectoryWithTime : MavlinkFTP::kCmdListDirectory;
 
-    if (withTime && !_listDirectoryWithTimeSupported) {
-        // Simulate a server which doesn't implement the command. The client should fall back to kCmdListDirectory.
-        _sendNak(senderSystemId, senderComponentId, MavlinkFTP::kErrUnknownCommand, outgoingSeqNumber, listOpCode);
+    if (withTime && !_listDirectoryWithTimeSupported && request->hdr.offset >= _listWithTimeFailureOffset) {
+        if (_listWithTimeFailure == ListWithTimeFailure::NoResponse) {
+            return;
+        }
+        MavlinkFTP::Request response{};
+        response.hdr.opcode = MavlinkFTP::kRspNak;
+        response.hdr.req_opcode = listOpCode;
+        response.hdr.size = 1;
+        response.data[0] = (_listWithTimeFailure == ListWithTimeFailure::UnknownCommand)
+                               ? MavlinkFTP::kErrUnknownCommand
+                               : MavlinkFTP::kErrFail;
+        if (_listWithTimeFailure == ListWithTimeFailure::MalformedNak) {
+            response.hdr.size = 0;
+            response.data[0] = MavlinkFTP::kErrEOF;  // Must not be mistaken for a valid EOF.
+        } else if (_listWithTimeFailure == ListWithTimeFailure::InvalidOpcode) {
+            response.hdr.opcode = MavlinkFTP::kCmdNone;
+        }
+        _sendResponse(
+            senderSystemId, senderComponentId, &response,
+            _listWithTimeFailure == ListWithTimeFailure::BadSequence ? outgoingSeqNumber + 1 : outgoingSeqNumber);
         return;
     }
 
@@ -551,6 +568,10 @@ void MockLinkFTP::mavlinkMessageReceived(const mavlink_message_t &message)
     }
 
     MavlinkFTP::Request *request = reinterpret_cast<MavlinkFTP::Request*>(&requestFTP.payload[0]);
+
+    if (request->hdr.opcode == MavlinkFTP::kCmdListDirectoryWithTime) {
+        ++_listWithTimeRequestCount;
+    }
 
     // kCmdOpenFileRO and kCmdResetSessions don't support retry so we can't drop those
     if (_randomDropsEnabled && (request->hdr.opcode != MavlinkFTP::kCmdOpenFileRO) && (request->hdr.opcode != MavlinkFTP::kCmdResetSessions)) {

@@ -482,23 +482,53 @@ void FTPManagerTest::_testListDirectoryWithTime()
     _disconnectMockLink();
 }
 
+void FTPManagerTest::_testListDirectoryWithTimeFallback_data()
+{
+    QTest::addColumn<MockLinkFTP::ListWithTimeFailure>("failure");
+    QTest::addColumn<uint32_t>("offset");
+    using Failure = MockLinkFTP::ListWithTimeFailure;
+    for (uint32_t offset : {0U, 2U}) {
+        const QByteArray suffix = offset ? "-after-first-page" : "-first-page";
+        QTest::newRow(("unknown-command" + suffix).constData()) << Failure::UnknownCommand << offset;
+        QTest::newRow(("ardupilot-generic-fail" + suffix).constData()) << Failure::Fail << offset;
+        QTest::newRow(("silent-drop" + suffix).constData()) << Failure::NoResponse << offset;
+        QTest::newRow(("malformed-nak" + suffix).constData()) << Failure::MalformedNak << offset;
+        QTest::newRow(("invalid-opcode" + suffix).constData()) << Failure::InvalidOpcode << offset;
+        QTest::newRow(("bad-sequence" + suffix).constData()) << Failure::BadSequence << offset;
+    }
+}
+
 void FTPManagerTest::_testListDirectoryWithTimeFallback()
 {
+    QFETCH(MockLinkFTP::ListWithTimeFailure, failure);
+    QFETCH(uint32_t, offset);
     _connectMockLinkNoInitialConnectSequence();
     FTPManager* ftpManager = _vehicle->ftpManager();
-    _mockLink->mockLinkFTP()->setListDirectoryWithTimeSupported(false);
+    MockLinkFTP* mockFtp = _mockLink->mockLinkFTP();
+    mockFtp->setListWithTimeFailure(failure, offset);
     QSignalSpy spyListDirectoryComplete(ftpManager, &FTPManager::listDirectoryComplete);
-    ftpManager->listDirectory(MAV_COMP_ID_AUTOPILOT1, "/");
-    QVERIFY_SIGNAL_WAIT(spyListDirectoryComplete, TestTimeout::longMs());
-    QCOMPARE(spyListDirectoryComplete.count(), 1);
-    QList<QVariant> arguments = spyListDirectoryComplete.takeFirst();
-    const QStringList entries = arguments[0].toStringList();
-    QCOMPARE(entries.count(), 6);
-    QVERIFY(arguments[1].toString().isEmpty());
+    QStringList expectedEntries;
+    for (int i = 0; i < 6; ++i) {
+        expectedEntries.append(QStringLiteral("Ffile%1.txt\t%2").arg(i).arg(1024 + i));
+    }
 
-    // After falling back to kCmdListDirectory the entries carry no modification-time field.
-    for (const QString &entry : entries) {
-        QCOMPARE(entry.mid(1).count(QLatin1Char('\t')), 1);
+    int probeCount = 0;
+    for (int listing = 0; listing < 2; ++listing) {
+        QVERIFY(ftpManager->listDirectory(MAV_COMP_ID_AUTOPILOT1, "/"));
+        QVERIFY_SIGNAL_WAIT(spyListDirectoryComplete, TestTimeout::longMs());
+        QCOMPARE(spyListDirectoryComplete.count(), 1);
+        const QList<QVariant> arguments = spyListDirectoryComplete.takeFirst();
+        QCOMPARE(arguments[0].toStringList(), expectedEntries);
+        QVERIFY(arguments[1].toString().isEmpty());
+        QVERIFY(ftpManager->listDirectoryWithTimeUnsupported());
+        if (listing == 0) {
+            probeCount = mockFtp->listWithTimeRequestCount();
+            QVERIFY(probeCount > 0);
+            // A recovered server must still not be probed again during this connection.
+            mockFtp->setListDirectoryWithTimeSupported(true);
+        } else {
+            QCOMPARE(mockFtp->listWithTimeRequestCount(), probeCount);
+        }
     }
     _disconnectMockLink();
 }
