@@ -122,6 +122,20 @@ void PlanManager::_writeMissionCount(void)
     _startAckTimeout(AckMissionRequest);
 }
 
+/// Restarts the write sequence from scratch by re-sending MISSION_COUNT, no matter how far the prior
+/// attempt got. A resent MISSION_ITEM that the vehicle already moved past gets rejected as out of
+/// sequence, but a fresh MISSION_COUNT is always accepted as the start of a new upload session, so
+/// this is the only way to recover a write once a MISSION_REQUEST or the final MISSION_ACK is lost.
+void PlanManager::_restartMissionWrite(void)
+{
+    _itemIndicesToWrite.clear();
+    for (int i = 0; i < _writeMissionItems.count(); i++) {
+        _itemIndicesToWrite << i;
+    }
+
+    _writeMissionCount();
+}
+
 void PlanManager::loadFromVehicle(void)
 {
     if (_vehicle->isOfflineEditingVehicle()) {
@@ -201,9 +215,21 @@ void PlanManager::_ackTimeout(void)
     case AckMissionRequest:
         // MISSION_REQUEST is expected, or MISSION_ACK to end sequence
         if (_itemIndicesToWrite.count() == 0) {
-            // Vehicle did not send final MISSION_ACK at end of sequence
-            _sendError(ProtocolError, tr("Mission write failed, vehicle failed to send final ack."));
-            _finishTransaction(false);
+            // Vehicle received every item but the final MISSION_ACK was lost in transit. Restart the
+            // write rather than give up - a mesh collision can eat the final ack as easily as any
+            // other packet, and a fresh MISSION_COUNT is always accepted as a new upload session.
+            if (_retryCount > _maxRetryCount) {
+                _sendError(MaxRetryExceeded,
+                           tr("Mission write failed, vehicle failed to send final ack, maximum retries exceeded."));
+                _finishTransaction(false);
+            } else {
+                _retryCount++;
+                qCDebug(PlanManagerLog)
+                    << QStringLiteral("Retrying %1 final MISSION_ACK not received, restarting write, retry Count")
+                           .arg(_planTypeString())
+                    << _retryCount;
+                _restartMissionWrite();
+            }
         } else if (_itemIndicesToWrite[0] == 0) {
             // Vehicle did not respond to MISSION_COUNT, try again
             if (_retryCount > _maxRetryCount) {
@@ -215,10 +241,22 @@ void PlanManager::_ackTimeout(void)
                 _writeMissionCount();
             }
         } else {
-            // Vehicle did not request all items from ground station
-            _sendError(ProtocolError, tr("Vehicle did not request all items from ground station: %1").arg(_ackTypeToString(_expectedAck)));
-            _expectedAck = AckNone;
-            _finishTransaction(false);
+            // Vehicle stopped requesting items partway through the upload, most likely because the next
+            // MISSION_REQUEST was lost in transit. Restart the write rather than give up - resending the
+            // individual item the vehicle already moved past would just be rejected as out of sequence.
+            if (_retryCount > _maxRetryCount) {
+                _sendError(MaxRetryExceeded,
+                           tr("Vehicle did not request all items from ground station, maximum retries exceeded: %1")
+                               .arg(_ackTypeToString(_expectedAck)));
+                _finishTransaction(false);
+            } else {
+                _retryCount++;
+                qCDebug(PlanManagerLog)
+                    << QStringLiteral("Retrying %1 vehicle stopped requesting items, restarting write, retry Count")
+                           .arg(_planTypeString())
+                    << _retryCount;
+                _restartMissionWrite();
+            }
         }
         break;
     case AckMissionClearAll:

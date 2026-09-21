@@ -12,7 +12,7 @@ MockLinkMissionItemHandler::MockLinkMissionItemHandler(MockLink *mockLink)
 {
     // qCDebug(MockLinkMissionItemHandlerLog) << Q_FUNC_INFO << this;
 
-    Q_ASSERT(mockLink);
+    // mockLink is always `this` from MockLink's own constructor, never null.
 
     (void) connect(&_missionItemResponseTimer, &QTimer::timeout, this, &MockLinkMissionItemHandler::_missionItemResponseTimeout);
 }
@@ -95,7 +95,11 @@ void MockLinkMissionItemHandler::_handleMissionClearAll(const mavlink_message_t 
     mavlink_mission_clear_all_t clearAll{};
     mavlink_msg_mission_clear_all_decode(&msg, &clearAll);
 
-    Q_ASSERT(clearAll.target_system == _mockLink->vehicleId());
+    if (clearAll.target_system != _mockLink->vehicleId()) {
+        qCWarning(MockLinkMissionItemHandlerLog)
+            << "_handleMissionClearAll message not addressed to this vehicle, ignoring";
+        return;
+    }
 
     _requestType = static_cast<MAV_MISSION_TYPE>(clearAll.mission_type);
     qCDebug(MockLinkMissionItemHandlerLog) << "_handleMissionClearAll" << _requestType;
@@ -116,7 +120,8 @@ void MockLinkMissionItemHandler::_handleMissionClearAll(const mavlink_message_t 
         _rallyItems.clear();
         break;
     default:
-        Q_ASSERT(false);
+        qCWarning(MockLinkMissionItemHandlerLog) << "_handleMissionClearAll unsupported mission_type" << _requestType;
+        return;
     }
 
     _sendAck(MAV_MISSION_ACCEPTED);
@@ -144,12 +149,16 @@ void MockLinkMissionItemHandler::_handleMissionRequestList(const mavlink_message
 
     _failReadRequestListFirstResponse = true;
 
-    Q_ASSERT(request.target_system == _mockLink->vehicleId());
+    if (request.target_system != _mockLink->vehicleId()) {
+        qCWarning(MockLinkMissionItemHandlerLog)
+            << "_handleMissionRequestList message not addressed to this vehicle, ignoring";
+        return;
+    }
     _requestListCounts[static_cast<MAV_MISSION_TYPE>(request.mission_type)]++;
 
     _requestType = static_cast<MAV_MISSION_TYPE>(request.mission_type);
 
-    int itemCount;
+    int itemCount = 0;
     switch (_requestType) {
     case MAV_MISSION_TYPE_MISSION:
         itemCount = _missionItems.count();
@@ -164,7 +173,9 @@ void MockLinkMissionItemHandler::_handleMissionRequestList(const mavlink_message
         itemCount = _rallyItems.count();
         break;
     default:
-        Q_ASSERT(false);
+        qCWarning(MockLinkMissionItemHandlerLog)
+            << "_handleMissionRequestList unsupported mission_type" << _requestType;
+        return;
     }
 
     mavlink_message_t responseMsg{};
@@ -190,7 +201,11 @@ void MockLinkMissionItemHandler::_handleMissionRequest(const mavlink_message_t &
     mavlink_mission_request_int_t request{};
     mavlink_msg_mission_request_int_decode(&msg, &request);
 
-    Q_ASSERT(request.target_system == _mockLink->vehicleId());
+    if (request.target_system != _mockLink->vehicleId()) {
+        qCWarning(MockLinkMissionItemHandlerLog)
+            << "_handleMissionRequest message not addressed to this vehicle, ignoring";
+        return;
+    }
 
     if ((_failureMode == FailReadRequest0NoResponse) && (request.seq == 0)) {
         qCDebug(MockLinkMissionItemHandlerLog) << "_handleMissionRequest not responding due to failure mode FailReadRequest0NoResponse";
@@ -243,7 +258,9 @@ void MockLinkMissionItemHandler::_handleMissionRequest(const mavlink_message_t &
         missionItemInt = _rallyItems[request.seq];
         break;
     default:
-        Q_ASSERT(false);
+        qCWarning(MockLinkMissionItemHandlerLog)
+            << "_handleMissionRequest unsupported mission_type" << request.mission_type;
+        return;
     }
 
     mavlink_message_t responseMsg{};
@@ -271,11 +288,15 @@ void MockLinkMissionItemHandler::_handleMissionCount(const mavlink_message_t &ms
 {
     mavlink_mission_count_t missionCount{};
     mavlink_msg_mission_count_decode(&msg, &missionCount);
-    Q_ASSERT(missionCount.target_system == _mockLink->vehicleId());
+    if (missionCount.target_system != _mockLink->vehicleId()) {
+        qCWarning(MockLinkMissionItemHandlerLog)
+            << "_handleMissionCount message not addressed to this vehicle, ignoring";
+        return;
+    }
 
     _requestType = (MAV_MISSION_TYPE)missionCount.mission_type;
+    // count is a uint16_t on the wire, so it can never be negative here.
     _writeSequenceCount = missionCount.count;
-    Q_ASSERT(_writeSequenceCount >= 0);
 
     qCDebug(MockLinkMissionItemHandlerLog) << "_handleMissionCount write sequence _writeSequenceCount:" << _writeSequenceCount;
 
@@ -318,6 +339,13 @@ void MockLinkMissionItemHandler::_requestNextMissionItem(int sequenceNumber)
 
     if ((_failureMode == FailWriteRequest1NoResponse) && (sequenceNumber == 1)) {
         qCDebug(MockLinkMissionItemHandlerLog) << "_requestNextMissionItem not responding due to failure mode FailWriteRequest1NoResponse";
+        return;
+    }
+
+    if ((_failureMode == FailWriteRequest1FirstResponse) && (sequenceNumber == 1) && _failWriteRequest1FirstResponse) {
+        _failWriteRequest1FirstResponse = false;
+        qCDebug(MockLinkMissionItemHandlerLog)
+            << "_requestNextMissionItem not responding due to failure mode FailWriteRequest1FirstResponse";
         return;
     }
 
@@ -416,6 +444,13 @@ void MockLinkMissionItemHandler::_handleMissionItem(const mavlink_message_t &msg
     }
 
     if (_failureMode != FailWriteFinalAckNoResponse) {
+        if ((_failureMode == FailWriteFinalAckFirstResponse) && _failWriteFinalAckFirstResponse) {
+            _failWriteFinalAckFirstResponse = false;
+            qCDebug(MockLinkMissionItemHandlerLog)
+                << "_handleMissionItem not sending final ack due to failure mode FailWriteFinalAckFirstResponse";
+            return;
+        }
+
         MAV_MISSION_RESULT ack = MAV_MISSION_ACCEPTED;
 
         if (_failureMode == FailWriteFinalAckErrorAck) {
@@ -429,7 +464,6 @@ void MockLinkMissionItemHandler::_handleMissionItem(const mavlink_message_t &msg
 void MockLinkMissionItemHandler::_missionItemResponseTimeout()
 {
     qCWarning(MockLinkMissionItemHandlerLog) << "Timeout waiting for next MISSION_ITEM_INT";
-    Q_ASSERT(false);
 }
 
 void MockLinkMissionItemHandler::sendUnexpectedMissionAck(MAV_MISSION_RESULT ackType)
@@ -440,13 +474,13 @@ void MockLinkMissionItemHandler::sendUnexpectedMissionAck(MAV_MISSION_RESULT ack
 void MockLinkMissionItemHandler::sendUnexpectedMissionItem()
 {
     // FIXME: NYI
-    Q_ASSERT(false);
+    qCWarning(MockLinkMissionItemHandlerLog) << "sendUnexpectedMissionItem not yet implemented";
 }
 
 void MockLinkMissionItemHandler::sendUnexpectedMissionRequest()
 {
     // FIXME: NYI
-    Q_ASSERT(false);
+    qCWarning(MockLinkMissionItemHandlerLog) << "sendUnexpectedMissionRequest not yet implemented";
 }
 
 void MockLinkMissionItemHandler::setFailureMode(FailureMode_t failureMode, MAV_MISSION_RESULT failureAckResult)

@@ -93,6 +93,9 @@ void MissionManagerTest::_writeItems(MockLinkMissionItemHandler::FailureMode_t f
         //      sendComplete signal
         QVERIFY_WAIT_SIGNAL((*_multiSpyMissionManager), "sendComplete", _missionManagerSignalWaitTime);
         QVERIFY(_multiSpyMissionManager->emitted("inProgressChanged", "sendComplete"));
+        // sendComplete fires on both success and failure (its bool argument carries the error state),
+        // so the absence of "error" is what actually distinguishes a clean run here.
+        QVERIFY_NO_SIGNAL((*_multiSpyMissionManager), "error");
         // Validate inProgressChanged signal value
         _checkInProgressValues(false);
         // Validate item count in mission manager
@@ -198,11 +201,13 @@ void MissionManagerTest::_testWriteFailureHandlingWorker()
         {"FailWriteMissionCountNoResponse", MockLinkMissionItemHandler::FailWriteMissionCountNoResponse, true},
         {"FailWriteMissionCountFirstResponse", MockLinkMissionItemHandler::FailWriteMissionCountFirstResponse, false},
         {"FailWriteRequest1NoResponse", MockLinkMissionItemHandler::FailWriteRequest1NoResponse, true},
+        {"FailWriteRequest1FirstResponse", MockLinkMissionItemHandler::FailWriteRequest1FirstResponse, false},
         {"FailWriteRequest0IncorrectSequence", MockLinkMissionItemHandler::FailWriteRequest0IncorrectSequence, true},
         {"FailWriteRequest1IncorrectSequence", MockLinkMissionItemHandler::FailWriteRequest1IncorrectSequence, true},
         {"FailWriteRequest0ErrorAck", MockLinkMissionItemHandler::FailWriteRequest0ErrorAck, true},
         {"FailWriteRequest1ErrorAck", MockLinkMissionItemHandler::FailWriteRequest1ErrorAck, true},
         {"FailWriteFinalAckNoResponse", MockLinkMissionItemHandler::FailWriteFinalAckNoResponse, true},
+        {"FailWriteFinalAckFirstResponse", MockLinkMissionItemHandler::FailWriteFinalAckFirstResponse, false},
         {"FailWriteFinalAckErrorAck", MockLinkMissionItemHandler::FailWriteFinalAckErrorAck, true},
         {"FailWriteFinalAckMissingRequests", MockLinkMissionItemHandler::FailWriteFinalAckMissingRequests, true},
     };

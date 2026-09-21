@@ -38,11 +38,15 @@ public:
         FailWriteMissionCountNoResponse,    // Don't respond to MISSION_COUNT with MISSION_REQUEST 0
         FailWriteMissionCountFirstResponse, // Don't respond to first MISSION_COUNT with MISSION_REQUEST 0, respond to subsequent MISSION_COUNT requests
         FailWriteRequest1NoResponse,        // Don't respond to MISSION_ITEM 0 with MISSION_REQUEST 1
+        FailWriteRequest1FirstResponse,     // Don't respond to first MISSION_ITEM 0 with MISSION_REQUEST 1, respond on
+                                            // subsequent attempts (simulates a dropped request mid-upload)
         FailWriteRequest0IncorrectSequence, // Item 0 MISSION_REQUEST sent has wrong sequence number
         FailWriteRequest1IncorrectSequence, // Item 1 MISSION_REQUEST sent has wrong sequence number
         FailWriteRequest0ErrorAck,          // Instead of sending MISSION_REQUEST 0, send MISSION_ACK error
         FailWriteRequest1ErrorAck,          // Instead of sending MISSION_REQUEST 1, send MISSION_ACK error
         FailWriteFinalAckNoResponse,        // Don't send the final MISSION_ACK
+        FailWriteFinalAckFirstResponse,     // Don't send the final MISSION_ACK on the first attempt, send it on a
+                                            // subsequent restart (simulates a dropped final ack)
         FailWriteFinalAckErrorAck,          // Send an error as the final MISSION_ACK
         FailWriteFinalAckMissingRequests,   // Send the MISSION_ACK before all items have been requested
     };
@@ -62,7 +66,13 @@ public:
     void sendUnexpectedMissionRequest();
 
     /// Reset the state of the MissionItemHandler to no items, no transactions in progress.
-    void reset() { _missionItems.clear(); _requestListCounts.clear(); }
+    void reset()
+    {
+        _missionItems.clear();
+        _requestListCounts.clear();
+        _failWriteRequest1FirstResponse = true;
+        _failWriteFinalAckFirstResponse = true;
+    }
 
     /// Test-only: seeds a simple multirotor mission (takeoff, waypoint, RTL) so that a
     /// connecting GCS will download a non-empty mission.
@@ -105,5 +115,7 @@ private:
     bool _failReadRequestListFirstResponse = true;
     bool _failReadRequest1FirstResponse = true;
     bool _failWriteMissionCountFirstResponse = true;
+    bool _failWriteRequest1FirstResponse = true;
+    bool _failWriteFinalAckFirstResponse = true;
     QMap<MAV_MISSION_TYPE, int> _requestListCounts;
 };
