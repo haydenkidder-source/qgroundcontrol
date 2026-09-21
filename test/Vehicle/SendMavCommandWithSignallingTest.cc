@@ -123,4 +123,32 @@ void SendMavCommandWithSignallingTest::_duplicateCommand()
             -1);
 }
 
+void SendMavCommandWithSignallingTest::_retryAckWindows()
+{
+    constexpr int ackTimeoutMs = TestFixtures::MavCommandAckTimeoutFixture::kDefaultTimeoutMs;
+    TestFixtures::MavCommandAckTimeoutFixture ackTimeout(ackTimeoutMs);
+    ignoreLogMessage("Vehicle.MavCommandQueue", QtWarningMsg,
+                     QRegularExpression("Giving up sending command after max retries:"));
+
+    Vehicle* connectedVehicle = vehicle();
+    QVERIFY(connectedVehicle);
+    QSignalSpy spyResult(connectedVehicle, &Vehicle::mavCommandResult);
+    _mockLink->clearReceivedMavCommandCounts();
+
+    QElapsedTimer elapsed;
+    elapsed.start();
+    connectedVehicle->sendMavCommand(MAV_COMP_ID_AUTOPILOT1, MockLink::MAV_CMD_MOCKLINK_NO_RESPONSE, false);
+
+    QList<QVariant> arguments;
+    QVERIFY(_waitForExpectedCommandResult(spyResult, MockLink::MAV_CMD_MOCKLINK_NO_RESPONSE, arguments));
+    // Without restarting the timer, retries and give-up occur on consecutive 50 ms test ticks.
+    QVERIFY2(elapsed.elapsed() >= ackTimeoutMs * MavCommandQueue::kMaxRetryCount,
+             "Command gave up before all transmissions received a full ACK window");
+    QCOMPARE(_mockLink->receivedMavCommandCount(MockLink::MAV_CMD_MOCKLINK_NO_RESPONSE),
+             MavCommandQueue::kMaxRetryCount);
+    QCOMPARE(arguments.at(3).toInt(), MAV_RESULT_FAILED);
+    QCOMPARE(arguments.at(4).value<Vehicle::MavCmdResultFailureCode_t>(),
+             Vehicle::MavCmdResultFailureNoResponseToCommand);
+}
+
 UT_REGISTER_TEST(SendMavCommandWithSignallingTest, TestLabel::Integration, TestLabel::Vehicle)

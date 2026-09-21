@@ -36,6 +36,8 @@ private slots:
     void _testReadChunkSizeFollowsLinkType_data();
     void _testReadChunkSizeFollowsLinkType();
     void _testReadChunkSizeShrinksWhenRadioDetectedMidDownload();
+    void _testFillMissingBlockSurvivesRepeatedTimeouts();
+    void _testFillMissingBlockGivesUpBeyondRetryBudget();
 
     // Overrides from UnitTest
     void cleanup() override;

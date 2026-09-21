@@ -158,6 +158,9 @@ void MockLinkFTP::_openCommand(uint8_t senderSystemId, uint8_t senderComponentId
         return;
     }
 
+    // ensureNullTemination() above guarantees a terminator within bounds, so strnlen can never
+    // return sizeof(request->data); nothing further to check here.
+
     _currentFile.close();
 
     QString tmpFilename;
@@ -266,6 +269,11 @@ void MockLinkFTP::_readCommand(uint8_t senderSystemId, uint8_t senderComponentId
     _readFileCount++;
     _lastReadFileRequestSize = request->hdr.size;
 
+    if (_dropReadFileRequestsRemaining > 0) {
+        _dropReadFileRequestsRemaining--;
+        return;
+    }
+
     if (request->hdr.session != _sessionId) {
         _sendNak(senderSystemId, senderComponentId, MavlinkFTP::kErrInvalidSession, outgoingSeqNumber, MavlinkFTP::kCmdReadFile);
         return;
@@ -304,9 +312,10 @@ void MockLinkFTP::_readCommand(uint8_t senderSystemId, uint8_t senderComponentId
     const QByteArray bytes = _currentFile.read(cBytesToRead);
     (void) memcpy(response.data, bytes.constData(), cBytesToRead);
 
-    // We should always have written something given the EOF check above; bail out defensively
-    // rather than send a response claiming to carry data that isn't there.
     if (cBytesToRead == 0) {
+        // Should never happen given the EOF check above, but a malformed request or a torn read
+        // shouldn't be reported as a successful zero-byte ack.
+        qCWarning(MockLinkFTPLog) << "MockLinkFTP: ReadFile computed zero bytes to read, NAK Fail";
         _sendNak(senderSystemId, senderComponentId, MavlinkFTP::kErrFail, outgoingSeqNumber, MavlinkFTP::kCmdReadFile);
         return;
     }
@@ -387,9 +396,10 @@ void MockLinkFTP::_burstReadCommand(uint8_t senderSystemId, uint8_t senderCompon
         _currentFile.seek(burstOffset);
 
         const uint8_t cBytes = static_cast<uint8_t>(qMin(maxRead, _currentFile.size() - burstOffset));
-        // We should always have written something given the loop condition above; bail out of
-        // the burst defensively rather than spin sending empty packets.
         if (cBytes == 0) {
+            // Should never happen given the loop condition above, but stop bursting rather than
+            // send a bogus zero-size ack packet.
+            qCWarning(MockLinkFTPLog) << "MockLinkFTP: BurstReadFile computed zero bytes to read, stopping burst";
             break;
         }
         const QByteArray bytes = _currentFile.read(cBytes);

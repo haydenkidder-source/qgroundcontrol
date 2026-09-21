@@ -448,6 +448,8 @@ void MavCommandQueue::_sendFromList(int index)
                                              &cmd);
     }
 
+    // Each transmission needs a full ACK window, including the final retry.
+    _list[index].elapsedTimer.start();
     _vehicle->sendMessageOnLinkThreadSafe(sharedLink.get(), msg);
 }
 
