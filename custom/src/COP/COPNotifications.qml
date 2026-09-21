@@ -11,7 +11,7 @@ Rectangle {
     id: root
     objectName: "copNotifications"
     implicitWidth: ScreenTools.defaultFontPixelWidth * 64
-    implicitHeight: COPController.messages.length > 0
+    implicitHeight: (COPController.messages.length > 0 && !_minimized)
                     ? notificationLayout.implicitHeight + ScreenTools.defaultFontPixelWidth * 2 : 0
     width: implicitWidth
     height: implicitHeight
@@ -21,6 +21,23 @@ Rectangle {
                                                : QGroundControl.globalPalette.windowShadeDark
     border.width: ScreenTools.defaultFontPixelWidth / 3
     property var hostWindow
+    property bool _minimized: false
+
+    Connections {
+        target: COPController
+        function onMessagesChanged() {
+            if (COPController.unacknowledged) {
+                root._minimized = false
+                minimizeTimer.stop()
+            }
+        }
+    }
+
+    Timer {
+        id: minimizeTimer
+        interval: 10000
+        onTriggered: root._minimized = true
+    }
 
     ColumnLayout {
         id: notificationLayout
@@ -36,7 +53,10 @@ Rectangle {
             QGCButton {
                 text: qsTr("Acknowledge")
                 enabled: COPController.unacknowledged
-                onClicked: COPController.acknowledge()
+                onClicked: {
+                    COPController.acknowledge()
+                    minimizeTimer.restart()
+                }
             }
         }
         QGCLabel {
