@@ -253,6 +253,11 @@ void MockLinkFTP::_readCommand(uint8_t senderSystemId, uint8_t senderComponentId
     _readFileCount++;
     _lastReadFileRequestSize = request->hdr.size;
 
+    if (_dropReadFileRequestsRemaining > 0) {
+        _dropReadFileRequestsRemaining--;
+        return;
+    }
+
     if (request->hdr.session != _sessionId) {
         _sendNak(senderSystemId, senderComponentId, MavlinkFTP::kErrInvalidSession, outgoingSeqNumber, MavlinkFTP::kCmdReadFile);
         return;
