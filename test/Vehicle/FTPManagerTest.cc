@@ -245,6 +245,42 @@ void FTPManagerTest::_testDownloadResumesAfterSessionExpiredInFill()
     _disconnectMockLink();
 }
 
+// A transient RF collision can clobber the same hole-filling ReadFile request several times in a row without
+// the link actually being out of bandwidth. The retry budget must be generous enough to ride that out instead
+// of abandoning an otherwise-healthy transfer (see FTPManager::_maxRetry).
+void FTPManagerTest::_testFillMissingBlockSurvivesRepeatedTimeouts()
+{
+    _connectMockLinkNoInitialConnectSequence(MockConfiguration::OptionNoRadioStatus);
+    MockLinkFTP* mockFtp = _mockLink->mockLinkFTP();
+    // File fits in one burst (mock bursts are 9 chunks); dropping one packet forces a fill phase after EOF
+    const int fileSize = FTPManager::kFullReadChunkSize * 9;
+    mockFtp->setDropBurstPacketOnce(FTPManager::kFullReadChunkSize * 3);
+    // Below the current retry budget: the fill-phase ReadFile for the missing block times out 5 times in a
+    // row before finally getting through on the 6th attempt.
+    mockFtp->setDropReadFileRequestsCount(5);
+
+    QString downloadedPath;
+    QCOMPARE(_downloadSizeFile(fileSize, &downloadedPath), QString());
+    _verifyFileContentsAndDelete(downloadedPath, fileSize);
+    _disconnectMockLink();
+}
+
+// The retry budget must still have a real ceiling - a hole that never gets filled has to fail the transfer
+// rather than retry forever.
+void FTPManagerTest::_testFillMissingBlockGivesUpBeyondRetryBudget()
+{
+    _connectMockLinkNoInitialConnectSequence(MockConfiguration::OptionNoRadioStatus);
+    MockLinkFTP* mockFtp = _mockLink->mockLinkFTP();
+    const int fileSize = FTPManager::kFullReadChunkSize * 9;
+    mockFtp->setDropBurstPacketOnce(FTPManager::kFullReadChunkSize * 3);
+    // Beyond the current retry budget: every fill-phase ReadFile for the missing block times out.
+    mockFtp->setDropReadFileRequestsCount(7);
+
+    const QString errorMsg = _downloadSizeFile(fileSize);
+    QVERIFY(!errorMsg.isEmpty());
+    _disconnectMockLink();
+}
+
 // Abandoning a download must not wait on the vehicle. Cancels happen on saturated links, where the Terminate
 // ack is exactly the packet most likely to be lost; the session is released with a fire-and-forget reset instead.
 void FTPManagerTest::_testCancelDownloadIsImmediate()

@@ -69,6 +69,10 @@ public:
     /// original sequence number, as a late packet from an earlier burst arrives on a real link.
     void setReorderBurstPacketOnce(uint32_t offset) { _reorderBurstPacketOffset = offset; _reorderBurstPacketPending = true; }
 
+    /// Drops the next `count` ReadFile (non-burst, hole-filling) requests entirely, forcing the client to hit
+    /// its ack timeout and retry each time, as a transient RF collision repeatedly clobbers the same block.
+    void setDropReadFileRequestsCount(int count) { _dropReadFileRequestsRemaining = count; }
+
     /// Number of OpenFileRO requests acked since construction.
     int openFileROCount() const { return _openFileROCount; }
 
@@ -189,6 +193,7 @@ private:
     bool _dropBurstPacketPending = false;
     uint32_t _reorderBurstPacketOffset = 0;
     bool _reorderBurstPacketPending = false;
+    int _dropReadFileRequestsRemaining = 0;
     int _openFileROCount = 0;
     int _readFileCount = 0;
     int _lastBurstReadRequestSize = -1;

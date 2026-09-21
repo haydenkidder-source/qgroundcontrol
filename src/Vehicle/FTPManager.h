@@ -278,7 +278,11 @@ private:
 
     // Loaded SiK radios queue up to ~2.5s; a shorter timeout misreads that as a dead stream and restarts the burst
     static const int _ackOrNakTimeoutMsecs  = 3000;
-    static const int _maxRetry              = 3;
+    // On a shared mesh with multiple vehicles, a transient collision window can outlast a couple of retries
+    // even though the link isn't actually saturated; giving up on an otherwise-healthy transfer here means
+    // falling back to ParameterManager's much less resilient non-FTP stream path. A higher budget lets the
+    // transfer ride out a brief burst of contention instead of abandoning it.
+    static const int _maxRetry = 6;
 
 public:
     /// Bytes requested per ReadFile/BurstReadFile chunk on non-radio links: the full FTP payload.
