@@ -113,6 +113,7 @@ protected:
     void _requestList(void);
     void _writeMissionCount(void);
     void _writeMissionItemsWorker(void);
+    void _restartMissionWrite(void);
     void _clearAndDeleteMissionItems(void);
     void _clearAndDeleteWriteMissionItems(void);
     QString _lastMissionReqestString(MAV_MISSION_RESULT result);
