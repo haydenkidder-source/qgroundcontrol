@@ -2,10 +2,10 @@ name: Backfill Release Assets
 
 # One-off utility to attach installer assets to a GitHub Release that was
 # published without going through release.yml's automated pipeline (e.g. a
-# tag created directly, bypassing semantic-release). Reuses the exact same
-# download/validate/upload steps as release.yml's own upload-artifacts job,
-# pointed at an explicit tag and commit instead of a fresh semantic-release
-# run. Delete this workflow once it's no longer needed.
+# tag created directly, bypassing semantic-release). Reuses release.yml's
+# own artifact-download step, pointed at an explicit tag and commit instead
+# of a fresh semantic-release run. Delete this workflow once it's no longer
+# needed.
 
 on:
   workflow_dispatch:
@@ -94,14 +94,36 @@ jobs:
           output-dir: artifacts
           artifact-prefixes: Custom-QGroundControl,sbom-
 
-      - name: Validate release assets
+      # release_assets.py unconditionally requires an AppImage .zsync sidecar,
+      # but that file is only produced by the tag-triggered official release
+      # path (gated behind QGC_APPIMAGE_UPDATE_INFORMATION), which this
+      # backfill deliberately isn't using - these are ordinary push builds.
+      # Select the same asset set by hand instead, omitting the zsync files;
+      # the installers themselves are unaffected, only AppImage in-app
+      # auto-update metadata is absent for this specific release.
+      - name: Select release assets
         run: |
-          python3 .github/scripts/release_assets.py \
-            --artifacts-dir artifacts \
-            --head-sha "${{ inputs.head_sha }}" \
-            --source-sbom "${RUNNER_TEMP}/sbom-source.spdx.json" \
-            --source-sbom "${RUNNER_TEMP}/sbom-source.cdx.json" \
-            --output release-assets.txt
+          set -euo pipefail
+          : > release-assets.txt
+          for dir in Custom-QGroundControl-x86_64 Custom-QGroundControl-aarch64 \
+                     Custom-QGroundControl-installer-AMD64 Custom-QGroundControl-installer-ARM64 \
+                     Custom-QGroundControl-installer-AMD64-ARM64; do
+            found=0
+            for f in "artifacts/${dir}"/*; do
+              [[ "$f" == *.zsync ]] && continue
+              echo "$f" >> release-assets.txt
+              found=1
+            done
+            if [[ "$found" -eq 0 ]]; then
+              echo "::error::No files found for expected package ${dir}"
+              exit 1
+            fi
+          done
+          find artifacts -type f -name 'sbom-*' >> release-assets.txt
+          echo "${RUNNER_TEMP}/sbom-source.spdx.json" >> release-assets.txt
+          echo "${RUNNER_TEMP}/sbom-source.cdx.json" >> release-assets.txt
+          echo "Selected assets:"
+          cat release-assets.txt
 
       - name: Upload to Release
         env:
