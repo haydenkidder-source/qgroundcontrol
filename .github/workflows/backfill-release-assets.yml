@@ -18,6 +18,14 @@ on:
         description: 'Commit SHA the Linux/Windows builds were produced from'
         required: true
         type: string
+      linux_run_id:
+        description: 'Completed linux.yml run ID that built this commit'
+        required: true
+        type: string
+      windows_run_id:
+        description: 'Completed windows.yml run ID that built this commit'
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -60,6 +68,21 @@ jobs:
           output-file: ${{ runner.temp }}/sbom-source.cdx.json
           artifact-name: sbom-source-cyclonedx
 
+      # --strict-runs requires a pre-built run snapshot (download_artifacts.py
+      # refuses to search by SHA alone in strict mode). Build it the same way
+      # release_builds.py does: the raw `gh api` run object for each explicit
+      # run ID, so download_artifacts.py's identity checks (head_sha,
+      # run_attempt, status) match exactly.
+      - name: Build run snapshot
+        env:
+          GH_REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          linux_run=$(gh api "repos/${GH_REPO}/actions/runs/${{ inputs.linux_run_id }}")
+          windows_run=$(gh api "repos/${GH_REPO}/actions/runs/${{ inputs.windows_run_id }}")
+          jq -n --argjson l "$linux_run" --argjson w "$windows_run" '[$l, $w]' > release-build-runs.json
+
       - name: Download artifacts
         uses: ./.github/actions/download-all-artifacts
         with:
@@ -67,6 +90,7 @@ jobs:
           workflows: Linux,Windows
           event: push
           strict-runs: 'true'
+          runs-file: release-build-runs.json
           output-dir: artifacts
           artifact-prefixes: Custom-QGroundControl,sbom-
 
