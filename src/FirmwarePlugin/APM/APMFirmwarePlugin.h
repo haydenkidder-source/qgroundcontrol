@@ -1,11 +1,12 @@
 #pragma once
 
+#include <QtCore/QElapsedTimer>
+#include <QtCore/QMutex>
+#include <QtNetwork/QAbstractSocket>
+
 #include "FirmwarePlugin.h"
 #include "FollowMe.h"
 #include "QGCMAVLink.h"
-
-#include <QtCore/QMutex>
-#include <QtNetwork/QAbstractSocket>
 
 struct APMCustomMode
 {
@@ -99,6 +100,7 @@ private:
     void _handleIncomingParamValue(Vehicle *vehicle, mavlink_message_t *message);
     bool _handleIncomingStatusText(Vehicle *vehicle, mavlink_message_t *message);
     void _handleIncomingHeartbeat(Vehicle *vehicle, mavlink_message_t *message);
+    void _checkStreamRates(Vehicle* vehicle);
     void _handleOutgoingParamSetThreadSafe(Vehicle *vehicle, LinkInterface *outgoingLink, mavlink_message_t *message);
     void _soloVideoHandshake();
     bool _guidedModeTakeoff(Vehicle *vehicle, double altitudeRel) const;
@@ -161,8 +163,10 @@ public:
         }
     }
 
-    QTime lastBatteryStatusTime;
-    QTime lastHomePositionTime;
+    QElapsedTimer lastBatteryStatusTime;
+    QElapsedTimer lastHomePositionTime;
+    QElapsedTimer lastReinitAttemptTime;
+    int consecutiveReinitAttempts = 0;
 
     bool MAV_CMD_DO_REPOSITION_supported = false;
     bool MAV_CMD_DO_REPOSITION_unsupported = false;
