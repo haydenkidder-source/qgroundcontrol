@@ -69,6 +69,10 @@ public:
     /// original sequence number, as a late packet from an earlier burst arrives on a real link.
     void setReorderBurstPacketOnce(uint32_t offset) { _reorderBurstPacketOffset = offset; _reorderBurstPacketPending = true; }
 
+    /// Drops the next `count` ReadFile (non-burst, hole-filling) requests entirely, forcing the client to hit
+    /// its ack timeout and retry each time, as a transient RF collision repeatedly clobbers the same block.
+    void setDropReadFileRequestsCount(int count) { _dropReadFileRequestsRemaining = count; }
+
     /// Number of OpenFileRO requests acked since construction.
     int openFileROCount() const { return _openFileROCount; }
 
@@ -112,6 +116,25 @@ public:
     /// Controls whether the server implements the kCmdListDirectoryWithTime command. When false the
     /// server Naks it with kErrUnknownCommand so the client fallback to kCmdListDirectory can be tested.
     void setListDirectoryWithTimeSupported(bool supported) { _listDirectoryWithTimeSupported = supported; }
+
+    enum class ListWithTimeFailure
+    {
+        UnknownCommand,
+        Fail,
+        NoResponse,
+        MalformedNak,
+        InvalidOpcode,
+        BadSequence
+    };
+
+    void setListWithTimeFailure(ListWithTimeFailure failure, uint32_t offset = 0)
+    {
+        _listDirectoryWithTimeSupported = false;
+        _listWithTimeFailure = failure;
+        _listWithTimeFailureOffset = offset;
+    }
+
+    int listWithTimeRequestCount() const { return _listWithTimeRequestCount; }
 
     /// Array of failure modes you can cycle through for testing. By looping through this array you can avoid
     /// hardcoding the specific error modes in your unit test. This way when new error modes are added your unit test
@@ -180,6 +203,9 @@ private:
     int _burstReadDelayMs = 0;                  ///< Per-burst delay to simulate a slow link
     ErrorMode_t _errMode = errModeNone;         ///< Currently set error mode, as specified by setErrorMode
     bool _listDirectoryWithTimeSupported = true; ///< Whether the server implements kCmdListDirectoryWithTime
+    ListWithTimeFailure _listWithTimeFailure = ListWithTimeFailure::UnknownCommand;
+    uint32_t _listWithTimeFailureOffset = 0;
+    int _listWithTimeRequestCount = 0;
     bool _paramPckEnabled = true;               ///< Serve @PARAM/param.pck; false NAKs errno ENOENT
     bool _singleSessionEnforced = false;
     bool _ignoreResetSessions = false;
@@ -189,6 +215,7 @@ private:
     bool _dropBurstPacketPending = false;
     uint32_t _reorderBurstPacketOffset = 0;
     bool _reorderBurstPacketPending = false;
+    int _dropReadFileRequestsRemaining = 0;
     int _openFileROCount = 0;
     int _readFileCount = 0;
     int _lastBurstReadRequestSize = -1;

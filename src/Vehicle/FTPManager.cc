@@ -24,7 +24,7 @@ FTPManager::FTPManager(Vehicle* vehicle)
     connect(&_ackOrNakTimeoutTimer, &QTimer::timeout, this, &FTPManager::_ackOrNakTimeout);
 
     // Make sure we don't have bad structure packing
-    Q_ASSERT(sizeof(MavlinkFTP::RequestHeader) == 12);
+    static_assert(sizeof(MavlinkFTP::RequestHeader) == 12, "MavlinkFTP::RequestHeader must be 12 bytes");
 
     _uploadState.reset();
 }
@@ -155,10 +155,10 @@ bool FTPManager::listDirectory(uint8_t fromCompId, const QString& fromURI)
             : MavlinkFTP::kCmdListDirectoryWithTime;
 
     // Re-report the cached capability on every listing so any log capture window shows it
-    const char* supportStr =
-            (_listDirWithTimeSupport == WithTimeSupport_t::Supported)   ? "vehicle supports it" :
-            (_listDirWithTimeSupport == WithTimeSupport_t::Unsupported) ? "vehicle Nak'ed it earlier this connection" :
-                                                                          "support unknown, probing";
+    const char* supportStr = (_listDirWithTimeSupport == WithTimeSupport_t::Supported) ? "vehicle supports it"
+                             : (_listDirWithTimeSupport == WithTimeSupport_t::Unsupported)
+                                 ? "disabled earlier this connection"
+                                 : "support unknown, probing";
     qCDebug(FTPManagerLog) << "listDirectory using" << MavlinkFTP::opCodeToString(_listDirectoryState.opCode)
                            << "-" << supportStr;
 
@@ -634,6 +634,11 @@ void FTPManager::_mavlinkMessageReceived(const mavlink_message_t& message)
         return;
     }
 
+    // Only responses may advance a state or stop its timeout timer.
+    if (request->hdr.opcode != MavlinkFTP::kRspAck && request->hdr.opcode != MavlinkFTP::kRspNak) {
+        return;
+    }
+
     // Ignore old/reordered packets (handle wrap-around properly). Burst data is the exception: its offset says
     // where it goes, and a late packet from an earlier burst is still good data.
     uint16_t actualIncomingSeqNumber = request->hdr.seqNumber;
@@ -990,14 +995,14 @@ void FTPManager::_listDirectoryAckOrNak(const MavlinkFTP::Request* ackOrNak)
         return;
     }
 
+    // Discard unrelated replies without disabling the bounded retry timer.
+    if (ackOrNak->hdr.seqNumber != _expectedIncomingSeqNumber) {
+        return;
+    }
+
     _ackOrNakTimeoutTimer.stop();
 
     if (ackOrNak->hdr.opcode == MavlinkFTP::kRspAck) {
-        if (ackOrNak->hdr.seqNumber < _expectedIncomingSeqNumber) {
-            qCDebug(FTPManagerLog) << "_listDirectoryAckOrNak: Disregarding Ack due to incorrect sequence actual:expected" << ackOrNak->hdr.seqNumber << _expectedIncomingSeqNumber;
-            return;
-        }
-
         if (_listDirectoryState.opCode == MavlinkFTP::kCmdListDirectoryWithTime) {
             _listDirWithTimeSupport = WithTimeSupport_t::Supported;
         }
@@ -1019,43 +1024,41 @@ void FTPManager::_listDirectoryAckOrNak(const MavlinkFTP::Request* ackOrNak)
     } else if (ackOrNak->hdr.opcode == MavlinkFTP::kRspNak) {
         MavlinkFTP::ErrorCode_t errorCode = static_cast<MavlinkFTP::ErrorCode_t>(ackOrNak->data[0]);
 
-        if (errorCode == MavlinkFTP::kErrEOF) {
-            // All entries returned
-            if (ackOrNak->hdr.seqNumber != _expectedIncomingSeqNumber) {
-                qCDebug(FTPManagerLog) << "_listDirectoryAckOrNak: Disregarding Nak due to incorrect sequence actual:expected" << ackOrNak->hdr.seqNumber << _expectedIncomingSeqNumber;
-                _ackOrNakTimeoutTimer.start();
-                return;
-            } else {
-                qCDebug(FTPManagerLog) << "_listDirectoryAckOrNak EOF";
-                if (_listDirectoryState.opCode == MavlinkFTP::kCmdListDirectoryWithTime) {
-                    _listDirWithTimeSupport = WithTimeSupport_t::Supported;
-                }
-                _advanceStateMachine();
+        if (ackOrNak->hdr.size == 1 && errorCode == MavlinkFTP::kErrEOF) {
+            if (_listDirectoryState.opCode == MavlinkFTP::kCmdListDirectoryWithTime) {
+                _listDirWithTimeSupport = WithTimeSupport_t::Supported;
             }
-        } else if (errorCode == MavlinkFTP::kErrUnknownCommand && _listDirectoryState.opCode == MavlinkFTP::kCmdListDirectoryWithTime) {
-            // Server doesn't implement kCmdListDirectoryWithTime. Remember that, fall back to the
-            // plain listing and restart from the beginning. The UnknownCommand Nak is a definitive
-            // capability statement so we act on it without a strict sequence check; the restart is
-            // idempotent (offset and accumulated entries are reset).
-            qCDebug(FTPManagerLog) << "_listDirectoryAckOrNak: kCmdListDirectoryWithTime unsupported, falling back to kCmdListDirectory";
-            _listDirWithTimeSupport             = WithTimeSupport_t::Unsupported;
-            _listDirectoryState.opCode          = MavlinkFTP::kCmdListDirectory;
-            _listDirectoryState.expectedOffset  = 0;
-            _listDirectoryState.rgDirectoryList.clear();
-            _expectedIncomingSeqNumber          = ackOrNak->hdr.seqNumber;
-            _listDirectoryWorker(true /* firstRequest */);
-        } else { /* Don't care is this is out of sequence */
+            _advanceStateMachine();
+        } else if (_listDirectoryState.opCode == MavlinkFTP::kCmdListDirectoryWithTime) {
+            // Older ArduPilot releases reject unknown opcodes with Fail, not UnknownCommand.
+            // Retry this read-only operation without timestamps even for malformed/generic NAKs.
+            _listDirectoryFallback();
+        } else {
             qCDebug(FTPManagerLog) << "_listDirectoryAckOrNak: Nak -" << _errorMsgFromNak(ackOrNak);
             _listDirectoryComplete(tr("List directory failed"));
         }
     }
 }
 
+void FTPManager::_listDirectoryFallback(void)
+{
+    qCDebug(FTPManagerLog) << "Timestamped listing failed, using plain listings for this connection";
+    _listDirWithTimeSupport = WithTimeSupport_t::Unsupported;
+    _listDirectoryState.opCode = MavlinkFTP::kCmdListDirectory;
+    _listDirectoryState.expectedOffset = 0;
+    _listDirectoryState.rgDirectoryList.clear();
+    _listDirectoryWorker(true /* firstRequest */);
+}
+
 void FTPManager::_listDirectoryTimeout(void)
 {
     if (++_listDirectoryState.retryCount > _maxRetry) {
         qCDebug(FTPManagerLog) << QString("_listDirectoryTimeout retries exceeded");
-        _listDirectoryComplete(tr("List directory failed"));
+        if (_listDirectoryState.opCode == MavlinkFTP::kCmdListDirectoryWithTime) {
+            _listDirectoryFallback();
+        } else {
+            _listDirectoryComplete(tr("List directory failed"));
+        }
     } else {
         // Try again
         qCDebug(FTPManagerLog) << QString("_listDirectoryTimeout: retrying - retryCount(%1) offset(%2)").arg(_listDirectoryState.retryCount).arg(_listDirectoryState.expectedOffset);

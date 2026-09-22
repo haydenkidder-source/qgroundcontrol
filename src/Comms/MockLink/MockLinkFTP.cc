@@ -47,9 +47,26 @@ void MockLinkFTP::_listCommand(uint8_t senderSystemId, uint8_t senderComponentId
     const uint16_t outgoingSeqNumber = _nextSeqNumber(seqNumber);
     const MavlinkFTP::OpCode_t listOpCode = withTime ? MavlinkFTP::kCmdListDirectoryWithTime : MavlinkFTP::kCmdListDirectory;
 
-    if (withTime && !_listDirectoryWithTimeSupported) {
-        // Simulate a server which doesn't implement the command. The client should fall back to kCmdListDirectory.
-        _sendNak(senderSystemId, senderComponentId, MavlinkFTP::kErrUnknownCommand, outgoingSeqNumber, listOpCode);
+    if (withTime && !_listDirectoryWithTimeSupported && request->hdr.offset >= _listWithTimeFailureOffset) {
+        if (_listWithTimeFailure == ListWithTimeFailure::NoResponse) {
+            return;
+        }
+        MavlinkFTP::Request response{};
+        response.hdr.opcode = MavlinkFTP::kRspNak;
+        response.hdr.req_opcode = listOpCode;
+        response.hdr.size = 1;
+        response.data[0] = (_listWithTimeFailure == ListWithTimeFailure::UnknownCommand)
+                               ? MavlinkFTP::kErrUnknownCommand
+                               : MavlinkFTP::kErrFail;
+        if (_listWithTimeFailure == ListWithTimeFailure::MalformedNak) {
+            response.hdr.size = 0;
+            response.data[0] = MavlinkFTP::kErrEOF;  // Must not be mistaken for a valid EOF.
+        } else if (_listWithTimeFailure == ListWithTimeFailure::InvalidOpcode) {
+            response.hdr.opcode = MavlinkFTP::kCmdNone;
+        }
+        _sendResponse(
+            senderSystemId, senderComponentId, &response,
+            _listWithTimeFailure == ListWithTimeFailure::BadSequence ? outgoingSeqNumber + 1 : outgoingSeqNumber);
         return;
     }
 
@@ -141,9 +158,8 @@ void MockLinkFTP::_openCommand(uint8_t senderSystemId, uint8_t senderComponentId
         return;
     }
 
-    const size_t cchPath = strnlen(reinterpret_cast<char*>(request->data), sizeof(request->data));
-    Q_ASSERT(cchPath != sizeof(request->data));
-    Q_UNUSED(cchPath); // Fix initialized-but-not-referenced warning on release builds
+    // ensureNullTemination() above guarantees a terminator within bounds, so strnlen can never
+    // return sizeof(request->data); nothing further to check here.
 
     _currentFile.close();
 
@@ -253,6 +269,11 @@ void MockLinkFTP::_readCommand(uint8_t senderSystemId, uint8_t senderComponentId
     _readFileCount++;
     _lastReadFileRequestSize = request->hdr.size;
 
+    if (_dropReadFileRequestsRemaining > 0) {
+        _dropReadFileRequestsRemaining--;
+        return;
+    }
+
     if (request->hdr.session != _sessionId) {
         _sendNak(senderSystemId, senderComponentId, MavlinkFTP::kErrInvalidSession, outgoingSeqNumber, MavlinkFTP::kCmdReadFile);
         return;
@@ -291,8 +312,13 @@ void MockLinkFTP::_readCommand(uint8_t senderSystemId, uint8_t senderComponentId
     const QByteArray bytes = _currentFile.read(cBytesToRead);
     (void) memcpy(response.data, bytes.constData(), cBytesToRead);
 
-    // We should always have written something, otherwise there is something wrong with the code above
-    Q_ASSERT(cBytesToRead);
+    if (cBytesToRead == 0) {
+        // Should never happen given the EOF check above, but a malformed request or a torn read
+        // shouldn't be reported as a successful zero-byte ack.
+        qCWarning(MockLinkFTPLog) << "MockLinkFTP: ReadFile computed zero bytes to read, NAK Fail";
+        _sendNak(senderSystemId, senderComponentId, MavlinkFTP::kErrFail, outgoingSeqNumber, MavlinkFTP::kCmdReadFile);
+        return;
+    }
 
     response.hdr.session = _sessionId;
     response.hdr.size = cBytesToRead;
@@ -370,8 +396,13 @@ void MockLinkFTP::_burstReadCommand(uint8_t senderSystemId, uint8_t senderCompon
         _currentFile.seek(burstOffset);
 
         const uint8_t cBytes = static_cast<uint8_t>(qMin(maxRead, _currentFile.size() - burstOffset));
+        if (cBytes == 0) {
+            // Should never happen given the loop condition above, but stop bursting rather than
+            // send a bogus zero-size ack packet.
+            qCWarning(MockLinkFTPLog) << "MockLinkFTP: BurstReadFile computed zero bytes to read, stopping burst";
+            break;
+        }
         const QByteArray bytes = _currentFile.read(cBytes);
-        Q_ASSERT(cBytes); // We should always have written something, otherwise there is something wrong with the code above
 
         (void) memcpy(response.data, bytes.constData(), cBytes);
 
@@ -537,6 +568,10 @@ void MockLinkFTP::mavlinkMessageReceived(const mavlink_message_t &message)
     }
 
     MavlinkFTP::Request *request = reinterpret_cast<MavlinkFTP::Request*>(&requestFTP.payload[0]);
+
+    if (request->hdr.opcode == MavlinkFTP::kCmdListDirectoryWithTime) {
+        ++_listWithTimeRequestCount;
+    }
 
     // kCmdOpenFileRO and kCmdResetSessions don't support retry so we can't drop those
     if (_randomDropsEnabled && (request->hdr.opcode != MavlinkFTP::kCmdOpenFileRO) && (request->hdr.opcode != MavlinkFTP::kCmdResetSessions)) {

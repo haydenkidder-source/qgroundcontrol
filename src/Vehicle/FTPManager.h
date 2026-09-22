@@ -48,7 +48,7 @@ public:
     /// Signals listDirectoryComplete
     bool listDirectory(uint8_t fromCompId, const QString& fromURI);
 
-    /// true when the vehicle NAK'ed kCmdListDirectoryWithTime, i.e. directory listings carry no modification times.
+    /// True after timestamped listings fail or time out; plain listings are used for this connection.
     bool listDirectoryWithTimeUnsupported() const { return _listDirWithTimeSupport == WithTimeSupport_t::Unsupported; }
 
     /// Deletes a file on the vehicle.
@@ -207,6 +207,7 @@ private:
     void    _listDirectoryBegin         (void);
     void    _listDirectoryAckOrNak      (const MavlinkFTP::Request* ackOrNak);
     void    _listDirectoryTimeout       (void);
+    void _listDirectoryFallback(void);
     void    _openFileROBegin            (void);
     void    _openFileROAckOrNak         (const MavlinkFTP::Request* ackOrNak);
     void    _openFileROTimeout          (void);
@@ -278,7 +279,11 @@ private:
 
     // Loaded SiK radios queue up to ~2.5s; a shorter timeout misreads that as a dead stream and restarts the burst
     static const int _ackOrNakTimeoutMsecs  = 3000;
-    static const int _maxRetry              = 3;
+    // On a shared mesh with multiple vehicles, a transient collision window can outlast a couple of retries
+    // even though the link isn't actually saturated; giving up on an otherwise-healthy transfer here means
+    // falling back to ParameterManager's much less resilient non-FTP stream path. A higher budget lets the
+    // transfer ride out a brief burst of contention instead of abandoning it.
+    static const int _maxRetry = 6;
 
 public:
     /// Bytes requested per ReadFile/BurstReadFile chunk on non-radio links: the full FTP payload.

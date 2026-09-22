@@ -14,6 +14,7 @@ private slots:
     void _testLostPackets();
     void _testListDirectory();
     void _testListDirectoryWithTime();
+    void _testListDirectoryWithTimeFallback_data();
     void _testListDirectoryWithTimeFallback();
     void _testListDirectoryNoResponse();
     void _testListDirectoryNakResponse();
@@ -35,6 +36,8 @@ private slots:
     void _testReadChunkSizeFollowsLinkType_data();
     void _testReadChunkSizeFollowsLinkType();
     void _testReadChunkSizeShrinksWhenRadioDetectedMidDownload();
+    void _testFillMissingBlockSurvivesRepeatedTimeouts();
+    void _testFillMissingBlockGivesUpBeyondRetryBudget();
 
     // Overrides from UnitTest
     void cleanup() override;
