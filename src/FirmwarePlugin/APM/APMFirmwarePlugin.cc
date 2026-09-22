@@ -1,7 +1,10 @@
 #include "APMFirmwarePlugin.h"
 
+#include <algorithm>
+
 #include <QtCore/QRegularExpression>
 #include <QtCore/QRegularExpressionMatch>
+#include <QtCore/QTimer>
 #include <QtNetwork/QTcpSocket>
 
 #include "APMAutoPilotPlugin.h"
@@ -291,6 +294,10 @@ void APMFirmwarePlugin::_handleIncomingHeartbeat(Vehicle *vehicle, mavlink_messa
 
 bool APMFirmwarePlugin::adjustIncomingMavlinkMessage(Vehicle *vehicle, mavlink_message_t *message)
 {
+    if (!vehicle) {
+        return false;
+    }
+
     // We use loss of BATTERY_STATUS/HOME_POSITION as a trigger to reinitialize stream rates
     auto instanceData = qobject_cast<APMFirmwarePluginInstanceData*>(vehicle->firmwarePluginInstanceData());
 
@@ -298,9 +305,11 @@ bool APMFirmwarePlugin::adjustIncomingMavlinkMessage(Vehicle *vehicle, mavlink_m
         // We need to look at all heartbeats that go by from any component
         _handleIncomingHeartbeat(vehicle, message);
     } else if (message->msgid == MAVLINK_MSG_ID_BATTERY_STATUS && instanceData)  {
-        instanceData->lastBatteryStatusTime = QTime::currentTime();
+        instanceData->lastBatteryStatusTime.start();
+        instanceData->consecutiveReinitAttempts = 0;
     } else if (message->msgid == MAVLINK_MSG_ID_HOME_POSITION && instanceData)  {
-        instanceData->lastHomePositionTime = QTime::currentTime();
+        instanceData->lastHomePositionTime.start();
+        instanceData->consecutiveReinitAttempts = 0;
     } else {
         // Only translate messages which come from ArduPilot code. All other components are expected to follow current mavlink spec.
         if (_ardupilotComponentMap[vehicle->id()][message->compid]) {
@@ -320,13 +329,40 @@ bool APMFirmwarePlugin::adjustIncomingMavlinkMessage(Vehicle *vehicle, mavlink_m
         }
     }
 
-    // If we lose BATTERY_STATUS/HOME_POSITION for reinitStreamsTimeoutSecs seconds we re-initialize stream rates
-    const int reinitStreamsTimeoutSecs = 10;
-    if (instanceData && ((instanceData->lastBatteryStatusTime.secsTo(QTime::currentTime()) > reinitStreamsTimeoutSecs) || (instanceData->lastHomePositionTime.secsTo(QTime::currentTime()) > reinitStreamsTimeoutSecs))) {
-        initializeStreamRates(vehicle);
+    return true;
+}
+
+void APMFirmwarePlugin::_checkStreamRates(Vehicle* vehicle)
+{
+    if (!vehicle) {
+        return;
     }
 
-    return true;
+    auto* instanceData = qobject_cast<APMFirmwarePluginInstanceData*>(vehicle->firmwarePluginInstanceData());
+    if (!instanceData) {
+        return;
+    }
+
+    const int reinitStreamsTimeoutMs = QGC::runningUnitTests() ? 1000 : 10000;
+    const auto isStale = [reinitStreamsTimeoutMs](const QElapsedTimer& lastReceived) {
+        return !lastReceived.isValid() || lastReceived.elapsed() > reinitStreamsTimeoutMs;
+    };
+    if (!isStale(instanceData->lastBatteryStatusTime) && !isStale(instanceData->lastHomePositionTime)) {
+        return;
+    }
+
+    // Limit repeated bursts on degraded links, but keep trying once a minute so recovery is still possible.
+    // Saturate the exponent as well as the interval to avoid overflow during prolonged outages.
+    const int backoffMs = reinitStreamsTimeoutMs * std::min(1 << instanceData->consecutiveReinitAttempts, 6);
+    if (instanceData->lastReinitAttemptTime.elapsed() < backoffMs) {
+        qCDebug(APMFirmwarePluginLog) << "Stream reinitialization suppressed by backoff, interval ms:" << backoffMs;
+        return;
+    }
+
+    qCDebug(APMFirmwarePluginLog) << "Reinitializing stale streams, backoff interval ms:" << backoffMs;
+    instanceData->lastReinitAttemptTime.start();
+    instanceData->consecutiveReinitAttempts = std::min(instanceData->consecutiveReinitAttempts + 1, 3);
+    initializeStreamRates(vehicle);
 }
 
 void APMFirmwarePlugin::adjustOutgoingMavlinkMessageThreadSafe(Vehicle *vehicle, LinkInterface *outgoingLink, mavlink_message_t *message)
@@ -394,12 +430,20 @@ void APMFirmwarePlugin::_adjustCalibrationMessageSeverity(mavlink_message_t *mes
 
 void APMFirmwarePlugin::initializeStreamRates(Vehicle *vehicle)
 {
+    if (!vehicle) {
+        return;
+    }
+
     // We use loss of BATTERY_STATUS/HOME_POSITION as a trigger to reinitialize stream rates
     auto instanceData = qobject_cast<APMFirmwarePluginInstanceData*>(vehicle->firmwarePluginInstanceData());
     if (!instanceData) {
         instanceData = new APMFirmwarePluginInstanceData(vehicle);
-        instanceData->lastBatteryStatusTime = instanceData->lastHomePositionTime = QTime::currentTime();
         vehicle->setFirmwarePluginInstanceData(instanceData);
+        // Allow the initial requests time to produce telemetry without pretending it was received.
+        instanceData->lastReinitAttemptTime.start();
+        auto* timer = new QTimer(instanceData);
+        connect(timer, &QTimer::timeout, instanceData, [this, vehicle]() { _checkStreamRates(vehicle); });
+        timer->start(QGC::runningUnitTests() ? 100 : 2000);
     }
 
     if (SettingsManager::instance()->mavlinkSettings()->apmStartMavlinkStreams()->rawValue().toBool()) {
@@ -441,8 +485,6 @@ void APMFirmwarePlugin::initializeStreamRates(Vehicle *vehicle)
     // ArduPilot doesn't send MAVLINK_MSG_ID_EXTENDED_SYS_STATE messages unless requested, so we request it to
     // make the LandAbort action available.
     vehicle->sendMavCommand(MAV_COMP_ID_AUTOPILOT1, MAV_CMD_SET_MESSAGE_INTERVAL, false /* showError */, MAVLINK_MSG_ID_EXTENDED_SYS_STATE, 1000000 /* 1 second interval in usec */);
-
-    instanceData->lastBatteryStatusTime = instanceData->lastHomePositionTime = QTime::currentTime();
 }
 
 APMFirmwarePlugin::FirmwareParameterHeader APMFirmwarePlugin::_parseParamsHeader(const QString &filePath)
