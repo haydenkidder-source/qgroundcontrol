@@ -1,0 +1,90 @@
+name: Backfill Release Assets
+
+# One-off utility to attach installer assets to a GitHub Release that was
+# published without going through release.yml's automated pipeline (e.g. a
+# tag created directly, bypassing semantic-release). Reuses the exact same
+# download/validate/upload steps as release.yml's own upload-artifacts job,
+# pointed at an explicit tag and commit instead of a fresh semantic-release
+# run. Delete this workflow once it's no longer needed.
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Existing release tag to attach assets to (e.g. v1.5.2)'
+        required: true
+        type: string
+      head_sha:
+        description: 'Commit SHA the Linux/Windows builds were produced from'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  upload-artifacts:
+    name: Upload Release Artifacts
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      actions: read
+      contents: write
+
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@v2
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.head_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Generate source SBOM (SPDX)
+        uses: anchore/sbom-action@v0
+        with:
+          path: .
+          format: spdx-json
+          output-file: ${{ runner.temp }}/sbom-source.spdx.json
+          artifact-name: sbom-source-spdx
+
+      - name: Generate source SBOM (CycloneDX)
+        uses: anchore/sbom-action@v0
+        with:
+          path: .
+          format: cyclonedx-json
+          output-file: ${{ runner.temp }}/sbom-source.cdx.json
+          artifact-name: sbom-source-cyclonedx
+
+      - name: Download artifacts
+        uses: ./.github/actions/download-all-artifacts
+        with:
+          head-sha: ${{ inputs.head_sha }}
+          workflows: Linux,Windows
+          event: push
+          strict-runs: 'true'
+          output-dir: artifacts
+          artifact-prefixes: Custom-QGroundControl,sbom-
+
+      - name: Validate release assets
+        run: |
+          python3 .github/scripts/release_assets.py \
+            --artifacts-dir artifacts \
+            --head-sha "${{ inputs.head_sha }}" \
+            --source-sbom "${RUNNER_TEMP}/sbom-source.spdx.json" \
+            --source-sbom "${RUNNER_TEMP}/sbom-source.cdx.json" \
+            --output release-assets.txt
+
+      - name: Upload to Release
+        env:
+          GH_REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          mapfile -t release_assets < release-assets.txt
+          gh release upload "$RELEASE_TAG" "${release_assets[@]}" --clobber
