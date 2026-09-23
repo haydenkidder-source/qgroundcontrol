@@ -165,7 +165,9 @@ void MockLinkFTP::_openCommand(uint8_t senderSystemId, uint8_t senderComponentId
 
     QString tmpFilename;
     const QString sizePrefix = sizeFilenamePrefix;
-    if (path.startsWith(sizePrefix)) {
+    if (_downloadFiles.contains(path)) {
+        tmpFilename = _downloadFiles.value(path);
+    } else if (path.startsWith(sizePrefix)) {
         const QString sizeString = path.right(path.length() - sizePrefix.length());
         tmpFilename = _createTestTempFile(sizeString.toInt());
     } else if (path == "/general.json") {

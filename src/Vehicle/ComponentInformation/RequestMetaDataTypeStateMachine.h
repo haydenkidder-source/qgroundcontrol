@@ -52,7 +52,7 @@ private:
 
     // Download helpers
     void _requestFile(const QString& cacheFileTag, bool crcValid, const QString& uri, QString& outputFileName, bool trackMetadataSource);
-    QString _downloadCompleteJsonWorker(const QString& jsonFileName);
+    QString _downloadCompleteJsonWorker(const QString& jsonFileName, bool removeOriginal = false);
     static bool _uriIsMAVLinkFTP(const QString& uri);
 
     enum class MetadataSource {

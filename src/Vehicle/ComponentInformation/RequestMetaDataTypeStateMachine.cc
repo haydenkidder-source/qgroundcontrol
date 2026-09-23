@@ -13,9 +13,11 @@
 // State types included via QGCStateMachine.h in header
 
 #include <QtCore/QCoreApplication>
-#include <QtCore/QStandardPaths>
 #include <QtCore/QDir>
 #include <QtCore/QFile>
+#include <QtCore/QFileInfo>
+#include <QtCore/QStandardPaths>
+#include <QtCore/QUuid>
 
 QGC_LOGGING_CATEGORY(RequestMetaDataTypeStateMachineLog, "ComponentInformation.RequestMetaDataTypeStateMachine")
 
@@ -421,7 +423,8 @@ void RequestMetaDataTypeStateMachine::_completeRequest()
     if (!_jsonMetadataCrcValid && !_jsonMetadataFileName.isEmpty()) {
         QFile(_jsonMetadataFileName).remove();
     }
-    if (!_jsonMetadataCrcValid && !_jsonTranslationFileName.isEmpty()) {
+    // Translation summaries are never cached.
+    if (!_jsonTranslationFileName.isEmpty()) {
         QFile(_jsonTranslationFileName).remove();
     }
 
@@ -507,7 +510,14 @@ void RequestMetaDataTypeStateMachine::_requestFile(const QString& cacheFileTag, 
             _metadataUri = uri;
         }
         connect(ftpManager, &FTPManager::downloadComplete, this, &RequestMetaDataTypeStateMachine::_ftpDownloadComplete);
-        if (ftpManager->download(MAV_COMP_ID_AUTOPILOT1, uri, QStandardPaths::writableLocation(QStandardPaths::TempLocation))) {
+        // Preserve compression suffixes while isolating concurrent vehicles and repeated transfers.
+        const QString fileName =
+            QStringLiteral("metadata-%1-%2-%3.%4")
+                .arg(QCoreApplication::applicationPid())
+                .arg(_compInfo->vehicle->id())
+                .arg(QUuid::createUuid().toString(QUuid::WithoutBraces), QFileInfo(uri).completeSuffix());
+        if (ftpManager->download(MAV_COMP_ID_AUTOPILOT1, uri,
+                                 QStandardPaths::writableLocation(QStandardPaths::TempLocation), fileName)) {
             // Throughput is measured from the first data packet (see _ftpDownloadProgress), not from here: the
             // leading session reset and open can take several seconds on a lossy link without saying anything
             // about transfer speed
@@ -536,12 +546,20 @@ void RequestMetaDataTypeStateMachine::_requestFile(const QString& cacheFileTag, 
     }
 }
 
-QString RequestMetaDataTypeStateMachine::_downloadCompleteJsonWorker(const QString& fileName)
+QString RequestMetaDataTypeStateMachine::_downloadCompleteJsonWorker(const QString& fileName, bool removeOriginal)
 {
-    const QString tempPath = QDir(QStandardPaths::writableLocation(QStandardPaths::TempLocation)).absoluteFilePath(_currentCacheFileTag);
-    QString outputFileName = QGCCompression::decompressIfNeeded(fileName, tempPath);
+    const QString tempPath =
+        QDir(QStandardPaths::writableLocation(QStandardPaths::TempLocation))
+            .absoluteFilePath(
+                QStringLiteral("metadata-%1.json").arg(QUuid::createUuid().toString(QUuid::WithoutBraces)));
+    QString outputFileName = QGCCompression::decompressIfNeeded(fileName, tempPath, removeOriginal);
     if (outputFileName.isEmpty()) {
         qCWarning(RequestMetaDataTypeStateMachineLog) << "Inflate of compressed json failed" << _currentCacheFileTag;
+        QFile::remove(tempPath);
+        if (removeOriginal) {
+            QFile::remove(fileName);
+        }
+        return {};
     }
 
     if (_currentFileValidCrc) {
@@ -560,7 +578,7 @@ void RequestMetaDataTypeStateMachine::_ftpDownloadComplete(const QString& fileNa
 
     if (errorMsg.isEmpty()) {
         if (_currentFileName) {
-            *_currentFileName = _downloadCompleteJsonWorker(fileName);
+            *_currentFileName = _downloadCompleteJsonWorker(fileName, true);
         }
     } else {
         qCDebug(RequestMetaDataTypeStateMachineLog) << typeToString() << ": FTP download failed:" << errorMsg;
