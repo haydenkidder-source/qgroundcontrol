@@ -328,6 +328,10 @@ const QVariantList& CustomPlugin::analyzePages()
             tr("Vehicle Roles"),
             QUrl::fromUserInput(QStringLiteral("qrc:/qml/Custom/VehicleRoles/VehicleRoleSettingsPage.qml")), QUrl(),
             nullptr, false /* requiresVehicle - roles should be assignable before any vehicle connects */)));
+        pages.append(QVariant::fromValue(new QmlComponentInfo(
+            tr("App Log Viewer"),
+            QUrl::fromUserInput(QStringLiteral("qrc:/qml/Custom/AnalyzeView/AppLogViewerAnalyzePage.qml")),
+            QUrl::fromUserInput(QStringLiteral("qrc:/InstrumentValueIcons/conversation.svg")), nullptr, false)));
         return pages;
     }();
 
