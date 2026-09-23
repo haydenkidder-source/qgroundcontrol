@@ -3,10 +3,15 @@
 #include <QtCore/QDir>
 #include <QtCore/QElapsedTimer>
 #include <QtCore/QFile>
+#include <QtCore/QJsonArray>
+#include <QtCore/QJsonDocument>
+#include <QtCore/QJsonObject>
+#include <QtCore/QLocale>
 #include <QtCore/QRandomGenerator>
 #include <QtCore/QRegularExpression>
 #include <QtCore/QScopeGuard>
 #include <QtCore/QStandardPaths>
+#include <QtCore/QTemporaryFile>
 #include <QtCore/QUuid>
 #include <QtTest/QSignalSpy>
 
@@ -14,12 +19,14 @@
 #include "CompInfoParam.h"
 #include "ComponentInformationCache.h"
 #include "ComponentInformationManager.h"
+#include "FTPManager.h"
 #include "FactMetaData.h"
 #include "LinkManager.h"
 #include "MockConfiguration.h"
 #include "MockLink.h"
 #include "MockLinkFTP.h"
 #include "MultiVehicleManager.h"
+#include "QGCCompression.h"
 #include "QGCLoggingCategoryManager.h"
 #include "RequestMetaDataTypeStateMachine.h"
 #include "UnitTest.h"
@@ -298,3 +305,177 @@ void RequestMetaDataTypeStateMachineTest::_slowFtpDownloadAbortsEarly()
 }
 
 UT_REGISTER_TEST(RequestMetaDataTypeStateMachineTest, TestLabel::Integration, TestLabel::Vehicle)
+
+void RequestMetaDataTypeStateMachineTest::_concurrentFtpMetadata_data()
+{
+    QTest::addColumn<bool>("compressed");
+    QTest::addColumn<bool>("translation");
+    QTest::newRow("json") << false << false;
+    QTest::newRow("xz") << true << false;
+    QTest::newRow("translation-summary") << false << true;
+}
+
+void RequestMetaDataTypeStateMachineTest::_concurrentFtpMetadata()
+{
+    QFETCH(bool, compressed);
+    QFETCH(bool, translation);
+    auto* firstVehicle = vehicle();
+    QVERIFY(firstVehicle);
+    QVERIFY_TRUE_WAIT(!firstVehicle->compInfoManager()->isRunning(), TestTimeout::longMs());
+
+    expectAppMessage(QRegularExpression(QStringLiteral("Connected to Vehicle [0-9]+")));
+    auto* secondLink = MockLink::startPX4MockLink();
+    QVERIFY(secondLink);
+    QPointer<Vehicle> secondVehicle;
+    const auto disconnectSecond = qScopeGuard([&] {
+        secondLink->disconnect();
+        QVERIFY(UnitTest::waitForCondition([&] { return secondVehicle.isNull(); }, TestTimeout::longMs()));
+    });
+    QVERIFY_TRUE_WAIT(MultiVehicleManager::instance()->getVehicleById(secondLink->vehicleId()), TestTimeout::longMs());
+    secondVehicle = MultiVehicleManager::instance()->getVehicleById(secondLink->vehicleId());
+    QVERIFY(secondVehicle);
+    verifyExpectedLogMessage();
+    QVERIFY_TRUE_WAIT(secondVehicle->isInitialConnectComplete(), TestTimeout::longMs());
+    QVERIFY_TRUE_WAIT(!secondVehicle->compInfoManager()->isRunning(), TestTimeout::longMs());
+    QVERIFY(firstVehicle->id() != secondVehicle->id());
+
+    // Capture exactly what the metadata consumer receives, after decompression and cache insertion.
+    class CapturedMetadata : public CompInfo
+    {
+    public:
+        explicit CapturedMetadata(Vehicle* owningVehicle)
+            : CompInfo(COMP_METADATA_TYPE_PARAMETER, MAV_COMP_ID_AUTOPILOT1, owningVehicle)
+        {}
+
+        void setJson(const QString& path) override
+        {
+            fileName = path;
+            QFile file(path);
+            if (file.open(QIODevice::ReadOnly)) {
+                bytes = file.readAll();
+            }
+        }
+
+        QString fileName;
+        QByteArray bytes;
+    };
+
+    CapturedMetadata firstInfo(firstVehicle);
+    CapturedMetadata secondInfo(secondVehicle);
+    const QString suffix = compressed ? QStringLiteral(".json.xz") : QStringLiteral(".json");
+    const QString remotePath = QStringLiteral("/metadata") + suffix;
+    const QString firstSource = QStringLiteral(":MockLink/General.MetaData") + suffix;
+    const QString secondSource = QStringLiteral(":MockLink/Parameter.MetaData") + suffix;
+    QFile firstFile(firstSource);
+    QFile secondFile(secondSource);
+    QVERIFY(firstFile.open(QIODevice::ReadOnly));
+    QVERIFY(secondFile.open(QIODevice::ReadOnly));
+    const QByteArray firstBytes =
+        compressed ? QGCCompression::decompressData(firstFile.readAll()) : firstFile.readAll();
+    const QByteArray secondBytes =
+        compressed ? QGCCompression::decompressData(secondFile.readAll()) : secondFile.readAll();
+    QVERIFY(!firstBytes.isEmpty());
+    QVERIFY(!secondBytes.isEmpty());
+    QVERIFY(firstBytes != secondBytes);
+
+    auto* firstServer = mockLink()->mockLinkFTP();
+    auto* secondServer = secondLink->mockLinkFTP();
+    firstServer->setDownloadFile(remotePath, firstSource);
+    secondServer->setDownloadFile(remotePath, secondSource);
+    firstServer->setBurstReadDelayMs(100);
+    secondServer->setBurstReadDelayMs(5);
+    const auto restoreDelay = qScopeGuard([&] { firstServer->setBurstReadDelayMs(0); });
+    const QString uri = QStringLiteral("mftp://[;comp=1]") + remotePath;
+    const uint32_t firstCrc = QRandomGenerator::global()->generate();
+    const uint32_t secondCrc = firstCrc ^ 0xffffffffU;
+    firstInfo.setUriMetaData(uri, firstCrc);
+    secondInfo.setUriMetaData(uri, secondCrc);
+    const bool expectMissingLocale = translation && !QLocale::system().name().startsWith(QLatin1String("en"));
+    if (translation) {
+        const QString summaryPath = QStringLiteral("/translation.json");
+        firstServer->setDownloadFile(summaryPath, firstSource);
+        secondServer->setDownloadFile(summaryPath, firstSource);
+        for (CapturedMetadata* info : {&firstInfo, &secondInfo}) {
+            QJsonObject advertisement = QJsonDocument::fromJson(firstBytes).object();
+            advertisement.insert(
+                QStringLiteral("metadataTypes"),
+                QJsonArray{
+                    QJsonObject{{QStringLiteral("type"), static_cast<int>(info->type)},
+                                {QStringLiteral("uri"), uri},
+                                {QStringLiteral("fileCrc"), static_cast<double>(info->crcMetaData())},
+                                {QStringLiteral("translationUri"), QStringLiteral("mftp://[;comp=1]") + summaryPath}}});
+            QTemporaryFile advertisementFile;
+            QVERIFY(advertisementFile.open());
+            const QByteArray json = QJsonDocument(advertisement).toJson();
+            QCOMPARE(advertisementFile.write(json), json.size());
+            QVERIFY(advertisementFile.flush());
+            CompInfoGeneral general(MAV_COMP_ID_AUTOPILOT1, info->vehicle);
+            general.setJson(advertisementFile.fileName());
+            general.setUris(*info);
+            QVERIFY(!info->uriTranslation().isEmpty());
+            if (expectMissingLocale) {
+                expectLogMessage("ComponentInformation.ComponentInformationTranslation", QtWarningMsg,
+                                 QRegularExpression("not found in translation json"));
+            }
+        }
+    }
+    const auto cacheTag = [](uint32_t crc) {
+        return QString::asprintf("%08x_%02i_%i", crc, static_cast<int>(COMP_METADATA_TYPE_PARAMETER), 0);
+    };
+    QVERIFY(firstVehicle->compInfoManager()->fileCache().access(cacheTag(firstCrc)).isEmpty());
+    QVERIFY(secondVehicle->compInfoManager()->fileCache().access(cacheTag(secondCrc)).isEmpty());
+
+    const QDir tempDir(QStandardPaths::writableLocation(QStandardPaths::TempLocation));
+    const QStringList tempFilesBefore = tempDir.entryList({QStringLiteral("metadata-*")}, QDir::Files);
+
+    RequestMetaDataTypeStateMachine firstRequest(firstVehicle->compInfoManager());
+    RequestMetaDataTypeStateMachine secondRequest(secondVehicle->compInfoManager());
+    QSignalSpy firstComplete(&firstRequest, &RequestMetaDataTypeStateMachine::requestComplete);
+    QSignalSpy secondComplete(&secondRequest, &RequestMetaDataTypeStateMachine::requestComplete);
+    QSignalSpy firstDownload(firstVehicle->ftpManager(), &FTPManager::downloadComplete);
+    QSignalSpy secondDownload(secondVehicle->ftpManager(), &FTPManager::downloadComplete);
+    QSignalSpy firstProgress(firstVehicle->ftpManager(), &FTPManager::commandProgress);
+    QSignalSpy secondProgress(secondVehicle->ftpManager(), &FTPManager::commandProgress);
+    bool overlapped = false;
+    const auto recordOverlap = [&] {
+        overlapped |= !firstProgress.isEmpty() && !secondProgress.isEmpty() && firstDownload.isEmpty() &&
+                      secondDownload.isEmpty();
+    };
+    connect(firstVehicle->ftpManager(), &FTPManager::commandProgress, &firstRequest, recordOverlap);
+    connect(secondVehicle->ftpManager(), &FTPManager::commandProgress, &secondRequest, recordOverlap);
+    firstRequest.request(&firstInfo);
+    secondRequest.request(&secondInfo);
+    QVERIFY_TRUE_WAIT(firstComplete.count() == 1 && secondComplete.count() == 1, TestTimeout::longMs());
+    QVERIFY(overlapped);
+    if (expectMissingLocale) {
+        verifyExpectedLogMessage();
+        verifyExpectedLogMessage();
+    }
+    QCOMPARE(firstDownload.count(), translation ? 2 : 1);
+    QCOMPARE(secondDownload.count(), translation ? 2 : 1);
+    for (const QSignalSpy* downloads : {&firstDownload, &secondDownload}) {
+        for (const auto& completion : *downloads) {
+            QVERIFY(completion.at(1).toString().isEmpty());
+            QVERIFY(!QFile::exists(completion.at(0).toString()));
+        }
+    }
+    QVERIFY(firstDownload.first().at(1).toString().isEmpty());
+    QVERIFY(secondDownload.first().at(1).toString().isEmpty());
+    QCOMPARE(firstInfo.bytes, firstBytes);
+    QCOMPARE(secondInfo.bytes, secondBytes);
+    QVERIFY(firstInfo.fileName != secondInfo.fileName);
+    QCOMPARE(firstVehicle->compInfoManager()->fileCache().access(cacheTag(firstCrc)), firstInfo.fileName);
+    QCOMPARE(secondVehicle->compInfoManager()->fileCache().access(cacheTag(secondCrc)), secondInfo.fileName);
+    const QString firstTemp = firstDownload.first().at(0).toString();
+    const QString secondTemp = secondDownload.first().at(0).toString();
+    QVERIFY(firstTemp != secondTemp);
+    QVERIFY(!QFile::exists(firstTemp));
+    QVERIFY(!QFile::exists(secondTemp));
+    QFile firstCached(firstInfo.fileName);
+    QFile secondCached(secondInfo.fileName);
+    QVERIFY(firstCached.open(QIODevice::ReadOnly));
+    QVERIFY(secondCached.open(QIODevice::ReadOnly));
+    QCOMPARE(firstCached.readAll(), firstBytes);
+    QCOMPARE(secondCached.readAll(), secondBytes);
+    QCOMPARE(tempDir.entryList({QStringLiteral("metadata-*")}, QDir::Files), tempFilesBefore);
+}

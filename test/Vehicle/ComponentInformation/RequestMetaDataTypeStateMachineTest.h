@@ -7,6 +7,8 @@ class RequestMetaDataTypeStateMachineTest : public VehicleTest
     Q_OBJECT
 
 private slots:
+    void _concurrentFtpMetadata_data();
+    void _concurrentFtpMetadata();
     void _typeToStringReflectsRequestedType();
     void _requestCompleteEmittedForGeneral();
     void _requestCompleteEmittedForParameter();

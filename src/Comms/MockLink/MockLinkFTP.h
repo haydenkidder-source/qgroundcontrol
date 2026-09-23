@@ -20,6 +20,12 @@ public:
     MockLinkFTP(uint8_t systemIdServer, uint8_t componentIdServer, MockLink *mockLink);
     ~MockLinkFTP();
 
+    /// Maps a remote download path to a local fixture. Configure before starting transfers.
+    void setDownloadFile(const QString& remotePath, const QString& localPath)
+    {
+        _downloadFiles.insert(remotePath, localPath);
+    }
+
     /// Sets the list of files returned by the List command. Prepend names with F or D
     /// to indicate (F)ile or (D)irectory.
     void setFileList(const QStringList &fileList) { _fileList = fileList; }
@@ -236,6 +242,7 @@ private:
     };
     UploadSession _uploadSession;
     QHash<QString, QByteArray> _uploadedFiles;
+    QHash<QString, QString> _downloadFiles;
     QStringList _fileList;                      ///< List of files returned by List command
     QList<LogFile> _logFiles;                   ///< Log files served from the @MAV_LOG virtual directory
     QHash<QString, QString> _logFileTempPaths;  ///< Temp files backing @MAV_LOG downloads

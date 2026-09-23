@@ -10,6 +10,7 @@ class LinkManagerTest : public CommsTest
     Q_OBJECT
 
 private slots:
+    void _testUdpAutoConnectDefaults();
 #ifndef QGC_NO_SERIAL_LINK
     void _testOccupiedSerialAutoConnectRecovers();
     void _testReservedSerialPortNotOpened();
