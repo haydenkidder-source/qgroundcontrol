@@ -60,7 +60,6 @@ jobs:
 
       # Non-PR events (push, merge_group, workflow_dispatch) always rebuild
       # everything. Sparse-checkout just the script + bootstrap shim it needs.
-      # Tag pushes need full history + branch refs for the Stable* origin check.
       - name: Checkout passthrough script (non-PR)
         if: github.event_name != 'pull_request'
         uses: actions/checkout@v7
@@ -76,10 +75,11 @@ jobs:
           sparse-checkout-cone-mode: false
           persist-credentials: false
 
-      # Release tags are only ever cut on Stable* branches. A tag on master (or
-      # anywhere else) must not trigger the release pipeline (stable build,
-      # S3 latest upload, CloudFront invalidation).
-      - name: Verify tag is on a Stable* branch
+      # This fork cuts every release directly from master (see .releaserc.json) -
+      # unlike upstream QGroundControl, there's no Stable_V* branch convention to
+      # check against. Only the vX.Y.Z tag name itself gates the release pipeline
+      # (stable build, S3 latest upload, CloudFront invalidation).
+      - name: Verify tag is a release tag
         if: github.ref_type == 'tag'
         id: tag
         shell: bash
