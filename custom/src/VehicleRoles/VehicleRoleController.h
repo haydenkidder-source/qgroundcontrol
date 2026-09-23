@@ -20,9 +20,10 @@ class VehicleRoleEntry : public QObject
     Q_PROPERTY(int sysid READ sysid CONSTANT)
     Q_PROPERTY(QString role READ role NOTIFY roleChanged)
     Q_PROPERTY(QString name READ name NOTIFY nameChanged)
+    Q_PROPERTY(int port READ port NOTIFY portChanged)
 
 public:
-    VehicleRoleEntry(int sysid, const QString& role, const QString& name, QObject* parent = nullptr);
+    VehicleRoleEntry(int sysid, const QString& role, const QString& name, int port, QObject* parent = nullptr);
 
     int sysid() const { return _sysid; }
 
@@ -30,17 +31,26 @@ public:
 
     QString name() const { return _name; }
 
+    /// The vehicle's assigned ground-station UDP port, for reference only (see
+    /// custom/FIELD_RADIO_SETUP.md) - 0 means unassigned. Setting this does not create, modify or
+    /// look up any actual comm link; the operator still configures the real UDP link separately
+    /// under Settings > Comm Links.
+    int port() const { return _port; }
+
     void setRole(const QString& role);
     void setName(const QString& name);
+    void setPort(int port);
 
 signals:
     void roleChanged(QString role);
     void nameChanged(QString name);
+    void portChanged(int port);
 
 private:
     int _sysid = 0;
     QString _role;
     QString _name;
+    int _port = 0;
 };
 
 /// \brief Remembers which MAVLink system ID (sysid) corresponds to which of the program's
@@ -74,14 +84,23 @@ public:
         return {QStringLiteral("Rover"), QStringLiteral("Stallion"), QStringLiteral("Hex")};
     }
 
-    /// Adds a new sysid/role/name assignment, or updates the existing entry for that sysid if one
-    /// is already present. Ignored if sysid is outside the valid MAVLink range [1,255] or role
-    /// isn't one of availableRoles().
-    Q_INVOKABLE void addEntry(int sysid, const QString& role, const QString& name);
+    /// Adds a new sysid/role/name/port assignment, or updates the existing entry for that sysid if
+    /// one is already present. Ignored if sysid is outside the valid MAVLink range [1,255], role
+    /// isn't one of availableRoles(), or port is outside [0,65535] (0 means unassigned).
+    Q_INVOKABLE void addEntry(int sysid, const QString& role, const QString& name, int port);
 
     Q_INVOKABLE void removeEntry(int index);
     Q_INVOKABLE void setRole(int index, const QString& role);
     Q_INVOKABLE void setName(int index, const QString& name);
+    Q_INVOKABLE void setPort(int index, int port);
+
+    /// One-shot convenience: creates a real, saved, autoconnect-enabled UDP link configuration
+    /// (named after the entry's role) using the entry's assigned port, and connects it now if
+    /// possible. This does not require or check a port; the caller (QML) is expected to only
+    /// offer this action when one is assigned. The created link is an ordinary link afterward -
+    /// nothing here keeps it in sync with this entry if either is edited later. No-op if the
+    /// entry has no port assigned.
+    Q_INVOKABLE void createLinkForEntry(int index);
 
     /// Returns the assigned name for sysid, or an empty string if unassigned. Callers should fall
     /// back to a generic label.
