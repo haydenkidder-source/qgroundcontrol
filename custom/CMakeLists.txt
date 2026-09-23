@@ -224,6 +224,13 @@ qt_add_resources(
     FILES ${CMAKE_CURRENT_SOURCE_DIR}/src/ExclusionZone/ExclusionZoneReviewPage.qml
 )
 
+qgc_set_qt_resource_alias(${CMAKE_CURRENT_SOURCE_DIR}/src/AnalyzeView/AppLogViewerAnalyzePage.qml)
+qt_add_resources(
+    ${CMAKE_PROJECT_NAME} custom_app_log_viewer_qml
+    PREFIX "/qml/Custom/AnalyzeView"
+    FILES ${CMAKE_CURRENT_SOURCE_DIR}/src/AnalyzeView/AppLogViewerAnalyzePage.qml
+)
+
 # ============================================================================
 # Custom Vehicle Roles Page (sysid -> role/nickname mapping)
 # ============================================================================
@@ -304,10 +311,24 @@ qt_add_resources(
 )
 
 if(QGC_BUILD_TESTING)
+    cmake_language(
+        DEFER
+        DIRECTORY
+        "${CMAKE_SOURCE_DIR}"
+        CALL
+        add_qgc_test
+        AppLogViewerUITest
+        LABELS
+        Integration
+        NoSanitizer
+    )
     target_sources(
         ${CMAKE_PROJECT_NAME}
-        PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/test/COPControllerTest.cc
-                ${CMAKE_CURRENT_SOURCE_DIR}/test/COPControllerTest.h ${CMAKE_CURRENT_SOURCE_DIR}/test/COPStressTest.cc
+        PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/test/AppLogViewerUITest.cc
+                ${CMAKE_CURRENT_SOURCE_DIR}/test/AppLogViewerUITest.h
+                ${CMAKE_CURRENT_SOURCE_DIR}/test/COPControllerTest.cc
+                ${CMAKE_CURRENT_SOURCE_DIR}/test/COPControllerTest.h
+                ${CMAKE_CURRENT_SOURCE_DIR}/test/COPStressTest.cc
                 ${CMAKE_CURRENT_SOURCE_DIR}/test/COPStressTest.h
     )
     cmake_language(
