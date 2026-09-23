@@ -11,6 +11,10 @@ private slots:
     void _performTestCases();
     void _performSizeBasedTestCases_data();
     void _performSizeBasedTestCases();
+    void _testDownloadRelativeUri_data();
+    void _testDownloadRelativeUri();
+    void _testDownloadExplicitFileName_data();
+    void _testDownloadExplicitFileName();
     void _testLostPackets();
     void _testListDirectory();
     void _testListDirectoryWithTime();

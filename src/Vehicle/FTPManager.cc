@@ -63,7 +63,7 @@ bool FTPManager::download(uint8_t fromCompId, const QString& fromURI, const QStr
     if (fileName.isEmpty()) {
         _downloadState.fileName = _downloadState.fullPathOnVehicle.right(_downloadState.fullPathOnVehicle.size() - lastDirSlashIndex);
     } else {
-        _downloadState.fileName = fileName;
+        _downloadState.fileName = QFileInfo(fileName).fileName();
     }
 
     qCDebug(FTPManagerLog) << "_downloadState.fullPathOnVehicle:_downloadState.fileName" << _downloadState.fullPathOnVehicle << _downloadState.fileName;
@@ -1339,7 +1339,7 @@ bool FTPManager::_parseURI(uint8_t fromCompId, const QString& uri, QString& pars
     // Pull scheme off the front if there
     QString ftpPrefix(QStringLiteral("%1://").arg(mavlinkFTPScheme));
     if (parsedURI.startsWith(ftpPrefix, Qt::CaseInsensitive)) {
-        parsedURI = parsedURI.right(parsedURI.length() - ftpPrefix.length() + 1);
+        parsedURI = parsedURI.right(parsedURI.length() - ftpPrefix.length());
     }
     if (parsedURI.contains("://")) {
         qCWarning(FTPManagerLog) << "Incorrect uri scheme or format" << uri;
