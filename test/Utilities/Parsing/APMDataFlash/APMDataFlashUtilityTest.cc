@@ -302,6 +302,82 @@ void APMDataFlashUtilityTest::_testParseFmtMessages()
     QCOMPARE(formats[128].name, QStringLiteral("FMT"));
 }
 
+void APMDataFlashUtilityTest::_testParseFmtLengthValidation_data()
+{
+    QTest::addColumn<int>("length");
+    QTest::addColumn<QByteArray>("format");
+    QTest::addColumn<bool>("valid");
+
+    QTest::newRow("zero-length") << 0 << QByteArray() << false;
+    QTest::newRow("one-byte-length") << 1 << QByteArray() << false;
+    QTest::newRow("two-byte-length") << 2 << QByteArray() << false;
+    QTest::newRow("array-too-wide") << 66 << QByteArray("a") << false;
+    QTest::newRow("string-too-wide") << 66 << QByteArray("Z") << false;
+    QTest::newRow("combined-fields-too-wide") << 12 << QByteArray("QBb") << false;
+    QTest::newRow("exact-fit") << 13 << QByteArray("QBb") << true;
+    QTest::newRow("padded-payload") << 14 << QByteArray("QBb") << true;
+    QTest::newRow("header-only") << 3 << QByteArray() << true;
+}
+
+void APMDataFlashUtilityTest::_testParseFmtLengthValidation()
+{
+    QFETCH(int, length);
+    QFETCH(QByteArray, format);
+    QFETCH(bool, valid);
+
+    QByteArray data = QByteArray::fromHex("a39580");
+    char fmtPayload[86] = {};
+    fmtPayload[0] = static_cast<char>(200);
+    fmtPayload[1] = static_cast<char>(length);
+    memcpy(fmtPayload + 2, "TEST", 4);
+    memcpy(fmtPayload + 6, format.constData(), format.size());
+    memcpy(fmtPayload + 22, "TimeUS,Value1,Value2", 20);
+    data.append(fmtPayload, sizeof(fmtPayload));
+
+    QMap<uint8_t, APMDataFlashUtility::MessageFormat> formats;
+    if (!valid) {
+        expectLogMessage("Utilities.APMDataFlashUtility", QtWarningMsg,
+                         QRegularExpression(QStringLiteral("^Invalid DataFlash FMT length for type:")));
+    }
+    QCOMPARE(APMDataFlashUtility::parseFmtMessages(data.constData(), data.size(), formats), valid);
+    if (!valid) {
+        verifyExpectedLogMessage();
+    }
+    QCOMPARE(formats.contains(200), valid);
+
+    // Only append records after checking registration, so a regression fails without hanging.
+    data.append(QByteArray::fromHex("a395c8"));
+    QByteArray payload = QByteArray::fromHex("d2029649000000002af6");
+    payload.resize(qMax(0, length - 3), '\0');
+    data.append(payload);
+    if (!valid) {
+        expectLogMessage("Utilities.APMDataFlashUtility", QtWarningMsg,
+                         QRegularExpression(QStringLiteral("^Invalid DataFlash FMT length for type:")));
+    }
+    QCOMPARE(APMDataFlashUtility::parseFmtMessages(data.constData(), data.size(), formats), valid);
+    if (!valid) {
+        verifyExpectedLogMessage();
+    }
+
+    int callbackCount = 0;
+    QMap<QString, QVariant> fields;
+    const int count = APMDataFlashUtility::iterateMessages(
+        data.constData(), data.size(), formats,
+        [&](uint8_t, const char* message, int size, const APMDataFlashUtility::MessageFormat& fmt) {
+            ++callbackCount;
+            fields = APMDataFlashUtility::parseMessage(message, size, fmt);
+            return true;
+        });
+    QCOMPARE(count, valid ? 1 : 0);
+    QCOMPARE(callbackCount, valid ? 1 : 0);
+    if (valid && !format.isEmpty()) {
+        QCOMPARE(fields.size(), 3);
+        QCOMPARE(fields.value(QStringLiteral("TimeUS")).toULongLong(), 1234567890ULL);
+        QCOMPARE(fields.value(QStringLiteral("Value1")).toUInt(), 42u);
+        QCOMPARE(fields.value(QStringLiteral("Value2")).toInt(), -10);
+    }
+}
+
 // ============================================================================
 // Message Parsing Tests
 // ============================================================================

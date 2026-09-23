@@ -245,8 +245,13 @@ bool parseFmtMessages(const char *data, qint64 size, QMap<uint8_t, MessageFormat
             }
 
             const MessageFormat fmt = parseFmtPayload(data + pos);
-            formats[fmt.type] = fmt;
             pos += kFmtPayloadSize;
+            if (fmt.length < 3 || calculatePayloadSize(fmt.format) > fmt.length - 3) {
+                qCWarning(APMDataFlashUtilityLog) << "Invalid DataFlash FMT length for type:" << fmt.type
+                                                  << "length:" << fmt.length << "format:" << fmt.format;
+                continue;
+            }
+            formats[fmt.type] = fmt;
         } else {
             // Skip message if we know its length
             if (formats.contains(msgType)) {
