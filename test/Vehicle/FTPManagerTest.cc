@@ -3,6 +3,7 @@
 #include <QtCore/QFile>
 #include <QtCore/QRegularExpression>
 #include <QtCore/QStandardPaths>
+#include <QtCore/QTemporaryDir>
 #include <QtTest/QSignalSpy>
 #include <QtTest/QTest>
 
@@ -71,6 +72,71 @@ void FTPManagerTest::_performSizeBasedTestCases()
                    .arg(QTest::currentDataTag() ? QTest::currentDataTag() : "unknown")
                    .arg(fileSize));
     _sizeTestCaseWorker(fileSize);
+}
+
+void FTPManagerTest::_testDownloadRelativeUri_data()
+{
+    QTest::addColumn<QString>("uriPrefix");
+    QTest::addRow("no_scheme") << QString();
+    QTest::addRow("mftp") << QStringLiteral("mftp://");
+    QTest::addRow("case_insensitive") << QStringLiteral("MFTP://");
+    QTest::addRow("component_selector") << QStringLiteral("mftp://[;comp=1]");
+}
+
+void FTPManagerTest::_testDownloadRelativeUri()
+{
+    QFETCH(QString, uriPrefix);
+    _connectMockLinkNoInitialConnectSequence();
+    QVERIFY(_vehicle);
+    FTPManager* ftpManager = _vehicle->ftpManager();
+    QTemporaryDir destination;
+    QVERIFY(destination.isValid());
+    const int fileSize = 256;
+    // MockLink accepts this generated file only as a relative path.
+    const QString fileName = QStringLiteral("%1%2").arg(MockLinkFTP::sizeFilenamePrefix).arg(fileSize);
+    QSignalSpy spyDownloadComplete(ftpManager, &FTPManager::downloadComplete);
+    QVERIFY(ftpManager->download(MAV_COMP_ID_AUTOPILOT1, uriPrefix + fileName, destination.path()));
+    QVERIFY_SIGNAL_WAIT(spyDownloadComplete, TestTimeout::longMs());
+    QCOMPARE(spyDownloadComplete.count(), 1);
+    const QList<QVariant> arguments = spyDownloadComplete.takeFirst();
+    QVERIFY2(arguments[1].toString().isEmpty(), qPrintable(arguments[1].toString()));
+    QCOMPARE(arguments[0].toString(), destination.filePath(fileName));
+    _verifyFileSizeAndDelete(arguments[0].toString(), fileSize);
+    _disconnectMockLink();
+}
+
+void FTPManagerTest::_testDownloadExplicitFileName_data()
+{
+    QTest::addColumn<QString>("fileName");
+    QTest::addRow("basename") << QStringLiteral("evil.txt");
+    QTest::addRow("parent_directory") << QStringLiteral("../evil.txt");
+    QTest::addRow("multiple_parents") << QStringLiteral("../../../evil.txt");
+}
+
+void FTPManagerTest::_testDownloadExplicitFileName()
+{
+    QFETCH(QString, fileName);
+    _connectMockLinkNoInitialConnectSequence();
+    QVERIFY(_vehicle);
+    FTPManager* ftpManager = _vehicle->ftpManager();
+    QTemporaryDir temporaryDir;
+    QVERIFY(temporaryDir.isValid());
+    const QString destination = temporaryDir.filePath(QStringLiteral("one/two/downloads"));
+    QVERIFY(QDir().mkpath(destination));
+    const int fileSize = 256;
+    const QString remoteFile = QStringLiteral("%1%2").arg(MockLinkFTP::sizeFilenamePrefix).arg(fileSize);
+    QSignalSpy spyDownloadComplete(ftpManager, &FTPManager::downloadComplete);
+    QVERIFY(ftpManager->download(MAV_COMP_ID_AUTOPILOT1, remoteFile, destination, fileName));
+    QVERIFY_SIGNAL_WAIT(spyDownloadComplete, TestTimeout::longMs());
+    QCOMPARE(spyDownloadComplete.count(), 1);
+    const QList<QVariant> arguments = spyDownloadComplete.takeFirst();
+    QVERIFY2(arguments[1].toString().isEmpty(), qPrintable(arguments[1].toString()));
+    const QString expectedPath = QDir(destination).filePath(QStringLiteral("evil.txt"));
+    QCOMPARE(arguments[0].toString(), expectedPath);
+    QVERIFY(!QFileInfo::exists(temporaryDir.filePath(QStringLiteral("evil.txt"))));
+    QVERIFY(!QFileInfo::exists(temporaryDir.filePath(QStringLiteral("one/two/evil.txt"))));
+    _verifyFileSizeAndDelete(expectedPath, fileSize);
+    _disconnectMockLink();
 }
 
 void FTPManagerTest::_performTestCases_data()
