@@ -27,6 +27,8 @@ private slots:
     void _testTcpHostnameRoundtrip();
 
     // UDPConfiguration
+    void _testUdpAutoConnectPreservesAddressing_data();
+    void _testUdpAutoConnectPreservesAddressing();
     void _testUdpConstruction();
     void _testUdpAddRemoveHost();
     void _testUdpSetLocalPortEmitsSignal();

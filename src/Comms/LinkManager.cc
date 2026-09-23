@@ -476,6 +476,11 @@ void LinkManager::_addUDPAutoConnectLink()
     UDPConfiguration* const udpConfig = new UDPConfiguration(_defaultUDPLinkName);
     udpConfig->setDynamic(true);
     udpConfig->setAutoConnect(true);
+    udpConfig->setLocalPort(_autoConnectSettings->udpListenPort()->rawValue().toUInt());
+    const QString targetHost = _autoConnectSettings->udpTargetHostIP()->rawValue().toString();
+    if (!targetHost.isEmpty()) {
+        udpConfig->addHost(targetHost, _autoConnectSettings->udpTargetHostPort()->rawValue().toUInt());
+    }
     SharedLinkConfigurationPtr config = addConfiguration(udpConfig);
     createConnectedLink(config);
 }

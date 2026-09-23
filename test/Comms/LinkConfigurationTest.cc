@@ -1,13 +1,15 @@
 #include "LinkConfigurationTest.h"
 
-#include "LinkConfiguration.h"
-#include "TCPLink.h"
-#include "UDPLink.h"
-
-#include "Fixtures/RAIIFixtures.h"
-
+#include <QtCore/QScopeGuard>
 #include <QtCore/QSettings>
 #include <QtTest/QSignalSpy>
+
+#include "AutoConnectSettings.h"
+#include "Fixtures/RAIIFixtures.h"
+#include "LinkConfiguration.h"
+#include "SettingsManager.h"
+#include "TCPLink.h"
+#include "UDPLink.h"
 
 // ============================================================================
 // LinkConfiguration base tests (exercised via TCPConfiguration)
@@ -455,3 +457,59 @@ void LinkConfigurationTest::_testUdpResolveHostsUpdatesAddress()
 }
 
 UT_REGISTER_TEST(LinkConfigurationTest, TestLabel::Unit, TestLabel::Comms)
+
+void LinkConfigurationTest::_testUdpAutoConnectPreservesAddressing_data()
+{
+    QTest::addColumn<bool>("includeGlobalTarget");
+    QTest::newRow("unrelated-global-target") << false;
+    QTest::newRow("matching-global-target") << true;
+}
+
+void LinkConfigurationTest::_testUdpAutoConnectPreservesAddressing()
+{
+    QFETCH(bool, includeGlobalTarget);
+    auto* defaults = SettingsManager::instance()->autoConnectSettings();
+    const QVariant oldHost = defaults->udpTargetHostIP()->rawValue();
+    const QVariant oldPort = defaults->udpTargetHostPort()->rawValue();
+    const auto restore = qScopeGuard([&] {
+        defaults->udpTargetHostIP()->setRawValue(oldHost);
+        defaults->udpTargetHostPort()->setRawValue(oldPort);
+    });
+    defaults->udpTargetHostIP()->setRawValue(QStringLiteral("127.0.0.2"));
+    defaults->udpTargetHostPort()->setRawValue(14560);
+
+    UDPConfiguration config(QStringLiteral("Manual UDP"));
+    config.setLocalPort(14551);
+    config.addHost(QStringLiteral("127.0.0.1"), 14552);
+    // A manually configured target matching the global default must also survive disabling startup.
+    if (includeGlobalTarget) {
+        config.addHost(QStringLiteral("127.0.0.2"), 14560);
+    }
+    const QStringList hosts = config.hostList();
+    QSignalSpy portSpy(&config, &UDPConfiguration::localPortChanged);
+    QSignalSpy hostsSpy(&config, &UDPConfiguration::hostListChanged);
+    TestFixtures::TempDirFixture tmpDir;
+    QVERIFY(tmpDir.isValid());
+    QSettings settings(tmpDir.path() + QStringLiteral("/settings.ini"), QSettings::IniFormat);
+    for (bool autoConnect : {true, false}) {
+        config.setAutoConnect(autoConnect);
+        QCOMPARE(config.isAutoConnect(), autoConnect);
+        QCOMPARE(config.localPort(), quint16(14551));
+        QCOMPARE(config.hostList(), hosts);
+        UDPConfiguration copy(QStringLiteral("Copy"));
+        copy.setAutoConnect(!autoConnect);
+        copy.copyFrom(&config);
+        QCOMPARE(copy.isAutoConnect(), autoConnect);
+        QCOMPARE(copy.localPort(), quint16(14551));
+        QCOMPARE(copy.hostList(), hosts);
+        config.saveSettings(settings, QStringLiteral("UDP"));
+        UDPConfiguration loaded(QStringLiteral("Loaded"));
+        loaded.setAutoConnect(autoConnect);
+        loaded.loadSettings(settings, QStringLiteral("UDP"));
+        QCOMPARE(loaded.isAutoConnect(), autoConnect);
+        QCOMPARE(loaded.localPort(), quint16(14551));
+        QCOMPARE(loaded.hostList(), hosts);
+    }
+    QCOMPARE(portSpy.count(), 0);
+    QCOMPARE(hostsSpy.count(), 0);
+}
