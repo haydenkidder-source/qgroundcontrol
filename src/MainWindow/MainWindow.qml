@@ -519,15 +519,31 @@ ApplicationWindow {
 
     Popup {
         id:                 criticalVehicleMessagePopup
+        objectName:         "criticalVehicleMessagePopup"
         y:                  ScreenTools.toolbarHeight + ScreenTools.defaultFontPixelHeight
         x:                  Math.round((mainWindow.width - width) * 0.5)
         width:              mainWindow.width  * 0.55
         height:             criticalVehicleMessageText.contentHeight + ScreenTools.defaultFontPixelHeight * 2
         modal:              false
-        focus:              true
 
         property alias  criticalVehicleMessage:             criticalVehicleMessageText.text
         property bool   additionalCriticalMessagesReceived: false
+
+        function acknowledge() {
+            close()
+            if (additionalCriticalMessagesReceived) {
+                additionalCriticalMessagesReceived = false;
+                flyView.dropMainStatusIndicatorTool();
+            } else if (QGroundControl.multiVehicleManager.activeVehicle) {
+                QGroundControl.multiVehicleManager.activeVehicle.resetErrorLevelMessages();
+            }
+        }
+
+        Shortcut {
+            sequence:   "Escape"
+            enabled:    criticalVehicleMessagePopup.visible
+            onActivated: criticalVehicleMessagePopup.acknowledge()
+        }
 
         background: Rectangle {
             anchors.fill:   parent
@@ -594,15 +610,7 @@ ApplicationWindow {
 
         MouseArea {
             anchors.fill: parent
-            onClicked: {
-                criticalVehicleMessagePopup.close()
-                if (criticalVehicleMessagePopup.additionalCriticalMessagesReceived) {
-                    criticalVehicleMessagePopup.additionalCriticalMessagesReceived = false;
-                    flyView.dropMainStatusIndicatorTool();
-                } else if (QGroundControl.multiVehicleManager.activeVehicle) {
-                    QGroundControl.multiVehicleManager.activeVehicle.resetErrorLevelMessages();
-                }
-            }
+            onClicked: criticalVehicleMessagePopup.acknowledge()
         }
     }
 
