@@ -852,6 +852,15 @@ void UnitTest::init()
     ignoreLogMessage("Video.GStreamer.HwBuffers.GstGlBridge", QtWarningMsg,
                      QRegularExpression(QStringLiteral("GL bridge disabled")));
 
+    // MockLink never implements a component-metadata FTP handler, so any MockLink-connected
+    // vehicle fails to load COMP_METADATA_TYPE_GENERAL. RequestMetaDataTypeStateMachine only
+    // downgrades this to debug for ArduPilot (apmFirmware() doesn't support the protocol on real
+    // hardware either); VehicleTest's default MockLink vehicle is PX4, where a real vehicle
+    // failing this would be a genuine warning, but the mock's lack of a metadata server isn't.
+    // Every VehicleTest-derived test that connects a MockLink vehicle hits this, so it's global.
+    ignoreLogMessage("ComponentInformation.RequestMetaDataTypeStateMachine", QtWarningMsg,
+                     QRegularExpression(QStringLiteral("failed to load metadata \\(primary and fallback\\)")));
+
     // Start capturing log messages for this test (cleared from previous test)
     LogManager::clearCapturedMessages();
     LogManager::setCaptureEnabled(true);
