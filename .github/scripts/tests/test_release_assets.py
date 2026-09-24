@@ -70,14 +70,38 @@ def _create_complete_release(tmp_path: Path) -> tuple[Path, list[Path]]:
     return artifacts, source_sboms
 
 
-def test_collect_release_assets_requires_complete_validated_set(tmp_path: Path) -> None:
+@pytest.mark.parametrize("repo", ["mavlink/qgroundcontrol", "haydenkidder-source/qgroundcontrol"])
+def test_collect_release_assets_requires_complete_validated_set(tmp_path: Path, repo: str) -> None:
     artifacts, source_sboms = _create_complete_release(tmp_path)
 
-    assets = collect_release_assets(artifacts, source_sboms)
+    assets = collect_release_assets(artifacts, source_sboms, repo=repo)
 
     assert len(assets) == 29
     assert assets == sorted(assets, key=lambda path: path.as_posix())
     assert all(path.is_file() for path in assets)
+
+
+@pytest.mark.parametrize("repo", ["haydenkidder-source/qgroundcontrol", "other/fork"])
+def test_collect_release_assets_allows_missing_zsync_on_forks(tmp_path: Path, repo: str) -> None:
+    artifacts, source_sboms = _create_complete_release(tmp_path)
+    for zsync in artifacts.rglob("*.zsync"):
+        zsync.unlink()
+
+    assets = collect_release_assets(artifacts, source_sboms, repo=repo)
+
+    assert len(assets) == 27
+    assert all(artifacts / path in assets for path in PACKAGE_PATHS)
+    assert not any(path.suffix == ".zsync" for path in assets)
+
+
+@pytest.mark.parametrize("relative_path", PACKAGE_PATHS[:2])
+def test_collect_release_assets_requires_zsync_upstream(tmp_path: Path, relative_path: str) -> None:
+    artifacts, source_sboms = _create_complete_release(tmp_path)
+    package = artifacts / relative_path
+    package.with_name(f"{package.name}.zsync").unlink()
+
+    with pytest.raises(FileNotFoundError, match="AppImage update metadata is missing"):
+        collect_release_assets(artifacts, source_sboms, repo="mavlink/qgroundcontrol")
 
 
 def test_collect_release_assets_rejects_missing_or_bad_checksum(tmp_path: Path) -> None:
@@ -87,11 +111,11 @@ def test_collect_release_assets_rejects_missing_or_bad_checksum(tmp_path: Path) 
     checksum.unlink()
 
     with pytest.raises(FileNotFoundError):
-        collect_release_assets(artifacts, source_sboms)
+        collect_release_assets(artifacts, source_sboms, repo="mavlink/qgroundcontrol")
 
     checksum.write_text(f"{'0' * 64}  {package.name}\n", encoding="utf-8")
     with pytest.raises(ValueError, match="checksum mismatch"):
-        collect_release_assets(artifacts, source_sboms)
+        collect_release_assets(artifacts, source_sboms, repo="mavlink/qgroundcontrol")
 
 
 def test_collect_release_assets_rejects_missing_sbom_or_duplicate_package(tmp_path: Path) -> None:
@@ -100,7 +124,7 @@ def test_collect_release_assets_rejects_missing_sbom_or_duplicate_package(tmp_pa
     missing_sbom.unlink()
 
     with pytest.raises(ValueError, match="found 0"):
-        collect_release_assets(artifacts, source_sboms)
+        collect_release_assets(artifacts, source_sboms, repo="mavlink/qgroundcontrol")
 
     missing_sbom.write_text(SPDX_DOCUMENT, encoding="utf-8")
     duplicate = artifacts / "Custom-QGroundControl-x86_64/duplicate.AppImage"
@@ -109,7 +133,7 @@ def test_collect_release_assets_rejects_missing_sbom_or_duplicate_package(tmp_pa
     duplicate.with_name(f"{duplicate.name}.zsync").write_text("zsync\n", encoding="utf-8")
 
     with pytest.raises(ValueError, match="found 2"):
-        collect_release_assets(artifacts, source_sboms)
+        collect_release_assets(artifacts, source_sboms, repo="mavlink/qgroundcontrol")
 
 
 def test_collect_release_assets_rejects_invalid_sbom(tmp_path: Path) -> None:
@@ -117,7 +141,7 @@ def test_collect_release_assets_rejects_invalid_sbom(tmp_path: Path) -> None:
     source_sboms[1].write_text('{"bomFormat": "not-cyclonedx"}\n', encoding="utf-8")
 
     with pytest.raises(ValueError, match="Invalid CycloneDX SBOM"):
-        collect_release_assets(artifacts, source_sboms)
+        collect_release_assets(artifacts, source_sboms, repo="mavlink/qgroundcontrol")
 
 
 def test_collect_release_assets_rejects_empty_dependency_sbom(tmp_path: Path) -> None:
@@ -126,7 +150,7 @@ def test_collect_release_assets_rejects_empty_dependency_sbom(tmp_path: Path) ->
     dependency_sbom.write_text(CYCLONEDX_DOCUMENT, encoding="utf-8")
 
     with pytest.raises(ValueError, match="contains no components"):
-        collect_release_assets(artifacts, source_sboms)
+        collect_release_assets(artifacts, source_sboms, repo="mavlink/qgroundcontrol")
 
 
 def test_release_uses_platform_sboms_without_reattesting() -> None:
@@ -154,6 +178,7 @@ def test_release_uses_platform_sboms_without_reattesting() -> None:
         in steps["Generate source SBOM (SPDX)"]["with"]["output-file"]
     )
     assert "release_assets.py" in steps["Validate release assets"]["run"]
+    assert '--repo "${{ github.repository }}"' in steps["Validate release assets"]["run"]
     assert '"${RUNNER_TEMP}/sbom-source.spdx.json"' in steps["Validate release assets"]["run"]
     assert "gh release upload" in steps["Upload to Release"]["run"]
     assert not any("attest-sbom" in str(step.get("uses", "")) for step in upload["steps"])
@@ -202,7 +227,9 @@ def test_attestation_actions_publish_checksum_and_resolved_sbom_output() -> None
 def test_release_rejects_manifest_from_another_commit(tmp_path):
     artifacts, sboms = _create_complete_release(tmp_path)
     with pytest.raises(ValueError, match="commit does not match"):
-        collect_release_assets(artifacts, sboms, head_sha="different")
+        collect_release_assets(
+            artifacts, sboms, repo="mavlink/qgroundcontrol", head_sha="different"
+        )
 
 
 def test_release_rejects_manifest_for_another_payload(tmp_path):
@@ -213,7 +240,7 @@ def test_release_rejects_manifest_for_another_payload(tmp_path):
     data["artifact"]["sha256"] = "a" * 64
     manifest.write_text(json.dumps(data))
     with pytest.raises(ValueError, match="does not match package"):
-        collect_release_assets(artifacts, sboms)
+        collect_release_assets(artifacts, sboms, repo="mavlink/qgroundcontrol")
 
 
 def test_release_requirements_match_uploaded_workflow_packages() -> None:
