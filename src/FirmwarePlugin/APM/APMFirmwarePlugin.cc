@@ -484,7 +484,15 @@ void APMFirmwarePlugin::initializeStreamRates(Vehicle *vehicle)
 
     // ArduPilot doesn't send MAVLINK_MSG_ID_EXTENDED_SYS_STATE messages unless requested, so we request it to
     // make the LandAbort action available.
-    vehicle->sendMavCommand(MAV_COMP_ID_AUTOPILOT1, MAV_CMD_SET_MESSAGE_INTERVAL, false /* showError */, MAVLINK_MSG_ID_EXTENDED_SYS_STATE, 1000000 /* 1 second interval in usec */);
+    // COMMAND_ACK doesn't echo back which message id a MAV_CMD_SET_MESSAGE_INTERVAL was for, so MavCommandQueue
+    // can only match an incoming ack to the oldest still-pending request of the same command/component. Sending
+    // this while the HOME_POSITION request above is still outstanding risks the two acks being cross-matched,
+    // which can leave one of the two requests permanently unacknowledged. Delaying comfortably past the other
+    // request's ack timeout keeps only one MAV_CMD_SET_MESSAGE_INTERVAL in flight at a time.
+    constexpr int kExtendedSysStateRequestDelayMs = 5000;
+    vehicle->sendMavCommandDelayed(MAV_COMP_ID_AUTOPILOT1, MAV_CMD_SET_MESSAGE_INTERVAL, false /* showError */,
+                                   kExtendedSysStateRequestDelayMs, MAVLINK_MSG_ID_EXTENDED_SYS_STATE,
+                                   1000000 /* 1 second interval in usec */);
 }
 
 APMFirmwarePlugin::FirmwareParameterHeader APMFirmwarePlugin::_parseParamsHeader(const QString &filePath)
