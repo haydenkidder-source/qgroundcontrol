@@ -120,7 +120,7 @@ Rectangle {
             title: qsTr("Vehicle %1 — name and role").arg(sysid)
             buttons: Dialog.Save | Dialog.Cancel
             acceptButtonEnabled: roleCombo.currentIndex >= 0
-            onAccepted: VehicleRoleController.addEntry(sysid, roleCombo.currentText, nickname.text)
+            onAccepted: VehicleRoleController.addEntry(sysid, roleCombo.currentText, nickname.text, VehicleRoleController.portForSysid(sysid))
 
             ColumnLayout {
                 width: Math.min(ScreenTools.defaultFontPixelWidth * 40, dialog.maxContentAvailableWidth)
