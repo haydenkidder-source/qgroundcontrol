@@ -34,8 +34,8 @@ void COPControllerTest::_rolesAndOrder()
     QSettings settings;
     settings.remove(QStringLiteral("COP"));
     VehicleRoleController roles;
-    roles.addEntry(202, QStringLiteral("Rover"), QStringLiteral("North"));
-    roles.addEntry(201, QStringLiteral("Hex"), QString());
+    roles.addEntry(202, QStringLiteral("Rover"), QStringLiteral("North"), 0);
+    roles.addEntry(201, QStringLiteral("Hex"), QString(), 0);
     COPController controller;
     controller.initialize(&roles);
     controller.selectVehicle(202);
@@ -43,7 +43,7 @@ void COPControllerTest::_rolesAndOrder()
     QCOMPARE(controller.selected()->label(), QStringLiteral("Rover · North"));
     const auto order = settings.value(QStringLiteral("COP/VehicleOrder")).toList();
     QVERIFY(order.indexOf(202) < order.indexOf(201));
-    roles.addEntry(202, QStringLiteral("Stallion"), QStringLiteral("South"));
+    roles.addEntry(202, QStringLiteral("Stallion"), QStringLiteral("South"), 0);
     QCOMPARE(controller.selected()->label(), QStringLiteral("Stallion · South"));
     const int count = controller.vehicles()->count();
     controller.initialize(&roles);
@@ -57,7 +57,7 @@ void COPControllerTest::_rolesAndOrder()
 void COPControllerTest::_pendingControl()
 {
     VehicleRoleController roles;
-    roles.addEntry(203, QStringLiteral("Hex"), QString());
+    roles.addEntry(203, QStringLiteral("Hex"), QString(), 0);
     COPController controller;
     controller.initialize(&roles);
     QCOMPARE(controller.selectedSysid(), 0);
