@@ -70,7 +70,7 @@ def _validate_sbom(sbom: Path, *, require_components: bool = False) -> None:
 
 
 def collect_release_assets(
-    artifacts_dir: Path, source_sboms: list[Path], *, head_sha: str = ""
+    artifacts_dir: Path, source_sboms: list[Path], *, repo: str, head_sha: str = ""
 ) -> list[Path]:
     """Return the complete, validated release asset list."""
     if not artifacts_dir.is_dir():
@@ -98,9 +98,10 @@ def collect_release_assets(
 
         if package.suffix == ".AppImage":
             zsync = package.with_name(f"{package.name}.zsync")
-            if not zsync.is_file():
+            if zsync.is_file():
+                assets.append(zsync)
+            elif repo == "mavlink/qgroundcontrol":
                 raise FileNotFoundError(f"AppImage update metadata is missing: {zsync}")
-            assets.append(zsync)
 
     for sbom_name in REQUIRED_PLATFORM_SBOMS:
         sbom = _require_unique(artifacts_dir, f"**/{sbom_name}", f"SBOM {sbom_name}")
@@ -123,6 +124,7 @@ def collect_release_assets(
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--repo", required=True)
     parser.add_argument("--artifacts-dir", required=True, type=Path)
     parser.add_argument("--source-sbom", action="append", required=True, type=Path)
     parser.add_argument(
@@ -136,7 +138,7 @@ def main() -> int:
     args = parse_args()
     try:
         assets = collect_release_assets(
-            args.artifacts_dir, args.source_sbom, head_sha=args.head_sha
+            args.artifacts_dir, args.source_sbom, repo=args.repo, head_sha=args.head_sha
         )
         write_text_if_changed(args.output, "".join(f"{path}\n" for path in assets))
     except (OSError, ValueError) as exc:

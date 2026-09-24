@@ -165,6 +165,7 @@ jobs:
       - name: Validate release assets
         run: |
           python3 .github/scripts/release_assets.py \
+            --repo "${{ github.repository }}" \
             --artifacts-dir artifacts \
             --head-sha "$GITHUB_SHA" \
             --source-sbom "${RUNNER_TEMP}/sbom-source.spdx.json" \
