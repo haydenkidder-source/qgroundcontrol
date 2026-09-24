@@ -108,6 +108,9 @@ public:
     /// Returns the assigned role for sysid, or an empty string if unassigned.
     Q_INVOKABLE QString roleForSysid(int sysid) const;
 
+    /// Returns the assigned port for sysid, or 0 (unassigned) if sysid has no entry.
+    Q_INVOKABLE int portForSysid(int sysid) const;
+
 private:
     void _load();
     void _save();

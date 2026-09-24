@@ -160,6 +160,12 @@ QString VehicleRoleController::roleForSysid(int sysid) const
     return index >= 0 ? qobject_cast<VehicleRoleEntry*>(_roleEntries->get(index))->role() : QString();
 }
 
+int VehicleRoleController::portForSysid(int sysid) const
+{
+    const int index = _indexForSysid(sysid);
+    return index >= 0 ? qobject_cast<VehicleRoleEntry*>(_roleEntries->get(index))->port() : 0;
+}
+
 void VehicleRoleController::_load()
 {
     const QString filePath =
