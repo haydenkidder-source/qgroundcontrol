@@ -77,14 +77,14 @@ void VehicleRoleLinksTest::_oldFormatFileLoadsWithoutLinks()
     QVERIFY(file.open(QIODevice::WriteOnly));
     QJsonObject obj;
     obj[QStringLiteral("sysid")] = 211;
-    obj[QStringLiteral("role")] = QStringLiteral("Hex");
+    obj[QStringLiteral("role")] = QStringLiteral("Copter");
     obj[QStringLiteral("name")] = QStringLiteral("East");
     obj[QStringLiteral("port")] = 14550;
     file.write(QJsonDocument(QJsonArray{obj}).toJson());
     file.close();
 
     VehicleRoleController controller;
-    QCOMPARE(controller.roleForSysid(211), QStringLiteral("Hex"));
+    QCOMPARE(controller.roleForSysid(211), QStringLiteral("Copter"));
     QCOMPARE(controller.nameForSysid(211), QStringLiteral("East"));
     QCOMPARE(controller.portForSysid(211), 14550);
 
