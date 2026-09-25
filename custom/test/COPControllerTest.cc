@@ -35,7 +35,7 @@ void COPControllerTest::_rolesAndOrder()
     settings.remove(QStringLiteral("COP"));
     VehicleRoleController roles;
     roles.addEntry(202, QStringLiteral("Rover"), QStringLiteral("North"), 0);
-    roles.addEntry(201, QStringLiteral("Hex"), QString(), 0);
+    roles.addEntry(201, QStringLiteral("Copter"), QString(), 0);
     COPController controller;
     controller.initialize(&roles);
     controller.selectVehicle(202);
@@ -43,8 +43,8 @@ void COPControllerTest::_rolesAndOrder()
     QCOMPARE(controller.selected()->label(), QStringLiteral("Rover · North"));
     const auto order = settings.value(QStringLiteral("COP/VehicleOrder")).toList();
     QVERIFY(order.indexOf(202) < order.indexOf(201));
-    roles.addEntry(202, QStringLiteral("Stallion"), QStringLiteral("South"), 0);
-    QCOMPARE(controller.selected()->label(), QStringLiteral("Stallion · South"));
+    roles.addEntry(202, QStringLiteral("Plane"), QStringLiteral("South"), 0);
+    QCOMPARE(controller.selected()->label(), QStringLiteral("Plane · South"));
     const int count = controller.vehicles()->count();
     controller.initialize(&roles);
     QCOMPARE(controller.vehicles()->count(), count);
@@ -54,10 +54,50 @@ void COPControllerTest::_rolesAndOrder()
     QCOMPARE(settings.value(QStringLiteral("COP/VehicleOrder")).toList(), order);
 }
 
+void COPControllerTest::_colorAssignedByDiscoveryOrder()
+{
+    // Other test methods in this class share this same VehicleRoleController save path and COP
+    // QSettings scope (the test class instance - and its QTemporaryDir - is constructed once for
+    // all test methods), so this may not be the only entries either has by the time this runs.
+    // Look these three up by sysid rather than assuming they land at absolute list positions 0-2.
+    QSettings settings;
+    settings.remove(QStringLiteral("COP"));
+    VehicleRoleController roles;
+    roles.addEntry(101, QStringLiteral("Rover"), QString(), 0);
+    roles.addEntry(102, QStringLiteral("Copter"), QString(), 0);
+    roles.addEntry(103, QStringLiteral("Plane"), QString(), 0);
+    COPController controller;
+    controller.initialize(&roles);
+
+    controller.selectVehicle(101);
+    auto* first = controller.selected();
+    controller.selectVehicle(102);
+    auto* second = controller.selected();
+    controller.selectVehicle(103);
+    auto* third = controller.selected();
+    QVERIFY(first);
+    QVERIFY(second);
+    QVERIFY(third);
+    QVERIFY(first->color() != second->color());
+    QVERIFY(second->color() != third->color());
+    QVERIFY(first->color() != third->color());
+
+    // Stable across a fresh controller loading the same persisted order, not re-derived from
+    // current role/sysid values - an operator should keep seeing "their" vehicle in the same color.
+    COPController restored;
+    restored.initialize(&roles);
+    restored.selectVehicle(101);
+    QCOMPARE(restored.selected()->color(), first->color());
+    restored.selectVehicle(102);
+    QCOMPARE(restored.selected()->color(), second->color());
+    restored.selectVehicle(103);
+    QCOMPARE(restored.selected()->color(), third->color());
+}
+
 void COPControllerTest::_pendingControl()
 {
     VehicleRoleController roles;
-    roles.addEntry(203, QStringLiteral("Hex"), QString(), 0);
+    roles.addEntry(203, QStringLiteral("Copter"), QString(), 0);
     COPController controller;
     controller.initialize(&roles);
     QCOMPARE(controller.selectedSysid(), 0);

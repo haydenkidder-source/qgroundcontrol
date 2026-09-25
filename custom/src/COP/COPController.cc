@@ -4,10 +4,32 @@
 #include <QtCore/QTimer>
 
 #include "AudioOutput.h"
+#include "Fact.h"
+#include "GeoFenceManager.h"
+#include "MissionItem.h"
+#include "MissionManager.h"
 #include "MultiVehicleManager.h"
+#include "PlanManager.h"
 #include "QGCCorePlugin.h"
+#include "QGCFenceCircle.h"
+#include "QGCFencePolygon.h"
+#include "RallyPointManager.h"
 #include "VehicleLinkManager.h"
 #include "VideoManager.h"
+
+namespace {
+// Fixed, distinct hues so vehicles stay visually distinguishable on the COP map and in overlays;
+// cycles if there are ever more vehicles than colors. Order matters only in that it's stable -
+// operators learn "vehicle 1 is blue" over time, so don't reorder once vehicles have been assigned.
+const QList<QColor> kVehicleColors = {
+    QColor(QStringLiteral("#2196F3")),  // blue
+    QColor(QStringLiteral("#FF9800")),  // orange
+    QColor(QStringLiteral("#4CAF50")),  // green
+    QColor(QStringLiteral("#E91E63")),  // magenta
+    QColor(QStringLiteral("#FFEB3B")),  // yellow
+    QColor(QStringLiteral("#00BCD4")),  // cyan
+};
+}  // namespace
 
 COPVehicle::COPVehicle(int sysid, VehicleRoleController* roles, QObject* parent)
     : QObject(parent)
@@ -40,6 +62,70 @@ bool COPVehicle::connected() const
     return _vehicle && !_vehicle->vehicleLinkManager()->communicationLost();
 }
 
+QColor COPVehicle::color() const
+{
+    return kVehicleColors.at(_colorIndex % kVehicleColors.size());
+}
+
+void COPVehicle::setColorIndex(int index)
+{
+    if (_colorIndex != index) {
+        _colorIndex = index;
+        emit colorChanged();
+    }
+}
+
+void COPVehicle::setPlanOverlayVisible(bool visible)
+{
+    if (_planOverlayVisible != visible) {
+        _planOverlayVisible = visible;
+        emit planOverlayVisibleChanged();
+    }
+}
+
+void COPVehicle::_refreshPlanData()
+{
+    _missionCoordinates.clear();
+    _fencePolygons.clear();
+    _fenceCircles.clear();
+    _rallyPoints.clear();
+
+    if (_vehicle) {
+        for (const MissionItem* item : _vehicle->missionManager()->missionItems()) {
+            const QGeoCoordinate coordinate = item->coordinate();
+            if (coordinate.isValid()) {
+                _missionCoordinates.append(QVariant::fromValue(coordinate));
+            }
+        }
+
+        for (const QGCFencePolygon& polygon : _vehicle->geoFenceManager()->polygons()) {
+            QVariantList path;
+            for (const QGeoCoordinate& coordinate : polygon.coordinateList()) {
+                path.append(QVariant::fromValue(coordinate));
+            }
+            _fencePolygons.append(
+                QVariantMap{{QStringLiteral("path"), path}, {QStringLiteral("inclusion"), polygon.inclusion()}});
+        }
+
+        // GeoFenceManager::circles() returns a const list; radius() is non-const on QGCMapCircle
+        // (it hands out the underlying Fact for interactive editing), so copy each entry to read
+        // it. Done here rather than in the fenceCircles() getter so it only happens once per
+        // reload, not on every QML binding re-evaluation of the property.
+        QList<QGCFenceCircle> circles = _vehicle->geoFenceManager()->circles();
+        for (QGCFenceCircle& circle : circles) {
+            _fenceCircles.append(QVariantMap{{QStringLiteral("center"), QVariant::fromValue(circle.center())},
+                                             {QStringLiteral("radius"), circle.radius()->rawValue().toDouble()},
+                                             {QStringLiteral("inclusion"), circle.inclusion()}});
+        }
+
+        for (const QGeoCoordinate& coordinate : _vehicle->rallyPointManager()->points()) {
+            _rallyPoints.append(QVariant::fromValue(coordinate));
+        }
+    }
+
+    emit planDataChanged();
+}
+
 void COPVehicle::_snapshot()
 {
     if (!_vehicle) {
@@ -59,6 +145,9 @@ void COPVehicle::setVehicle(Vehicle* vehicle)
     if (_vehicle) {
         disconnect(_vehicle, nullptr, this, nullptr);
         disconnect(_vehicle->vehicleLinkManager(), nullptr, this, nullptr);
+        disconnect(_vehicle->missionManager(), nullptr, this, nullptr);
+        disconnect(_vehicle->geoFenceManager(), nullptr, this, nullptr);
+        disconnect(_vehicle->rallyPointManager(), nullptr, this, nullptr);
     }
     _vehicle = vehicle;
     if (vehicle) {
@@ -67,9 +156,15 @@ void COPVehicle::setVehicle(Vehicle* vehicle)
         connect(vehicle, &QObject::destroyed, this, [this]() { emit stateChanged(); });
         connect(vehicle, &Vehicle::coordinateChanged, this, &COPVehicle::_snapshot);
         connect(vehicle, &Vehicle::flightModeChanged, this, &COPVehicle::_snapshot);
+        // Mission/geofence/rally data QGC already downloads for PlanView - just re-snapshot it for
+        // the COP overlay whenever any of it (re)loads.
+        connect(vehicle->missionManager(), &PlanManager::newMissionItemsAvailable, this, &COPVehicle::_refreshPlanData);
+        connect(vehicle->geoFenceManager(), &GeoFenceManager::loadComplete, this, &COPVehicle::_refreshPlanData);
+        connect(vehicle->rallyPointManager(), &RallyPointManager::loadComplete, this, &COPVehicle::_refreshPlanData);
         _snapshot();
     }
     emit stateChanged();
+    _refreshPlanData();
 }
 
 COPController::COPController(QObject* parent)
@@ -101,6 +196,7 @@ COPVehicle* COPController::_remember(int sysid)
         return entry;
     }
     auto* entry = new COPVehicle(sysid, _roles, this);
+    entry->setColorIndex(_vehicles.count());
     _vehicles.append(entry);
     QVariantList ids;
     for (int i = 0; i < _vehicles.count(); ++i) {

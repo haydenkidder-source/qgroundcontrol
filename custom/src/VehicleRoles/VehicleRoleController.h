@@ -7,7 +7,46 @@
 
 class QmlObjectListModel;
 
-/// \brief A single sysid -> role/nickname assignment.
+/// \brief A single named link association within a VehicleRoleEntry (e.g. "RFD900x" pointing at
+/// the LinkConfiguration named "Rover RFD900x").
+///
+/// Association is by LinkConfiguration::name() rather than by holding a LinkConfiguration
+/// pointer directly: configurations are recreated during editing (see
+/// LinkManager::endConfigurationEditing()), and this needs to survive that as well as round-trip
+/// through JSON. linkConfigName() is empty until the operator attaches (or creates) a real link
+/// configuration for this association.
+///
+/// Mutated only through VehicleRoleController (same controller-owns-mutation style as
+/// VehicleRoleEntry) so every change goes through one place that also persists it.
+class VehicleRoleLinkEntry : public QObject
+{
+    Q_OBJECT
+    QML_ELEMENT
+    QML_UNCREATABLE("Created by VehicleRoleController")
+
+    Q_PROPERTY(QString label READ label NOTIFY labelChanged)
+    Q_PROPERTY(QString linkConfigName READ linkConfigName NOTIFY linkConfigNameChanged)
+
+public:
+    VehicleRoleLinkEntry(const QString& label, const QString& linkConfigName, QObject* parent = nullptr);
+
+    QString label() const { return _label; }
+
+    QString linkConfigName() const { return _linkConfigName; }
+
+    void setLabel(const QString& label);
+    void setLinkConfigName(const QString& linkConfigName);
+
+signals:
+    void labelChanged(QString label);
+    void linkConfigNameChanged(QString linkConfigName);
+
+private:
+    QString _label;
+    QString _linkConfigName;
+};
+
+/// \brief A single sysid -> role/nickname assignment, plus its named link associations.
 ///
 /// Mutated only through VehicleRoleController (mirrors StagedExclusionZone's
 /// controller-owns-mutation style) so every change goes through one place that also persists it.
@@ -16,11 +55,13 @@ class VehicleRoleEntry : public QObject
     Q_OBJECT
     QML_ELEMENT
     QML_UNCREATABLE("Created by VehicleRoleController")
+    Q_MOC_INCLUDE("QmlObjectListModel.h")
 
     Q_PROPERTY(int sysid READ sysid CONSTANT)
     Q_PROPERTY(QString role READ role NOTIFY roleChanged)
     Q_PROPERTY(QString name READ name NOTIFY nameChanged)
     Q_PROPERTY(int port READ port NOTIFY portChanged)
+    Q_PROPERTY(QmlObjectListModel* links READ links CONSTANT)
 
 public:
     VehicleRoleEntry(int sysid, const QString& role, const QString& name, int port, QObject* parent = nullptr);
@@ -34,8 +75,13 @@ public:
     /// The vehicle's assigned ground-station UDP port, for reference only (see
     /// custom/FIELD_RADIO_SETUP.md) - 0 means unassigned. Setting this does not create, modify or
     /// look up any actual comm link; the operator still configures the real UDP link separately
-    /// under Settings > Comm Links.
+    /// under Settings > Comm Links. Superseded by links() for new work (see VehicleRoleLinkEntry)
+    /// but kept for existing callers that still read/write it.
     int port() const { return _port; }
+
+    /// This entry's named link associations (e.g. "RFD900x", "Microhard 2450", "WFB-NG"), each
+    /// optionally pointing at a real LinkConfiguration. See VehicleRoleLinkEntry.
+    QmlObjectListModel* links() const { return _links; }
 
     void setRole(const QString& role);
     void setName(const QString& name);
@@ -51,10 +97,12 @@ private:
     QString _role;
     QString _name;
     int _port = 0;
+    QmlObjectListModel* _links = nullptr;
 };
 
 /// \brief Remembers which MAVLink system ID (sysid) corresponds to which of the program's
-/// permanent vehicles (Rover, Stallion, Hex), plus an optional operator nickname.
+/// permanent vehicles, identified by ArduPilot vehicle type (role) plus an optional operator
+/// nickname (name).
 ///
 /// QGC already reads each vehicle's sysid from its heartbeat (Vehicle::id(), set on the vehicle
 /// side by the ArduPilot SYSID_THISMAV parameter, the same value Mission Planner uses to
@@ -77,11 +125,13 @@ public:
 
     QmlObjectListModel* roleEntries() const { return _roleEntries; }
 
-    /// The program's fixed set of vehicle roles. Not user-extensible: the program has exactly
-    /// three permanent vehicles.
+    /// The fixed set of ArduPilot vehicle types entries can be grouped under. Not user-extensible:
+    /// this is ArduPilot's own set of distinct vehicle firmwares/products, independent of which
+    /// specific vehicles this program happens to fly.
     QStringList availableRoles() const
     {
-        return {QStringLiteral("Rover"), QStringLiteral("Stallion"), QStringLiteral("Hex")};
+        return {QStringLiteral("Copter"), QStringLiteral("Plane"),   QStringLiteral("Rover"),
+                QStringLiteral("Sub"),    QStringLiteral("Tracker"), QStringLiteral("Blimp")};
     }
 
     /// Adds a new sysid/role/name/port assignment, or updates the existing entry for that sysid if
@@ -111,10 +161,30 @@ public:
     /// Returns the assigned port for sysid, or 0 (unassigned) if sysid has no entry.
     Q_INVOKABLE int portForSysid(int sysid) const;
 
+    /// Returns the link associations for sysid, or nullptr if sysid has no entry.
+    Q_INVOKABLE QmlObjectListModel* linksForSysid(int sysid) const;
+
+    /// Adds a new named link association (e.g. "RFD900x") to the entry at index, optionally
+    /// already pointing at an existing LinkConfiguration by name - pass an empty string to leave
+    /// it unattached for now, the operator can attach or create one later with
+    /// setLinkConfigName(). Ignored (returns -1) if index is out of range or label is empty.
+    /// Returns the new link's index within that entry's links list.
+    Q_INVOKABLE int addLink(int index, const QString& label, const QString& linkConfigName);
+
+    Q_INVOKABLE void removeLink(int index, int linkIndex);
+    Q_INVOKABLE void setLinkLabel(int index, int linkIndex, const QString& label);
+    Q_INVOKABLE void setLinkConfigName(int index, int linkIndex, const QString& linkConfigName);
+
+    /// True if a live LinkInterface exists right now for a LinkConfiguration with this name - i.e.
+    /// the link is actually connected, not merely configured or pending auto-reconnect. An empty
+    /// linkConfigName (an association not yet pointed at a real link) is never connected.
+    Q_INVOKABLE bool isLinkConfigConnected(const QString& linkConfigName) const;
+
 private:
     void _load();
     void _save();
     int _indexForSysid(int sysid) const;
+    VehicleRoleLinkEntry* _linkAt(int index, int linkIndex) const;
 
     QmlObjectListModel* _roleEntries = nullptr;
 };

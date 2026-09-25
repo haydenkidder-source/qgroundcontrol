@@ -50,7 +50,7 @@ void COPStressUITest::init()
 void COPStressTest::_videoOverrideSurvivesRestart()
 {
     VehicleRoleController roles;
-    roles.addEntry(243, QStringLiteral("Hex"), QString(), 0);
+    roles.addEntry(243, QStringLiteral("Copter"), QString(), 0);
     const QString uri = QStringLiteral("udp://0.0.0.0:5643");
     {
         COPController first;
@@ -210,8 +210,8 @@ void COPStressUITest::_threeVehicleChurn()
     auto* roles = _engine->singletonInstance<VehicleRoleController*>("QGC", "VehicleRoleController");
     QVERIFY(roles);
     roles->addEntry(roverId, QStringLiteral("Rover"), QString(), 0);
-    roles->addEntry(hexId, QStringLiteral("Hex"), QString(), 0);
-    roles->addEntry(stallionId, QStringLiteral("Stallion"), QString(), 0);
+    roles->addEntry(hexId, QStringLiteral("Copter"), QString(), 0);
+    roles->addEntry(stallionId, QStringLiteral("Plane"), QString(), 0);
 
     QTimer switching;
     switching.setInterval(1);
