@@ -238,11 +238,14 @@ qt_add_resources(
 # ${CMAKE_PROJECT_NAME} directly (see CUSTOM_SOURCES below) for QML_ELEMENT/QML_SINGLETON to
 # register under the "QGC" module; the QML page is just a resource referenced by URL.
 
-qgc_set_qt_resource_alias(${CMAKE_CURRENT_SOURCE_DIR}/src/VehicleRoles/VehicleRoleSettingsPage.qml)
+set(VEHICLE_ROLES_QML_FILES ${CMAKE_CURRENT_SOURCE_DIR}/src/VehicleRoles/VehicleRoleSettingsPage.qml
+                            ${CMAKE_CURRENT_SOURCE_DIR}/src/VehicleRoles/VehicleLinksPage.qml
+)
+qgc_set_qt_resource_alias(${VEHICLE_ROLES_QML_FILES})
 qt_add_resources(
     ${CMAKE_PROJECT_NAME} custom_vehicle_roles_qml
     PREFIX "/qml/Custom/VehicleRoles"
-    FILES ${CMAKE_CURRENT_SOURCE_DIR}/src/VehicleRoles/VehicleRoleSettingsPage.qml
+    FILES ${VEHICLE_ROLES_QML_FILES}
 )
 
 # ============================================================================
@@ -332,6 +335,8 @@ if(QGC_BUILD_TESTING)
                 ${CMAKE_CURRENT_SOURCE_DIR}/test/COPStressTest.h
                 ${CMAKE_CURRENT_SOURCE_DIR}/test/VehicleRoleControllerTest.cc
                 ${CMAKE_CURRENT_SOURCE_DIR}/test/VehicleRoleControllerTest.h
+                ${CMAKE_CURRENT_SOURCE_DIR}/test/VehicleRoleLinksTest.cc
+                ${CMAKE_CURRENT_SOURCE_DIR}/test/VehicleRoleLinksTest.h
     )
     cmake_language(
         DEFER
@@ -384,5 +389,18 @@ if(QGC_BUILD_TESTING)
         VehicleRoleControllerTest
         LABELS
         Unit
+    )
+    cmake_language(
+        DEFER
+        DIRECTORY
+        "${CMAKE_SOURCE_DIR}"
+        CALL
+        add_qgc_test
+        VehicleRoleLinksTest
+        LABELS
+        Unit
+        Comms
+        RESOURCE_LOCK
+        Settings
     )
 endif()
