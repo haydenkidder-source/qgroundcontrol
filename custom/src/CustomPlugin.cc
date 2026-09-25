@@ -329,13 +329,15 @@ const QVariantList& CustomPlugin::analyzePages()
             QUrl::fromUserInput(QStringLiteral("qrc:/qml/Custom/VehicleRoles/VehicleRoleSettingsPage.qml")), QUrl(),
             nullptr, false /* requiresVehicle - roles should be assignable before any vehicle connects */)));
         pages.append(QVariant::fromValue(new QmlComponentInfo(
-            tr("Vehicle Links"),
-            QUrl::fromUserInput(QStringLiteral("qrc:/qml/Custom/VehicleRoles/VehicleLinksPage.qml")), QUrl(), nullptr,
-            false /* requiresVehicle - link associations should be manageable before any vehicle connects */)));
-        pages.append(QVariant::fromValue(new QmlComponentInfo(
             tr("App Log Viewer"),
             QUrl::fromUserInput(QStringLiteral("qrc:/qml/Custom/AnalyzeView/AppLogViewerAnalyzePage.qml")),
             QUrl::fromUserInput(QStringLiteral("qrc:/InstrumentValueIcons/conversation.svg")), nullptr, false)));
+        // Appended last: AppLogViewerUITest clicks this list by a fixed on-screen position, which
+        // shifts down (off the test window's fixed 800x590 size) if a new page is inserted above it.
+        pages.append(QVariant::fromValue(new QmlComponentInfo(
+            tr("Vehicle Links"),
+            QUrl::fromUserInput(QStringLiteral("qrc:/qml/Custom/VehicleRoles/VehicleLinksPage.qml")), QUrl(), nullptr,
+            false /* requiresVehicle - link associations should be manageable before any vehicle connects */)));
         return pages;
     }();
 
