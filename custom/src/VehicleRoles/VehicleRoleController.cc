@@ -18,12 +18,35 @@ namespace {
 const char* kRolesFileName = "VehicleRoles.json";
 }
 
+VehicleRoleLinkEntry::VehicleRoleLinkEntry(const QString& label, const QString& linkConfigName, QObject* parent)
+    : QObject(parent)
+    , _label(label)
+    , _linkConfigName(linkConfigName)
+{}
+
+void VehicleRoleLinkEntry::setLabel(const QString& label)
+{
+    if (_label != label) {
+        _label = label;
+        emit labelChanged(_label);
+    }
+}
+
+void VehicleRoleLinkEntry::setLinkConfigName(const QString& linkConfigName)
+{
+    if (_linkConfigName != linkConfigName) {
+        _linkConfigName = linkConfigName;
+        emit linkConfigNameChanged(_linkConfigName);
+    }
+}
+
 VehicleRoleEntry::VehicleRoleEntry(int sysid, const QString& role, const QString& name, int port, QObject* parent)
     : QObject(parent)
     , _sysid(sysid)
     , _role(role)
     , _name(name)
     , _port(port)
+    , _links(new QmlObjectListModel(this))
 {}
 
 void VehicleRoleEntry::setRole(const QString& role)
@@ -65,6 +88,12 @@ int VehicleRoleController::_indexForSysid(int sysid) const
         }
     }
     return -1;
+}
+
+VehicleRoleLinkEntry* VehicleRoleController::_linkAt(int index, int linkIndex) const
+{
+    auto* entry = qobject_cast<VehicleRoleEntry*>(_roleEntries->get(index));
+    return entry ? qobject_cast<VehicleRoleLinkEntry*>(entry->links()->get(linkIndex)) : nullptr;
 }
 
 void VehicleRoleController::addEntry(int sysid, const QString& role, const QString& name, int port)
@@ -166,6 +195,72 @@ int VehicleRoleController::portForSysid(int sysid) const
     return index >= 0 ? qobject_cast<VehicleRoleEntry*>(_roleEntries->get(index))->port() : 0;
 }
 
+QmlObjectListModel* VehicleRoleController::linksForSysid(int sysid) const
+{
+    const int index = _indexForSysid(sysid);
+    return index >= 0 ? qobject_cast<VehicleRoleEntry*>(_roleEntries->get(index))->links() : nullptr;
+}
+
+int VehicleRoleController::addLink(int index, const QString& label, const QString& linkConfigName)
+{
+    auto* entry = qobject_cast<VehicleRoleEntry*>(_roleEntries->get(index));
+    if (!entry || label.isEmpty()) {
+        qCWarning(VehicleRoleLog) << "Ignoring invalid link - index:" << index << "label:" << label;
+        return -1;
+    }
+
+    entry->links()->append(new VehicleRoleLinkEntry(label, linkConfigName, this));
+    _save();
+    return entry->links()->count() - 1;
+}
+
+void VehicleRoleController::removeLink(int index, int linkIndex)
+{
+    auto* entry = qobject_cast<VehicleRoleEntry*>(_roleEntries->get(index));
+    if (!entry) {
+        return;
+    }
+    if (auto* link = qobject_cast<VehicleRoleLinkEntry*>(entry->links()->removeAt(linkIndex))) {
+        link->deleteLater();
+        _save();
+    }
+}
+
+void VehicleRoleController::setLinkLabel(int index, int linkIndex, const QString& label)
+{
+    if (label.isEmpty()) {
+        qCWarning(VehicleRoleLog) << "Ignoring empty link label";
+        return;
+    }
+    if (auto* link = _linkAt(index, linkIndex)) {
+        link->setLabel(label);
+        _save();
+    }
+}
+
+void VehicleRoleController::setLinkConfigName(int index, int linkIndex, const QString& linkConfigName)
+{
+    if (auto* link = _linkAt(index, linkIndex)) {
+        link->setLinkConfigName(linkConfigName);
+        _save();
+    }
+}
+
+bool VehicleRoleController::isLinkConfigConnected(const QString& linkConfigName) const
+{
+    if (linkConfigName.isEmpty()) {
+        return false;
+    }
+
+    const QList<SharedLinkInterfacePtr> links = LinkManager::instance()->links();
+    for (const SharedLinkInterfacePtr& link : links) {
+        if (link && link->linkConfiguration() && link->linkConfiguration()->name() == linkConfigName) {
+            return true;
+        }
+    }
+    return false;
+}
+
 void VehicleRoleController::_load()
 {
     const QString filePath =
@@ -194,8 +289,26 @@ void VehicleRoleController::_load()
         // an out-of-range value - treat both as unassigned rather than discarding the whole entry.
         const int savedPort = obj.value(QStringLiteral("port")).toInt();
         const int port = (savedPort >= 0 && savedPort <= 65535) ? savedPort : 0;
-        _roleEntries->append(
-            new VehicleRoleEntry(sysid, role, obj.value(QStringLiteral("name")).toString(), port, this));
+        auto* entry = new VehicleRoleEntry(sysid, role, obj.value(QStringLiteral("name")).toString(), port, this);
+
+        // "links" is absent in files saved before the multi-link model existed; toArray() on a
+        // missing/non-array JSON value safely yields an empty array, so entries from those files
+        // simply load with no link associations for the operator to re-add via the Vehicle Links
+        // page. The legacy "port" above is preserved either way, but it never represented an
+        // actual persisted link identity (see VehicleRoleEntry::port()), so nothing is silently
+        // lost by not attempting to migrate it into a link association.
+        for (const QJsonValue& linkValue : obj.value(QStringLiteral("links")).toArray()) {
+            const QJsonObject linkObj = linkValue.toObject();
+            const QString label = linkObj.value(QStringLiteral("label")).toString();
+            if (label.isEmpty()) {
+                qCWarning(VehicleRoleLog) << "Skipping saved link with empty label for sysid:" << sysid;
+                continue;
+            }
+            entry->links()->append(
+                new VehicleRoleLinkEntry(label, linkObj.value(QStringLiteral("linkConfigName")).toString(), this));
+        }
+
+        _roleEntries->append(entry);
     }
 }
 
@@ -209,6 +322,17 @@ void VehicleRoleController::_save()
         obj[QStringLiteral("role")] = entry->role();
         obj[QStringLiteral("name")] = entry->name();
         obj[QStringLiteral("port")] = entry->port();
+
+        QJsonArray linksArray;
+        for (int j = 0; j < entry->links()->count(); j++) {
+            auto* link = qobject_cast<VehicleRoleLinkEntry*>(entry->links()->get(j));
+            QJsonObject linkObj;
+            linkObj[QStringLiteral("label")] = link->label();
+            linkObj[QStringLiteral("linkConfigName")] = link->linkConfigName();
+            linksArray.append(linkObj);
+        }
+        obj[QStringLiteral("links")] = linksArray;
+
         array.append(obj);
     }
 
