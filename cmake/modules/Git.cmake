@@ -36,7 +36,12 @@ execute_process(
     OUTPUT_STRIP_TRAILING_WHITESPACE COMMAND_ERROR_IS_FATAL ANY
 )
 get_filename_component(_qgc_git_common_dir "${_qgc_git_common_dir}" ABSOLUTE BASE_DIR "${CMAKE_SOURCE_DIR}")
-set(_qgc_git_configure_dependencies "${_qgc_git_dir}/HEAD" "${_qgc_git_dir}/index")
+# .git/index is not a dependency: every `git status` rewrites it, and it only feeds QGC_GIT_DIRTY.
+set(_qgc_git_configure_dependencies "${_qgc_git_dir}/HEAD")
+# The reflog moves on every commit/checkout even when the branch ref is only in packed-refs.
+if(EXISTS "${_qgc_git_dir}/logs/HEAD")
+    list(APPEND _qgc_git_configure_dependencies "${_qgc_git_dir}/logs/HEAD")
+endif()
 if(EXISTS "${_qgc_git_dir}/commondir")
     list(APPEND _qgc_git_configure_dependencies "${_qgc_git_dir}/commondir")
 endif()
