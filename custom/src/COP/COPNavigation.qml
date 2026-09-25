@@ -25,6 +25,27 @@ Rectangle {
         }
     }
 
+    // Best-guess ArduPilot vehicle type from the connected vehicle's own MAV_TYPE, offered as the
+    // default when a sysid has no role assigned yet - the operator can still override it.
+    function suggestedRoleFor(vehicle) {
+        if (!vehicle) {
+            return ""
+        }
+        if (vehicle.rover) {
+            return "Rover"
+        }
+        if (vehicle.sub) {
+            return "Sub"
+        }
+        if (vehicle.multiRotor) {
+            return "Copter"
+        }
+        if (vehicle.fixedWing || vehicle.vtol) {
+            return "Plane"
+        }
+        return ""
+    }
+
     ColumnLayout {
         id: layout
         width: parent.width
@@ -48,11 +69,32 @@ Rectangle {
                     }
                     Repeater {
                         model: COPController.vehicles
-                        QGCButton {
+                        RowLayout {
+                            id: vehicleTab
                             required property var object
-                            text: object.label
-                            highlighted: COPController.selectedSysid === object.sysid
-                            onClicked: root.select(object.sysid)
+                            spacing: ScreenTools.defaultFontPixelWidth / 2
+                            // Matches this vehicle's marker color on the map, so operators learn
+                            // to associate a tab with its color at a glance.
+                            Rectangle {
+                                Layout.preferredWidth: ScreenTools.defaultFontPixelHeight / 2
+                                Layout.preferredHeight: ScreenTools.defaultFontPixelHeight / 2
+                                radius: width / 2
+                                color: vehicleTab.object.color
+                            }
+                            QGCButton {
+                                text: vehicleTab.object.label
+                                highlighted: COPController.selectedSysid === vehicleTab.object.sysid
+                                onClicked: root.select(vehicleTab.object.sysid)
+                            }
+                            QGCButton {
+                                text: qsTr("Plan")
+                                checkable: true
+                                checked: vehicleTab.object.planOverlayVisible
+                                ToolTip.visible: hovered
+                                ToolTip.text: qsTr("Show %1's mission, geofence and rally points on the COP map")
+                                              .arg(vehicleTab.object.label)
+                                onToggled: vehicleTab.object.planOverlayVisible = checked
+                            }
                         }
                     }
                 }
@@ -82,7 +124,8 @@ Rectangle {
                 enabled: root.selected !== null
                 onClicked: {
                     if (root.selected && root.hostWindow && root.hostWindow.allowViewSwitch()) {
-                        editVehicleDialog.open({ sysid: root.selected.sysid })
+                        editVehicleDialog.open({ sysid: root.selected.sysid,
+                                                  suggestedRole: root.suggestedRoleFor(root.selected.vehicle) })
                     }
                 }
             }
@@ -117,6 +160,7 @@ Rectangle {
         QGCPopupDialog {
             id: dialog
             required property int sysid
+            property string suggestedRole: ""
             title: qsTr("Vehicle %1 — name and role").arg(sysid)
             buttons: Dialog.Save | Dialog.Cancel
             acceptButtonEnabled: roleCombo.currentIndex >= 0
@@ -131,13 +175,18 @@ Rectangle {
                     text: VehicleRoleController.nameForSysid(dialog.sysid)
                     placeholderText: qsTr("Nickname (optional)")
                 }
-                QGCLabel { text: qsTr("Role") }
+                QGCLabel { text: qsTr("Role (vehicle type)") }
                 QGCComboBox {
                     id: roleCombo
                     Layout.fillWidth: true
                     model: VehicleRoleController.availableRoles
-                    currentIndex: VehicleRoleController.availableRoles.indexOf(
-                                      VehicleRoleController.roleForSysid(dialog.sysid))
+                    // Prefer the already-saved role; for a not-yet-assigned vehicle, default to the
+                    // type detected from its own MAV_TYPE rather than leaving nothing selected.
+                    currentIndex: {
+                        const savedRole = VehicleRoleController.roleForSysid(dialog.sysid)
+                        const saved = VehicleRoleController.availableRoles.indexOf(savedRole)
+                        return saved >= 0 ? saved : VehicleRoleController.availableRoles.indexOf(dialog.suggestedRole)
+                    }
                 }
             }
         }

@@ -185,17 +185,27 @@ void VehicleRoleController::_load()
     for (const QJsonValue& value : doc.array()) {
         const QJsonObject obj = value.toObject();
         const int sysid = obj.value(QStringLiteral("sysid")).toInt();
-        const QString role = obj.value(QStringLiteral("role")).toString();
-        if (sysid < 1 || sysid > 255 || !availableRoles().contains(role)) {
-            qCWarning(VehicleRoleLog) << "Skipping invalid saved entry - sysid:" << sysid << "role:" << role;
+        if (sysid < 1 || sysid > 255) {
+            qCWarning(VehicleRoleLog) << "Skipping invalid saved entry - sysid:" << sysid;
             continue;
+        }
+        QString role = obj.value(QStringLiteral("role")).toString();
+        QString name = obj.value(QStringLiteral("name")).toString();
+        // Older saves used a fixed call-sign ("Rover"/"Stallion"/"Hex") as the role. "Rover" still
+        // matches the current ArduPilot-type list; anything else is now unrecognized - preserve it
+        // as the nickname (if one wasn't already set) rather than discarding the whole entry, and
+        // leave role unassigned so the operator picks the vehicle's actual type.
+        if (!availableRoles().contains(role)) {
+            if (name.isEmpty() && !role.isEmpty()) {
+                name = role;
+            }
+            role.clear();
         }
         // Missing "port" (files saved before this field existed) reads as 0 (unassigned), same as
         // an out-of-range value - treat both as unassigned rather than discarding the whole entry.
         const int savedPort = obj.value(QStringLiteral("port")).toInt();
         const int port = (savedPort >= 0 && savedPort <= 65535) ? savedPort : 0;
-        _roleEntries->append(
-            new VehicleRoleEntry(sysid, role, obj.value(QStringLiteral("name")).toString(), port, this));
+        _roleEntries->append(new VehicleRoleEntry(sysid, role, name, port, this));
     }
 }
 

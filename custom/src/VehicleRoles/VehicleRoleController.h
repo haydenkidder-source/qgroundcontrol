@@ -54,7 +54,8 @@ private:
 };
 
 /// \brief Remembers which MAVLink system ID (sysid) corresponds to which of the program's
-/// permanent vehicles (Rover, Stallion, Hex), plus an optional operator nickname.
+/// permanent vehicles, identified by ArduPilot vehicle type (role) plus an optional operator
+/// nickname (name).
 ///
 /// QGC already reads each vehicle's sysid from its heartbeat (Vehicle::id(), set on the vehicle
 /// side by the ArduPilot SYSID_THISMAV parameter, the same value Mission Planner uses to
@@ -77,11 +78,13 @@ public:
 
     QmlObjectListModel* roleEntries() const { return _roleEntries; }
 
-    /// The program's fixed set of vehicle roles. Not user-extensible: the program has exactly
-    /// three permanent vehicles.
+    /// The fixed set of ArduPilot vehicle types entries can be grouped under. Not user-extensible:
+    /// this is ArduPilot's own set of distinct vehicle firmwares/products, independent of which
+    /// specific vehicles this program happens to fly.
     QStringList availableRoles() const
     {
-        return {QStringLiteral("Rover"), QStringLiteral("Stallion"), QStringLiteral("Hex")};
+        return {QStringLiteral("Copter"), QStringLiteral("Plane"),   QStringLiteral("Rover"),
+                QStringLiteral("Sub"),    QStringLiteral("Tracker"), QStringLiteral("Blimp")};
     }
 
     /// Adds a new sysid/role/name/port assignment, or updates the existing entry for that sysid if

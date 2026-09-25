@@ -4,6 +4,7 @@
 #include <QtCore/QObject>
 #include <QtCore/QPointer>
 #include <QtCore/QVariantList>
+#include <QtGui/QColor>
 #include <QtPositioning/QGeoCoordinate>
 #include <QtQmlIntegration/QtQmlIntegration>
 
@@ -24,6 +25,13 @@ class COPVehicle : public QObject
     Q_PROPERTY(QGeoCoordinate coordinate READ coordinate NOTIFY stateChanged)
     Q_PROPERTY(QString flightMode READ flightMode NOTIFY stateChanged)
     Q_PROPERTY(QDateTime lastSeen READ lastSeen NOTIFY stateChanged)
+    Q_PROPERTY(QColor color READ color NOTIFY colorChanged)
+    Q_PROPERTY(
+        bool planOverlayVisible READ planOverlayVisible WRITE setPlanOverlayVisible NOTIFY planOverlayVisibleChanged)
+    Q_PROPERTY(QVariantList missionCoordinates READ missionCoordinates NOTIFY planDataChanged)
+    Q_PROPERTY(QVariantList fencePolygons READ fencePolygons NOTIFY planDataChanged)
+    Q_PROPERTY(QVariantList fenceCircles READ fenceCircles NOTIFY planDataChanged)
+    Q_PROPERTY(QVariantList rallyPoints READ rallyPoints NOTIFY planDataChanged)
 
 public:
     COPVehicle(int sysid, VehicleRoleController* roles, QObject* parent);
@@ -42,19 +50,55 @@ public:
 
     QGeoCoordinate coordinate() const { return _coordinate; }
 
+    /// Whether this vehicle's mission/geofence/rally-point overlay should be drawn on the COP map.
+    /// Purely a display toggle - not persisted, and does not affect the vehicle in any way.
+    bool planOverlayVisible() const { return _planOverlayVisible; }
+
+    void setPlanOverlayVisible(bool visible);
+
+    /// This vehicle's navigation waypoints (mission items with a valid lat/lon), in mission order,
+    /// for a read-only overlay polyline. Snapshotted from Vehicle::missionManager() - the same live
+    /// data PlanView downloads, not a separate download - whenever it (re)loads; see _refreshPlanData().
+    QVariantList missionCoordinates() const { return _missionCoordinates; }
+
+    /// Each entry: {"path": list<coordinate>, "inclusion": bool}.
+    QVariantList fencePolygons() const { return _fencePolygons; }
+
+    /// Each entry: {"center": coordinate, "radius": real (meters), "inclusion": bool}.
+    QVariantList fenceCircles() const { return _fenceCircles; }
+
+    QVariantList rallyPoints() const { return _rallyPoints; }
+
     QString flightMode() const { return _flightMode; }
 
     QDateTime lastSeen() const { return _lastSeen; }
 
+    /// This vehicle's identifying color for COP map markers and overlays (mission/geofence/rally),
+    /// so an operator can visually tell vehicles apart at a glance. Assigned once, by the order
+    /// vehicles were first remembered (see COPController::_remember()) - stable for the life of
+    /// the entry, cycling through a fixed palette if there are more vehicles than colors.
+    QColor color() const;
+
     void setVehicle(Vehicle* vehicle);
+
+    /// Set by COPController when this entry is first remembered; not user-editable.
+    void setColorIndex(int index);
 
 signals:
     void stateChanged();
     void labelChanged();
     void videoUriChanged();
+    void colorChanged();
+    void planOverlayVisibleChanged();
+    void planDataChanged();
 
 private:
     void _snapshot();
+    /// Re-reads mission/geofence/rally data from the vehicle's managers into the cached lists
+    /// below and emits planDataChanged(). Called once per actual reload rather than on every
+    /// property read, since geofence circles in particular are only readable by copying each
+    /// QGCFenceCircle (its radius accessor isn't const - see fenceCircles() in the .cc).
+    void _refreshPlanData();
     int _sysid;
     QPointer<VehicleRoleController> _roles;
     QPointer<Vehicle> _vehicle;
@@ -62,6 +106,12 @@ private:
     QString _flightMode;
     QString _videoUri;
     QDateTime _lastSeen;
+    bool _planOverlayVisible = false;
+    int _colorIndex = 0;
+    QVariantList _missionCoordinates;
+    QVariantList _fencePolygons;
+    QVariantList _fenceCircles;
+    QVariantList _rallyPoints;
 };
 
 class COPController : public QObject
