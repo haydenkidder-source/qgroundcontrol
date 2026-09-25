@@ -38,7 +38,11 @@
         ]
       }
     }],
-    "@semantic-release/github",
+    ["@semantic-release/github", {
+      "successComment": false,
+      "failComment": false,
+      "failTitle": false
+    }],
     ["@semantic-release/exec", {
       "verifyReleaseCmd": "echo '${nextRelease.version}' > .release-version"
     }]
