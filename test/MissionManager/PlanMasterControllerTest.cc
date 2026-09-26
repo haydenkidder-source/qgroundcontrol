@@ -494,6 +494,82 @@ void PlanMasterControllerTest::_testFileAssociationClearedOnRemoveAllFromVehicle
     QVERIFY(currentFileSpy.count() >= 1);
 }
 
+void PlanMasterControllerTest::_testRemoveAllFromVehicleCompletedOnSuccess()
+{
+    _connectMockLink(MAV_AUTOPILOT_PX4);
+
+    QSignalSpy completedSpy(_masterController, &PlanMasterController::removeAllFromVehicleCompleted);
+
+    _masterController->removeAllFromVehicle();
+    QVERIFY(completedSpy.isEmpty());  // Aggregate signal must wait for every plan element that was actually requested
+
+    const bool geoFenceSupported = _masterController->geoFenceController()->supported();
+    const bool rallySupported = _masterController->rallyPointController()->supported();
+
+    _masterController->_removeAllFromVehicleStepComplete(false /* error */);  // Mission
+    if (geoFenceSupported) {
+        QVERIFY(completedSpy.isEmpty());
+        _masterController->_removeAllFromVehicleStepComplete(false /* error */);  // GeoFence
+    }
+    if (rallySupported) {
+        QVERIFY(completedSpy.isEmpty());
+        _masterController->_removeAllFromVehicleStepComplete(false /* error */);  // RallyPoints
+    }
+
+    QCOMPARE(completedSpy.count(), 1);
+    QCOMPARE(completedSpy.first().at(0).toBool(), false);
+}
+
+void PlanMasterControllerTest::_testRemoveAllFromVehicleCompletedOnFailure()
+{
+    _connectMockLink(MAV_AUTOPILOT_PX4);
+
+    QSignalSpy completedSpy(_masterController, &PlanMasterController::removeAllFromVehicleCompleted);
+
+    _masterController->removeAllFromVehicle();
+
+    const bool geoFenceSupported = _masterController->geoFenceController()->supported();
+    const bool rallySupported = _masterController->rallyPointController()->supported();
+
+    // Mission removal is always requested, so failing it deterministically exercises the
+    // aggregate error path regardless of which optional elements this vehicle supports.
+    _masterController->_removeAllFromVehicleStepComplete(true /* error */);  // Mission fails
+    if (geoFenceSupported) {
+        QVERIFY(completedSpy.isEmpty());
+        _masterController->_removeAllFromVehicleStepComplete(false /* error */);  // GeoFence succeeds
+    }
+    if (rallySupported) {
+        QVERIFY(completedSpy.isEmpty());
+        _masterController->_removeAllFromVehicleStepComplete(false /* error */);  // RallyPoints succeeds
+    }
+
+    QCOMPARE(completedSpy.count(), 1);
+    QCOMPARE(completedSpy.first().at(0).toBool(), true);  // One failed element makes the whole aggregate an error
+}
+
+void PlanMasterControllerTest::_testRemoveAllFromVehicleCompletedOnVehicleDisconnect()
+{
+    _connectMockLink(MAV_AUTOPILOT_PX4);
+
+    QSignalSpy completedSpy(_masterController, &PlanMasterController::removeAllFromVehicleCompleted);
+
+    _masterController->removeAllFromVehicle();
+    QVERIFY(completedSpy.isEmpty());
+
+    // The vehicle disconnects before mission/geoFence/rallyPoint ever report removeAllComplete.
+    // The pending request can never complete, so it must be reported as an error rather than left hanging.
+    _disconnectMockLink();
+
+    QCOMPARE(completedSpy.count(), 1);
+    QCOMPARE(completedSpy.first().at(0).toBool(), true);
+
+    // A stray completion arriving after the reset (e.g. a delayed signal from the old vehicle)
+    // must not crash or re-emit the aggregate signal.
+    completedSpy.clear();
+    _masterController->_removeAllFromVehicleStepComplete(false /* error */);
+    QVERIFY(completedSpy.isEmpty());
+}
+
 void PlanMasterControllerTest::_testSaveUpdatesFileName()
 {
     _masterController->loadFromFile(":/unittest/MissionPlanner.waypoints");

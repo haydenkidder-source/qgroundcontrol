@@ -134,6 +134,8 @@ signals:
     void managerVehicleChanged(Vehicle* managerVehicle);
     void promptForPlanUsageOnVehicleChange(void);
     void userSelectedManualCreationChanged();
+    void removeAllFromVehicleCompleted(
+        bool error);  ///< Emitted once all plan elements requested by removeAllFromVehicle have completed
 
 private slots:
     void _activeVehicleChanged(Vehicle* activeVehicle);
@@ -143,6 +145,7 @@ private slots:
     void _sendMissionComplete(void);
     void _sendGeoFenceComplete(void);
     void _sendRallyPointsComplete(void);
+    void _removeAllFromVehicleStepComplete(bool error);
     void _updateOverallDirty(void);
     void _updateShowCreateFromTemplate(void);
     void _updatePlanCreatorsList(void);
@@ -195,4 +198,6 @@ private:
     QmlObjectListModel* _planCreators = nullptr;
     QGCMAVLinkTypes::VehicleClass_t _planCreatorsVehicleClass = -1;
     bool _userSelectedManualCreation = false;
+    int _removeAllFromVehiclePendingCount = 0;  ///< Count of supported plan elements still removing from the vehicle
+    bool _removeAllFromVehicleError = false;    ///< Aggregate error state for the in-progress removeAllFromVehicle
 };

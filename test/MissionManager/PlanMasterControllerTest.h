@@ -23,6 +23,9 @@ private slots:
     void _testFileAssociationSetOnLoad();
     void _testFileAssociationClearedOnRemoveAll();
     void _testFileAssociationClearedOnRemoveAllFromVehicle();
+    void _testRemoveAllFromVehicleCompletedOnSuccess();
+    void _testRemoveAllFromVehicleCompletedOnFailure();
+    void _testRemoveAllFromVehicleCompletedOnVehicleDisconnect();
     void _testSaveUpdatesFileName();
     void _testFailedLoadClearsFileAssociation();
     void _testDownloadClearsFileAssociation();

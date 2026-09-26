@@ -113,6 +113,11 @@ void PlanMasterController::_activeVehicleChanged(Vehicle* activeVehicle)
         // Any in-flight transfer chain can never complete against the new vehicle's managers
         _loadSequence = SyncSequence::Idle;
         _sendSequence = SyncSequence::Idle;
+        if (_removeAllFromVehiclePendingCount > 0) {
+            // The vehicle went away before all removeAllFromVehicle requests could complete
+            _removeAllFromVehiclePendingCount = 0;
+            emit removeAllFromVehicleCompleted(true /* error */);
+        }
     }
 
     bool newOffline = false;
@@ -137,6 +142,12 @@ void PlanMasterController::_activeVehicleChanged(Vehicle* activeVehicle)
         connect(_managerVehicle->missionManager(),      &MissionManager::sendComplete,              this, &PlanMasterController::_sendMissionComplete);
         connect(_managerVehicle->geoFenceManager(),     &GeoFenceManager::sendComplete,             this, &PlanMasterController::_sendGeoFenceComplete);
         connect(_managerVehicle->rallyPointManager(),   &RallyPointManager::sendComplete,           this, &PlanMasterController::_sendRallyPointsComplete);
+        connect(_managerVehicle->missionManager(), &MissionManager::removeAllComplete, this,
+                &PlanMasterController::_removeAllFromVehicleStepComplete);
+        connect(_managerVehicle->geoFenceManager(), &GeoFenceManager::removeAllComplete, this,
+                &PlanMasterController::_removeAllFromVehicleStepComplete);
+        connect(_managerVehicle->rallyPointManager(), &RallyPointManager::removeAllComplete, this,
+                &PlanMasterController::_removeAllFromVehicleStepComplete);
     }
 
     _offline = newOffline;
@@ -523,20 +534,39 @@ void PlanMasterController::removeAll(void)
 
 void PlanMasterController::removeAllFromVehicle(void)
 {
-    if (!offline()) {
+    if (offline()) {
+        qCCritical(PlanMasterControllerLog) << "PlanMasterController::removeAllFromVehicle called while offline";
+    } else if (syncInProgress()) {
+        qCCritical(PlanMasterControllerLog) << "PlanMasterController::removeAllFromVehicle called while syncInProgress";
+    } else {
+        _removeAllFromVehicleError = false;
+        _removeAllFromVehiclePendingCount = 1;  // Mission removal is always requested
         _missionController.removeAllFromVehicle();
         if (_geoFenceController.supported()) {
+            _removeAllFromVehiclePendingCount++;
             _geoFenceController.removeAllFromVehicle();
         }
         if (_rallyPointController.supported()) {
+            _removeAllFromVehiclePendingCount++;
             _rallyPointController.removeAllFromVehicle();
         }
         _setDirtyForUpload(false);
         _clearCurrentPlanFile();
-    } else {
-        qCCritical(PlanMasterControllerLog) << "PlanMasterController::removeAllFromVehicle called while offline";
     }
     setUserSelectedManualCreation(false);
+}
+
+void PlanMasterController::_removeAllFromVehicleStepComplete(bool error)
+{
+    if (_removeAllFromVehiclePendingCount <= 0) {
+        // Stray completion with no in-flight removeAllFromVehicle request (e.g. after a vehicle change reset the count)
+        return;
+    }
+
+    _removeAllFromVehicleError = _removeAllFromVehicleError || error;
+    if (--_removeAllFromVehiclePendingCount == 0) {
+        emit removeAllFromVehicleCompleted(_removeAllFromVehicleError);
+    }
 }
 
 bool PlanMasterController::containsItems(void) const

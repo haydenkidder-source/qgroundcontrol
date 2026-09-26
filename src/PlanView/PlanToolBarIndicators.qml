@@ -98,6 +98,23 @@ RowLayout {
                                      })
     }
 
+    // Positive confirmation that the vehicle actually reported success/failure, rather than
+    // silently assuming the removal worked once the button is clicked.
+    Connections {
+        target: _planMasterController
+        function onRemoveAllFromVehicleCompleted(error) {
+            if (error) {
+                QGroundControl.showMessageDialog(root, qsTr("Clear"),
+                                             qsTr("Plan removal from the vehicle failed. Check the vehicle connection and try again."),
+                                             Dialog.Ok)
+            } else {
+                QGroundControl.showMessageDialog(root, qsTr("Clear"),
+                                             qsTr("Plan removed from the vehicle."),
+                                             Dialog.Ok)
+            }
+        }
+    }
+
     function _clearClicked() {
         if (_planMasterController.offline) {
             _storageClearButtonClicked();
