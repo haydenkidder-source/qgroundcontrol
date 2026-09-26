@@ -55,9 +55,10 @@ Rectangle {
         visible: _activeVehicle !== null
 
         // COPController is this fork's only source of a vehicle's assigned color; falls back to
-        // null (drawn as neutral gray below) until COP has seen this vehicle.
+        // null (drawn as neutral gray below) until COP has seen this vehicle. It's only registered
+        // when the custom/ plugin is built in, so guard against a stock build where it's undefined.
         property var _copVehicle: {
-            if (!_activeVehicle) {
+            if (!_activeVehicle || typeof COPController === "undefined") {
                 return null
             }
             for (let i = 0; i < COPController.vehicles.count; i++) {
