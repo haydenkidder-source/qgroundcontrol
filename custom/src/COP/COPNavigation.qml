@@ -92,7 +92,10 @@ Rectangle {
                                 color: vehicleTab.object.color
                             }
                             QGCButton {
-                                readonly property bool isActiveVehicle: vehicleTab.object.vehicle === root.activeVehicle
+                                // Null-guarded: a remembered-but-disconnected entry's vehicle is null, which would
+                                // otherwise equal a null activeVehicle and mark every such tab as controlled.
+                                readonly property bool isActiveVehicle: root.activeVehicle !== null
+                                                                        && vehicleTab.object.vehicle === root.activeVehicle
                                 text: vehicleTab.object.label
                                 highlighted: COPController.selectedSysid === vehicleTab.object.sysid || isActiveVehicle
                                 // The active (controlled) vehicle always reads as green, regardless

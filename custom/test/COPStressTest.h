@@ -35,6 +35,7 @@ private slots:
     void _lastControlRequestWins();
     void _disconnectOtherPreservesControl();
     void _navigationAndLayout();
+    void _activeHighlightRequiresActiveVehicle();
 
 private:
     COPController* _controller() const;
