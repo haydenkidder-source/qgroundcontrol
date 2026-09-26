@@ -22,6 +22,7 @@ private slots:
     void _testNonAutoConnectLinkNotReconnected();
     void _testNeverStartedLinkNotConnected();
     void _testLinkActiveStableAcrossReconnect();
+    void _testStaleBytesNotAttributedToRecycledLinkAddress();
 
 private:
     SharedLinkConfigurationPtr _addMockConfig(const QString &name, bool dynamic, bool autoConnect);

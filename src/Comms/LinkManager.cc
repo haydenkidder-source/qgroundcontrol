@@ -191,7 +191,17 @@ bool LinkManager::createConnectedLink(SharedLinkConfigurationPtr &config)
 
     // Set up signal connections before adding to list, so link is fully initialized
     (void) connect(link.get(), &LinkInterface::communicationError, this, &LinkManager::_communicationError);
-    (void) connect(link.get(), &LinkInterface::bytesReceived, MAVLinkProtocol::instance(), &MAVLinkProtocol::receiveBytes);
+    // Links emit bytesReceived from their worker threads, so delivery is queued with a raw link pointer. Once this link
+    // is destroyed another link can be allocated at the same address, and its stale bytes would then pass
+    // MAVLinkProtocol's address-based liveness check and be attributed to the new link (e.g. creating a ghost vehicle
+    // bound to another vehicle's link). Tie each delivery to this link's lifetime instead of its address.
+    (void) connect(link.get(), &LinkInterface::bytesReceived, MAVLinkProtocol::instance(),
+                   [weakLink = std::weak_ptr<LinkInterface>(link)](LinkInterface* sender, const QByteArray& data) {
+                       const SharedLinkInterfacePtr liveLink = weakLink.lock();
+                       if (liveLink && (liveLink.get() == sender)) {
+                           MAVLinkProtocol::instance()->receiveBytes(sender, data);
+                       }
+                   });
     (void) connect(link.get(), &LinkInterface::bytesSent, MAVLinkProtocol::instance(), &MAVLinkProtocol::logSentBytes);
     (void) connect(link.get(), &LinkInterface::connected, this, &LinkManager::_linkConnected);
     (void) connect(link.get(), &LinkInterface::disconnected, this, &LinkManager::_linkDisconnected);
@@ -201,7 +211,7 @@ bool LinkManager::createConnectedLink(SharedLinkConfigurationPtr &config)
     // Try to connect before adding to active links list
     if (!link->_connect()) {
         (void) disconnect(link.get(), &LinkInterface::communicationError, this, &LinkManager::_communicationError);
-        (void) disconnect(link.get(), &LinkInterface::bytesReceived, MAVLinkProtocol::instance(), &MAVLinkProtocol::receiveBytes);
+        (void) disconnect(link.get(), &LinkInterface::bytesReceived, MAVLinkProtocol::instance(), nullptr);
         (void) disconnect(link.get(), &LinkInterface::bytesSent, MAVLinkProtocol::instance(), &MAVLinkProtocol::logSentBytes);
         (void) disconnect(link.get(), &LinkInterface::disconnected, this, &LinkManager::_linkDisconnected);
         link->_freeMavlinkChannel();
@@ -318,7 +328,7 @@ void LinkManager::_linkDisconnected()
     }
 
     (void) disconnect(link, &LinkInterface::communicationError, this, &LinkManager::_communicationError);
-    (void) disconnect(link, &LinkInterface::bytesReceived, MAVLinkProtocol::instance(), &MAVLinkProtocol::receiveBytes);
+    (void) disconnect(link, &LinkInterface::bytesReceived, MAVLinkProtocol::instance(), nullptr);
     (void) disconnect(link, &LinkInterface::bytesSent, MAVLinkProtocol::instance(), &MAVLinkProtocol::logSentBytes);
     (void) disconnect(link, &LinkInterface::connected, this, &LinkManager::_linkConnected);
     (void) disconnect(link, &LinkInterface::disconnected, this, &LinkManager::_linkDisconnected);
