@@ -1,5 +1,6 @@
 #include "VehicleRoleControllerTest.h"
 
+#include <QtCore/QDir>
 #include <QtCore/QFile>
 #include <QtCore/QRegularExpression>
 
@@ -12,6 +13,10 @@ void VehicleRoleControllerTest::init()
 {
     UnitTest::init();
     QVERIFY(_directory.isValid());
+    // Roles/links persist under savePath; start each test (and each stress iteration) from an empty directory
+    QDir saveDirectory(_directory.path());
+    QVERIFY(saveDirectory.removeRecursively());
+    QVERIFY(saveDirectory.mkpath(QStringLiteral(".")));
     auto* settings = SettingsManager::instance()->appSettings();
     _savePath = settings->savePath()->rawValue();
     settings->savePath()->setRawValue(_directory.path());
