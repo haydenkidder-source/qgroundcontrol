@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QtCore/QObject>
+#include <QtCore/QPointer>
 #include <QtQmlIntegration/QtQmlIntegration>
 
 class LinkInterface;
@@ -52,7 +53,7 @@ signals:
 private slots:
     void _deleteVehiclePhase1(Vehicle *vehicle); /// This slot is connected to the Vehicle::allLinksDestroyed signal such that the Vehicle is deleted and all other right things happen when the Vehicle goes away.
     void _deleteVehiclePhase2(Vehicle *vehicle);
-    void _setActiveVehiclePhase2(Vehicle *vehicle);
+    void _setActiveVehiclePhase2(Vehicle* vehicle, int activeVehicleRequestId);
     void _vehicleParametersReadyChanged(bool parametersReady);
     void _sendGCSHeartbeat();
     void _vehicleHeartbeatInfo(LinkInterface *link, int vehicleId, int componentId, int vehicleFirmwareType, int vehicleType);
@@ -71,6 +72,18 @@ private:
     bool _activeVehicleAvailable = false;           ///< true: An active vehicle is available
     bool _parameterReadyVehicleAvailable = false;   ///< true: An active vehicle with ready parameters is available
     Vehicle *_activeVehicle = nullptr;              ///< Currently active vehicle from a ui perspective
+    int _activeVehicleRequestId = 0;                ///< Bumped by every explicit setActiveVehicle() call, so its
+                                                    ///< deferred completion can tell whether a newer explicit call has
+                                                    ///< since superseded it and skip clobbering that newer result -
+                                                    ///< same-delay QTimer::singleShot calls are not guaranteed to fire
+                                                    ///< in the order they were scheduled.
+    QPointer<Vehicle> _pendingActiveVehicle;        ///< What the most recently issued setActiveVehicle() request
+                                                    ///< targets, updated synchronously at call time. _activeVehicle
+                                                    ///< itself only updates once that request's deferred completion
+                                                    ///< fires, so a fresh call re-requesting a vehicle that is merely
+                                                    ///< _activeVehicle's still-stale current value - with a switch
+                                                    ///< away from it already pending - must not be mistaken for a
+                                                    ///< no-op and silently dropped.
     QList<int> _ignoreVehicleIds;                   ///< List of vehicle id for which we ignore further communication
     bool _initialized = false;
 

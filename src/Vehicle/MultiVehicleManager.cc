@@ -166,8 +166,12 @@ void MultiVehicleManager::_deleteVehiclePhase1(Vehicle *vehicle)
 
     deselectVehicle(vehicle->id());
 
-    _setActiveVehicleAvailable(false);
-    _setParameterReadyVehicleAvailable(false);
+    // An unrelated (non-active) vehicle disconnecting must never disconnect the ui from a different,
+    // still-connected active vehicle.
+    if (vehicle == _activeVehicle) {
+        _setActiveVehicleAvailable(false);
+        _setParameterReadyVehicleAvailable(false);
+    }
     emit vehicleRemoved(vehicle);
 
 #if defined(Q_OS_ANDROID) || defined (Q_OS_IOS)
@@ -199,17 +203,26 @@ void MultiVehicleManager::_deleteVehiclePhase2(Vehicle *vehicle)
     /// Qml has been notified of vehicle about to go away and should be disconnected from it by now.
     /// This means we can now clear the active vehicle property and delete the Vehicle for real.
 
-    Vehicle *newActiveVehicle = nullptr;
-    if (_vehicles->count() > 0) {
-        newActiveVehicle = qobject_cast<Vehicle*>(_vehicles->get(0));
-    }
+    // Only re-pick if the vehicle that went away is STILL the active one, re-checked fresh right here
+    // rather than relying on whether it was active back when the removal was first detected: an
+    // explicit setActiveVehicle() call (or another removal's own re-pick, possibly landing this exact
+    // vehicle as active in the meantime) may have already decided the active vehicle since, and that
+    // decision must not be clobbered by this one just because this one happens to run later - which,
+    // via cascading removals, it is not guaranteed not to.
+    if (vehicle == _activeVehicle) {
+        Vehicle* newActiveVehicle = nullptr;
+        if (_vehicles->count() > 0) {
+            newActiveVehicle = qobject_cast<Vehicle*>(_vehicles->get(0));
+        }
 
-    _setActiveVehicle(newActiveVehicle);
+        _pendingActiveVehicle = newActiveVehicle;
+        _setActiveVehicle(newActiveVehicle);
 
-    if (_activeVehicle) {
-        _setActiveVehicleAvailable(true);
-        if (_activeVehicle->parameterManager()->parametersReady()) {
-            _setParameterReadyVehicleAvailable(true);
+        if (_activeVehicle) {
+            _setActiveVehicleAvailable(true);
+            if (_activeVehicle->parameterManager()->parametersReady()) {
+                _setParameterReadyVehicleAvailable(true);
+            }
         }
     }
 
@@ -220,7 +233,14 @@ void MultiVehicleManager::setActiveVehicle(Vehicle *vehicle)
 {
     qCDebug(MultiVehicleManagerLog) << Q_FUNC_INFO << vehicle;
 
-    if (vehicle != _activeVehicle) {
+    // Compare against the most recently requested vehicle, not the current (possibly still stale)
+    // _activeVehicle: _activeVehicle only updates once a prior request's deferred completion actually
+    // fires. If one is already pending, _activeVehicle can still show the value this call is about to
+    // move away from - re-requesting that same still-current-for-now vehicle must not be mistaken for
+    // a no-op and silently dropped just because nothing has changed yet.
+    if (vehicle != _pendingActiveVehicle) {
+        _pendingActiveVehicle = vehicle;
+
         if (_activeVehicle) {
             // The sequence of signals is very important in order to not leave Qml elements connected
             // to a non-existent vehicle.
@@ -231,15 +251,21 @@ void MultiVehicleManager::setActiveVehicle(Vehicle *vehicle)
             _setParameterReadyVehicleAvailable(false);
         }
 
-        QTimer::singleShot(20, this, [this, vehicle]() {
-            _setActiveVehiclePhase2(vehicle);
+        const int activeVehicleRequestId = ++_activeVehicleRequestId;
+        QTimer::singleShot(20, this, [this, vehicle, activeVehicleRequestId]() {
+            _setActiveVehiclePhase2(vehicle, activeVehicleRequestId);
         });
     }
 }
 
-void MultiVehicleManager::_setActiveVehiclePhase2(Vehicle *vehicle)
+void MultiVehicleManager::_setActiveVehiclePhase2(Vehicle* vehicle, int activeVehicleRequestId)
 {
     qCDebug(MultiVehicleManagerLog) << Q_FUNC_INFO << vehicle;
+
+    if (activeVehicleRequestId != _activeVehicleRequestId) {
+        // Superseded by a newer setActiveVehicle() call or a vehicle removal's auto re-pick
+        return;
+    }
 
     _setActiveVehicle(vehicle);
 
