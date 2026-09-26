@@ -156,8 +156,22 @@ ApplicationWindow {
         showTool(qsTr("Analyze Tools"), "qrc:/qml/QGroundControl/AnalyzeView/AnalyzeView.qml", "/qmlimages/Analyze.svg")
     }
 
+    // ArduPilot-style vehicle type name for the active vehicle, so the tab title makes it painfully
+    // obvious which vehicle's configuration is being edited (e.g. "Copter Configuration").
+    function _vehicleConfigTitle() {
+        const vehicle = QGroundControl.multiVehicleManager.activeVehicle
+        const typeName = !vehicle ? ""
+                         : vehicle.rover ? qsTr("Rover")
+                         : vehicle.sub ? qsTr("Sub")
+                         : vehicle.multiRotor ? qsTr("Copter")
+                         : (vehicle.fixedWing || vehicle.vtol) ? qsTr("Plane") : ""
+        return typeName === "" ? qsTr("Vehicle Configuration") : qsTr("%1 Configuration").arg(typeName)
+    }
+
     function showVehicleConfig() {
-        showTool(qsTr("Vehicle Configuration"), "qrc:/qml/QGroundControl/VehicleSetup/VehicleConfigView.qml", "/qmlimages/Gears.svg")
+        showTool(_vehicleConfigTitle(), "qrc:/qml/QGroundControl/VehicleSetup/VehicleConfigView.qml", "/qmlimages/Gears.svg")
+        // Stays live if the active vehicle changes while this tool is open.
+        toolDrawer.toolTitle = Qt.binding(_vehicleConfigTitle)
     }
 
     function showVehicleConfigParametersPage() {

@@ -3,6 +3,7 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import QtQuick.Dialogs
 
+import QGC
 import QGroundControl
 import QGroundControl.Controls
 import QGroundControl.PlanView
@@ -42,10 +43,54 @@ Rectangle {
         onClicked: mainWindow.showToolSelectDialog()
     }
 
+    // Makes it painfully obvious which vehicle's plan is being edited - critical in a multi-vehicle
+    // fleet, since PlanView otherwise silently follows whichever vehicle is active.
+    RowLayout {
+        id: activeVehicleIndicator
+        anchors.left: qgcButton.right
+        anchors.top: parent.top
+        anchors.bottom: parent.bottom
+        anchors.leftMargin: ScreenTools.defaultFontPixelWidth
+        spacing: ScreenTools.defaultFontPixelWidth / 2
+        visible: _activeVehicle !== null
+
+        // COPController is this fork's only source of a vehicle's assigned color; falls back to
+        // null (drawn as neutral gray below) until COP has seen this vehicle.
+        property var _copVehicle: {
+            if (!_activeVehicle) {
+                return null
+            }
+            for (let i = 0; i < COPController.vehicles.count; i++) {
+                const vehicle = COPController.vehicles.get(i)
+                if (vehicle.vehicle === _activeVehicle) {
+                    return vehicle
+                }
+            }
+            return null
+        }
+
+        Rectangle {
+            Layout.alignment: Qt.AlignVCenter
+            Layout.preferredWidth: ScreenTools.defaultFontPixelHeight / 2
+            Layout.preferredHeight: ScreenTools.defaultFontPixelHeight / 2
+            radius: width / 2
+            color: activeVehicleIndicator._copVehicle ? activeVehicleIndicator._copVehicle.color : qgcPal.colorGrey
+        }
+        QGCLabel {
+            Layout.alignment: Qt.AlignVCenter
+            font.bold: true
+            // visible: false above doesn't stop this binding from evaluating, so _activeVehicle
+            // must still be null-checked even though the label is hidden once it's gone.
+            text: qsTr("Editing plan for: %1").arg(activeVehicleIndicator._copVehicle
+                                                    ? activeVehicleIndicator._copVehicle.label
+                                                    : (_activeVehicle ? _activeVehicle.vehicleTypeString : ""))
+        }
+    }
+
     QGCFlickable {
         id: toolsFlickable
         anchors.bottomMargin: 1
-        anchors.left: qgcButton.right
+        anchors.left: activeVehicleIndicator.right
         anchors.top: parent.top
         anchors.bottom: parent.bottom
         anchors.right: parent.right

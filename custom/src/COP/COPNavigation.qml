@@ -51,6 +51,16 @@ Rectangle {
         width: parent.width
         spacing: 0
 
+        // Persistent, unmistakable strip so an operator can tell at a glance whether they're
+        // looking at the COP overview or a specific vehicle's page: neutral gray for COP, that
+        // vehicle's own color otherwise - never a color already used to identify a vehicle.
+        Rectangle {
+            Layout.fillWidth: true
+            Layout.preferredHeight: ScreenTools.defaultFontPixelHeight / 4
+            color: COPController.selectedSysid === 0 || !root.selected
+                   ? QGroundControl.globalPalette.colorGrey : root.selected.color
+        }
+
         RowLayout {
             Layout.fillWidth: true
             Flickable {
@@ -82,14 +92,24 @@ Rectangle {
                                 color: vehicleTab.object.color
                             }
                             QGCButton {
+                                readonly property bool isActiveVehicle: vehicleTab.object.vehicle === root.activeVehicle
                                 text: vehicleTab.object.label
-                                highlighted: COPController.selectedSysid === vehicleTab.object.sysid
+                                highlighted: COPController.selectedSysid === vehicleTab.object.sysid || isActiveVehicle
+                                // The active (controlled) vehicle always reads as green, regardless
+                                // of whether it also happens to be COP-selected right now - which
+                                // vehicle you're flying is the safety-relevant state to always show.
+                                highlightColor: isActiveVehicle ? QGroundControl.globalPalette.colorGreen
+                                                                 : QGroundControl.globalPalette.buttonHighlight
                                 onClicked: root.select(vehicleTab.object.sysid)
                             }
                             QGCButton {
-                                text: qsTr("Plan")
+                                text: qsTr("Plan Overlay")
                                 checkable: true
                                 checked: vehicleTab.object.planOverlayVisible
+                                // Checked color matches the vehicle's own map/marker color, so the
+                                // button previews the color that will appear on the map instead of
+                                // a generic highlight that could be confused with another vehicle's.
+                                highlightColor: vehicleTab.object.color
                                 ToolTip.visible: hovered
                                 ToolTip.text: qsTr("Show %1's mission, geofence and rally points on the COP map")
                                               .arg(vehicleTab.object.label)

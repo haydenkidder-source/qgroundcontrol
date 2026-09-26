@@ -21,6 +21,7 @@ Button {
     property alias horizontalAlignment: text.horizontalAlignment
     property alias backgroundColor: backRect.color
     property alias textColor: text.color
+    property alias highlightColor: highlightRect.color
 
     id: control
     hoverEnabled: !ScreenTools.isMobile
@@ -32,7 +33,7 @@ Button {
     font.family: ScreenTools.normalFontFamily
     text: ""
 
-    property bool _showHighlight: enabled && (pressed | checked)
+    property bool _showHighlight: enabled && (pressed | checked | highlighted)
     property int _horizontalPadding: ScreenTools.defaultFontPixelWidth * 2
     property int _verticalPadding: Math.round(ScreenTools.defaultFontPixelHeight * heightFactor) - (iconSource === "" ? 0 : (_iconHeight - ScreenTools.defaultFontPixelHeight)  / 2)
     property real _iconHeight: text.height * 1.5
@@ -49,6 +50,7 @@ Button {
         color: primary ? qgcPal.primaryButton : qgcPal.button
 
         Rectangle {
+            id: highlightRect
             anchors.fill: parent
             color: qgcPal.buttonHighlight
             opacity: _showHighlight ? 1 : control.enabled && control.hovered ? .2 : 0
