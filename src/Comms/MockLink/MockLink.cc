@@ -37,7 +37,7 @@
 QGC_LOGGING_CATEGORY(MockLinkLog, "Comms.MockLink.MockLink")
 QGC_LOGGING_CATEGORY(MockLinkVerboseLog, "Comms.MockLink.MockLink:verbose")
 
-std::atomic<int> MockLink::_nextVehicleSystemId{128};
+MockLink::VehicleSystemIdAllocator MockLink::_nextVehicleSystemId;
 
 QList<MockLink::FlightMode_t> MockLink::_availableFlightModes = {
     // Mode Name                Standard Mode               Custom Mode                         CanBeSet    adv
