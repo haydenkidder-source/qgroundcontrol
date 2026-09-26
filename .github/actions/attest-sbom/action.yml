@@ -52,9 +52,11 @@ runs:
         path: ${{ steps.check.outputs.scan-path }}
         format: ${{ inputs.sbom-format }}
         output-file: ${{ steps.check.outputs.sbom-path }}
-        upload-artifact: true
-        upload-artifact-retention: 30
-        artifact-name: sbom-${{ inputs.subject-name }}
+        # Uploaded ourselves below: sbom-action's own upload-artifact packages
+        # the file under a name it derives internally rather than preserving
+        # output-file's basename, which release_assets.py requires exactly
+        # (e.g. Custom-QGroundControl-x86_64.sbom.spdx.json).
+        upload-artifact: false
         # These per-platform build workflows only grant `contents: read` and a
         # tag push (e.g. a version tag) also triggers them directly, which
         # makes sbom-action's default "auto" behavior try to attach the SBOM
@@ -62,6 +64,14 @@ runs:
         # release.yml's own upload-artifacts job (contents: write) is the
         # actual place release assets get published.
         upload-release-assets: false
+
+    - name: Upload SBOM artifact
+      if: steps.check.outputs.skip != 'true'
+      uses: actions/upload-artifact@v7
+      with:
+        name: sbom-${{ inputs.subject-name }}
+        path: ${{ steps.check.outputs.sbom-path }}
+        retention-days: 30
 
     - name: Attest Build Provenance
       if: steps.check.outputs.skip != 'true'
