@@ -1,5 +1,6 @@
 #include "COPStressTest.h"
 
+#include <QtCore/QDir>
 #include <QtCore/QSettings>
 #include <QtCore/QTimer>
 #include <QtQml/QQmlApplicationEngine>
@@ -40,6 +41,12 @@ void COPStressUITest::init()
 {
     UnitTest::init();
     QVERIFY(_directory.isValid());
+    // Vehicle roles persist under savePath, and a role makes COP remember that sysid under the role's label. Start each
+    // test (and each stress iteration) without roles left behind by an earlier one, whose same-label tabs would
+    // otherwise be matched in place of this test's vehicles.
+    QDir saveDirectory(_directory.path());
+    QVERIFY(saveDirectory.removeRecursively());
+    QVERIFY(saveDirectory.mkpath(QStringLiteral(".")));
     auto* settings = SettingsManager::instance()->appSettings();
     _savePath = settings->savePath()->rawValue();
     _audioMuted = settings->audioMuted()->rawValue();
@@ -406,6 +413,50 @@ void COPStressUITest::_navigationAndLayout()
     QVERIFY(clickToolSelectDropdownButton(QStringLiteral("toolbar_viewConfigure")));
     QVERIFY(clickToolSelectDropdownButton(QStringLiteral("toolbar_viewPlan")));
     QVERIFY(clickToolSelectDropdownButton(QStringLiteral("toolbar_viewFly")));
+}
+
+void COPStressUITest::_activeHighlightRequiresActiveVehicle()
+{
+    startUI();
+    QVERIFY(!QTest::currentTestFailed());
+    auto* manager = MultiVehicleManager::instance();
+    auto* controller = _controller();
+    QVERIFY(controller);
+    auto* roles = _engine->singletonInstance<VehicleRoleController*>("QGC", "VehicleRoleController");
+    QVERIFY(roles);
+
+    // A remembered-but-disconnected vehicle with no active vehicle at all - startup, or after every link drops
+    constexpr int rememberedSysid = 127;  // Below MockLink's first sysid (128), so no connecting vehicle claims it
+    roles->addEntry(rememberedSysid, QStringLiteral("Plane"), QStringLiteral("Remembered"), 0);
+    auto* remembered = _entryFor(rememberedSysid);
+    QVERIFY(remembered);
+    QVERIFY(!remembered->vehicle());
+    QVERIFY(!manager->activeVehicle());
+    QVERIFY(_selectTab(0));
+
+    auto* rememberedTab = findText(_rootItem, remembered->label());
+    QVERIFY(rememberedTab);
+    // No vehicle is being controlled, so no tab may claim to be the active vehicle
+    QTRY_VERIFY_WITH_TIMEOUT(!rememberedTab->property("highlighted").toBool(), TestTimeout::shortMs());
+    QVERIFY(!rememberedTab->property("_showHighlight").toBool());
+
+    LinkManager::instance()->setConnectionsAllowed();
+    QPointer<MockLink> link = _start(MAV_TYPE_QUADROTOR);
+    QVERIFY(link);
+    QTRY_VERIFY_WITH_TIMEOUT(manager->activeVehicle(), TestTimeout::longMs());
+    Vehicle* const activeVehicle = manager->activeVehicle();
+    QVERIFY(activeVehicle);
+    auto* active = _entryFor(activeVehicle->id());
+    QVERIFY(active);
+    auto* activeTab = findText(_rootItem, active->label());
+    QVERIFY(activeTab);
+    QTRY_VERIFY_WITH_TIMEOUT(activeTab->property("_showHighlight").toBool(), TestTimeout::shortMs());
+    QVERIFY(!rememberedTab->property("_showHighlight").toBool());
+
+    link->disconnect();
+    QTRY_VERIFY_WITH_TIMEOUT(!manager->activeVehicle(), TestTimeout::longMs());
+    QTRY_VERIFY_WITH_TIMEOUT(!activeTab->property("_showHighlight").toBool(), TestTimeout::shortMs());
+    QVERIFY(!rememberedTab->property("_showHighlight").toBool());
 }
 
 UT_REGISTER_TEST(COPStressTest, TestLabel::Unit)

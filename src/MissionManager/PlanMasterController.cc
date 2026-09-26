@@ -523,20 +523,86 @@ void PlanMasterController::removeAll(void)
 
 void PlanMasterController::removeAllFromVehicle(void)
 {
-    if (!offline()) {
+    if (offline()) {
+        qCCritical(PlanMasterControllerLog) << "PlanMasterController::removeAllFromVehicle called while offline";
+    } else if (syncInProgress()) {
+        qCCritical(PlanMasterControllerLog) << "PlanMasterController::removeAllFromVehicle called while syncInProgress";
+    } else {
+        const bool geoFenceRequested = _geoFenceController.supported();
+        const bool rallyPointsRequested = _rallyPointController.supported();
+        _trackRemoveAllFromVehicle(geoFenceRequested, rallyPointsRequested);
         _missionController.removeAllFromVehicle();
-        if (_geoFenceController.supported()) {
+        if (geoFenceRequested) {
             _geoFenceController.removeAllFromVehicle();
         }
-        if (_rallyPointController.supported()) {
+        if (rallyPointsRequested) {
             _rallyPointController.removeAllFromVehicle();
         }
         _setDirtyForUpload(false);
         _clearCurrentPlanFile();
-    } else {
-        qCCritical(PlanMasterControllerLog) << "PlanMasterController::removeAllFromVehicle called while offline";
     }
     setUserSelectedManualCreation(false);
+}
+
+void PlanMasterController::_trackRemoveAllFromVehicle(bool geoFenceRequested, bool rallyPointsRequested)
+{
+    if (_removeAllFromVehiclePendingCount > 0) {
+        // Still unconfirmed on a previously active vehicle; it can no longer be reported once superseded
+        _finishRemoveAllFromVehicle(true /* error */);
+    }
+
+    // Bound to this vehicle rather than whichever vehicle is active when the acks arrive: MultiVehicleManager switches
+    // the active vehicle whenever any other vehicle drops out, which must not turn a confirmed removal into a failure.
+    Vehicle* const vehicle = _managerVehicle;
+    const auto stepComplete = [this](bool error) { _removeAllFromVehicleStepComplete(error); };
+
+    _removeAllFromVehicleId = vehicle->id();
+    _removeAllFromVehicleError = false;
+    _removeAllFromVehiclePendingCount = 1;  // Mission removal is always requested
+    _removeAllFromVehicleConnections.append(connect(vehicle->missionManager(), &MissionManager::removeAllComplete,
+                                                    &_removeAllFromVehicleContext, stepComplete));
+    if (geoFenceRequested) {
+        _removeAllFromVehiclePendingCount++;
+        _removeAllFromVehicleConnections.append(connect(vehicle->geoFenceManager(), &GeoFenceManager::removeAllComplete,
+                                                        &_removeAllFromVehicleContext, stepComplete));
+    }
+    if (rallyPointsRequested) {
+        _removeAllFromVehiclePendingCount++;
+        _removeAllFromVehicleConnections.append(connect(vehicle->rallyPointManager(),
+                                                        &RallyPointManager::removeAllComplete,
+                                                        &_removeAllFromVehicleContext, stepComplete));
+    }
+    _removeAllFromVehicleConnections.append(connect(_multiVehicleMgr, &MultiVehicleManager::vehicleRemoved,
+                                                    &_removeAllFromVehicleContext,
+                                                    [this, vehicle = QPointer<Vehicle>(vehicle)](Vehicle* removed) {
+                                                        if (removed == vehicle) {
+                                                            // Gone before confirming every removal
+                                                            _finishRemoveAllFromVehicle(true /* error */);
+                                                        }
+                                                    }));
+}
+
+void PlanMasterController::_removeAllFromVehicleStepComplete(bool error)
+{
+    if (_removeAllFromVehiclePendingCount <= 0) {
+        // Stray completion with no in-flight removeAllFromVehicle request
+        return;
+    }
+
+    _removeAllFromVehicleError = _removeAllFromVehicleError || error;
+    if (--_removeAllFromVehiclePendingCount == 0) {
+        _finishRemoveAllFromVehicle(_removeAllFromVehicleError);
+    }
+}
+
+void PlanMasterController::_finishRemoveAllFromVehicle(bool error)
+{
+    for (const QMetaObject::Connection& connection : std::as_const(_removeAllFromVehicleConnections)) {
+        disconnect(connection);
+    }
+    _removeAllFromVehicleConnections.clear();
+    _removeAllFromVehiclePendingCount = 0;
+    emit removeAllFromVehicleCompleted(error, _removeAllFromVehicleId);
 }
 
 bool PlanMasterController::containsItems(void) const

@@ -1,11 +1,15 @@
 #include "LinkManagerTest.h"
 
+#include <algorithm>
+
 #include <QtCore/QScopeGuard>
 #include <QtNetwork/QUdpSocket>
+#include <QtTest/QSignalSpy>
 #include <QtTest/QTest>
 
 #include "AutoConnectSettings.h"
 #include "LinkManager.h"
+#include "MAVLinkProtocol.h"
 #include "MockLink.h"
 #include "SettingsManager.h"
 #include "UDPLink.h"
@@ -127,6 +131,47 @@ void LinkManagerTest::_testLinkActiveStableAcrossReconnect()
     QVERIFY(config->link() == nullptr);
 
     linkManager()->removeConfiguration(config.get());
+}
+
+void LinkManagerTest::_testStaleBytesNotAttributedToRecycledLinkAddress()
+{
+    SharedLinkConfigurationPtr staleConfig =
+        _addMockConfig(QStringLiteral("StaleMock"), true /*dynamic*/, false /*autoConnect*/);
+    SharedLinkConfigurationPtr liveConfig =
+        _addMockConfig(QStringLiteral("LiveMock"), true /*dynamic*/, false /*autoConnect*/);
+    QVERIFY(staleConfig && liveConfig);
+    const auto removeConfigs = qScopeGuard([this, staleConfig, liveConfig] {
+        linkManager()->removeConfiguration(staleConfig.get());
+        linkManager()->removeConfiguration(liveConfig.get());
+    });
+    LinkInterface* const staleLink = staleConfig->link();
+    LinkInterface* const liveLink = liveConfig->link();
+    QVERIFY(staleLink && liveLink);
+
+    // GCS-typed so the heartbeat is reported without spawning a Vehicle
+    constexpr uint8_t kForeignSysid = 77;
+    mavlink_message_t message{};
+    (void) mavlink_msg_heartbeat_pack_chan(kForeignSysid, MAV_COMP_ID_AUTOPILOT1, liveLink->mavlinkChannel(), &message,
+                                           MAV_TYPE_GCS, MAV_AUTOPILOT_INVALID, 0, 0, MAV_STATE_ACTIVE);
+    uint8_t buffer[MAVLINK_MAX_PACKET_LEN]{};
+    const QByteArray bytes(reinterpret_cast<const char*>(buffer), mavlink_msg_to_send_buffer(buffer, &message));
+
+    QSignalSpy heartbeatSpy(MAVLinkProtocol::instance(), &MAVLinkProtocol::vehicleHeartbeatInfo);
+    QVERIFY(heartbeatSpy.isValid());
+    const auto foreignHeartbeatsOn = [&heartbeatSpy](const LinkInterface* link) {
+        return std::count_if(heartbeatSpy.cbegin(), heartbeatSpy.cend(), [link](const QList<QVariant>& args) {
+            return (args.at(0).value<LinkInterface*>() == link) && (args.at(1).toInt() == kForeignSysid);
+        });
+    };
+
+    // A delivery from one link carrying another live link's pointer is exactly what a stale queued delivery looks like
+    // once the sender's address has been recycled for a new link: it must not be attributed to that new link.
+    emit staleLink->bytesReceived(liveLink, bytes);
+    QCOMPARE(foreignHeartbeatsOn(liveLink), 0);
+
+    // The link's own deliveries are still processed
+    emit liveLink->bytesReceived(liveLink, bytes);
+    QCOMPARE(foreignHeartbeatsOn(liveLink), 1);
 }
 
 UT_REGISTER_TEST(LinkManagerTest, TestLabel::Integration, TestLabel::Comms)

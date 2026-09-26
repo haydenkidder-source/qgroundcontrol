@@ -1,22 +1,23 @@
 #include "PlanMasterControllerTest.h"
 
+#include <QtCore/QDateTime>
+#include <QtCore/QDir>
+#include <QtCore/QFile>
+#include <QtCore/QRandomGenerator>
+#include <QtCore/QRegularExpression>
+#include <QtCore/QTemporaryDir>
+#include <QtTest/QSignalSpy>
+
 #include "AppSettings.h"
-#include "SurveyPlanCreator.h"
 #include "MissionManager.h"
 #include "MultiSignalSpy.h"
 #include "MultiVehicleManager.h"
 #include "PlanMasterController.h"
 #include "QmlObjectListModel.h"
 #include "SettingsManager.h"
+#include "SurveyPlanCreator.h"
 #include "TakeoffMissionItem.h"
 #include "Vehicle.h"
-
-#include <QtCore/QDateTime>
-#include <QtCore/QDir>
-#include <QtCore/QFile>
-#include <QtCore/QRegularExpression>
-#include <QtCore/QTemporaryDir>
-#include <QtTest/QSignalSpy>
 
 void PlanMasterControllerTest::init()
 {
@@ -31,6 +32,20 @@ void PlanMasterControllerTest::cleanup()
 {
     delete _masterController;
     _masterController = nullptr;
+    // Extra vehicles go first: otherwise MultiVehicleManager promotes one to active while the primary MockLink is
+    // disconnected, and VehicleTest would track (and later dereference) a vehicle it does not own.
+    if (!_extraLinks.isEmpty()) {
+        for (const QPointer<MockLink>& link : std::as_const(_extraLinks)) {
+            if (link) {
+                link->disconnect();
+            }
+        }
+        _extraLinks.clear();
+        const int remainingVehicles = _mockLink ? 1 : 0;
+        QVERIFY(UnitTest::waitForCondition(
+            [remainingVehicles] { return MultiVehicleManager::instance()->vehicles()->count() == remainingVehicles; },
+            TestTimeout::longMs(), QStringLiteral("extra vehicles removed")));
+    }
     _disconnectMockLink();
     UnitTest::cleanup();
 }
@@ -492,6 +507,277 @@ void PlanMasterControllerTest::_testFileAssociationClearedOnRemoveAllFromVehicle
     QVERIFY(_masterController->currentPlanFile().isEmpty());
     QVERIFY(_masterController->currentPlanFileName().isEmpty());
     QVERIFY(currentFileSpy.count() >= 1);
+}
+
+void PlanMasterControllerTest::_testRemoveAllFromVehicleCompletedOnSuccess()
+{
+    _connectMockLink(MAV_AUTOPILOT_PX4);
+
+    QSignalSpy completedSpy(_masterController, &PlanMasterController::removeAllFromVehicleCompleted);
+
+    _masterController->removeAllFromVehicle();
+    QVERIFY(completedSpy.isEmpty());  // Aggregate signal must wait for every plan element that was actually requested
+
+    const bool geoFenceSupported = _masterController->geoFenceController()->supported();
+    const bool rallySupported = _masterController->rallyPointController()->supported();
+
+    _masterController->_removeAllFromVehicleStepComplete(false /* error */);  // Mission
+    if (geoFenceSupported) {
+        QVERIFY(completedSpy.isEmpty());
+        _masterController->_removeAllFromVehicleStepComplete(false /* error */);  // GeoFence
+    }
+    if (rallySupported) {
+        QVERIFY(completedSpy.isEmpty());
+        _masterController->_removeAllFromVehicleStepComplete(false /* error */);  // RallyPoints
+    }
+
+    QCOMPARE(completedSpy.count(), 1);
+    QCOMPARE(completedSpy.first().at(0).toBool(), false);
+    QCOMPARE(completedSpy.first().at(1).toInt(), _vehicle->id());
+}
+
+void PlanMasterControllerTest::_testRemoveAllFromVehicleCompletedOnFailure()
+{
+    _connectMockLink(MAV_AUTOPILOT_PX4);
+
+    QSignalSpy completedSpy(_masterController, &PlanMasterController::removeAllFromVehicleCompleted);
+
+    _masterController->removeAllFromVehicle();
+
+    const bool geoFenceSupported = _masterController->geoFenceController()->supported();
+    const bool rallySupported = _masterController->rallyPointController()->supported();
+
+    // Mission removal is always requested, so failing it deterministically exercises the
+    // aggregate error path regardless of which optional elements this vehicle supports.
+    _masterController->_removeAllFromVehicleStepComplete(true /* error */);  // Mission fails
+    if (geoFenceSupported) {
+        QVERIFY(completedSpy.isEmpty());
+        _masterController->_removeAllFromVehicleStepComplete(false /* error */);  // GeoFence succeeds
+    }
+    if (rallySupported) {
+        QVERIFY(completedSpy.isEmpty());
+        _masterController->_removeAllFromVehicleStepComplete(false /* error */);  // RallyPoints succeeds
+    }
+
+    QCOMPARE(completedSpy.count(), 1);
+    QCOMPARE(completedSpy.first().at(0).toBool(), true);  // One failed element makes the whole aggregate an error
+    QCOMPARE(completedSpy.first().at(1).toInt(), _vehicle->id());
+}
+
+void PlanMasterControllerTest::_testRemoveAllFromVehicleCompletedOnVehicleDisconnect()
+{
+    _connectMockLink(MAV_AUTOPILOT_PX4);
+
+    QSignalSpy completedSpy(_masterController, &PlanMasterController::removeAllFromVehicleCompleted);
+
+    _masterController->removeAllFromVehicle();
+    QVERIFY(completedSpy.isEmpty());
+    const int vehicleId = _vehicle->id();
+
+    // The vehicle disconnects before mission/geoFence/rallyPoint ever report removeAllComplete.
+    // The pending request can never complete, so it must be reported as an error rather than left hanging.
+    _disconnectMockLink();
+
+    QCOMPARE(completedSpy.count(), 1);
+    QCOMPARE(completedSpy.first().at(0).toBool(), true);
+    QCOMPARE(completedSpy.first().at(1).toInt(), vehicleId);
+
+    // A stray completion arriving after the reset (e.g. a delayed signal from the old vehicle)
+    // must not crash or re-emit the aggregate signal.
+    completedSpy.clear();
+    _masterController->_removeAllFromVehicleStepComplete(false /* error */);
+    QVERIFY(completedSpy.isEmpty());
+}
+
+Vehicle* PlanMasterControllerTest::_connectExtraVehicle()
+{
+    MultiVehicleManager* const manager = MultiVehicleManager::instance();
+    MockLink* const link = MockLink::startPX4MockLink();
+    if (!link) {
+        return nullptr;
+    }
+    _extraLinks.append(link);
+    const int vehicleId = link->vehicleId();
+    const bool connected = UnitTest::waitForCondition(
+        [manager, vehicleId] {
+            const Vehicle* const vehicle = manager->getVehicleById(vehicleId);
+            return vehicle && vehicle->isInitialConnectComplete();
+        },
+        TestTimeout::longMs(), QStringLiteral("extra vehicle initial connect"));
+    return connected ? manager->getVehicleById(vehicleId) : nullptr;
+}
+
+void PlanMasterControllerTest::_testRemoveAllFromVehicleCompletedFromVehicleAcks()
+{
+    _connectMockLink(MAV_AUTOPILOT_PX4);
+
+    QSignalSpy completedSpy(_masterController, &PlanMasterController::removeAllFromVehicleCompleted);
+
+    // Repeated clears drive the real MISSION_CLEAR_ALL acks through the fan-in, so any state leaking
+    // from one request into the next shows up as a missing, duplicate or failed completion.
+    for (int i = 0; i < 5; i++) {
+        QVERIFY_TRUE_WAIT(!_masterController->syncInProgress(), TestTimeout::mediumMs());
+        completedSpy.clear();
+        _masterController->removeAllFromVehicle();
+        QVERIFY_TRUE_WAIT(completedSpy.count() >= 1, TestTimeout::mediumMs());
+        QCOMPARE(completedSpy.first().at(0).toBool(), false);
+        QVERIFY_NO_SIGNAL_WAIT(completedSpy, 100);  // Short on purpose: only guards against a duplicate emission
+        QCOMPARE(completedSpy.count(), 1);
+    }
+}
+
+void PlanMasterControllerTest::_testRemoveAllFromVehicleRejectsOverlappingRequest()
+{
+    _connectMockLink(MAV_AUTOPILOT_PX4);
+
+    QSignalSpy completedSpy(_masterController, &PlanMasterController::removeAllFromVehicleCompleted);
+
+    _masterController->removeAllFromVehicle();
+    QVERIFY(_masterController->syncInProgress());
+
+    // A second request before the first completes must not reset the pending count mid-flight
+    expectLogMessage("PlanManager.PlanMasterController", QtCriticalMsg,
+                     QRegularExpression(QStringLiteral("removeAllFromVehicle called while syncInProgress")));
+    _masterController->removeAllFromVehicle();
+    verifyExpectedLogMessage();
+
+    QVERIFY_TRUE_WAIT(completedSpy.count() >= 1, TestTimeout::mediumMs());
+    QVERIFY_NO_SIGNAL_WAIT(completedSpy, 100);  // Short on purpose: only guards against a duplicate emission
+    QCOMPARE(completedSpy.count(), 1);
+    QCOMPARE(completedSpy.first().at(0).toBool(), false);
+}
+
+void PlanMasterControllerTest::_testRemoveAllFromVehicleFollowsRequestedVehicle()
+{
+    ignoreLogMessage("API.QGCApplication.AppMessage", QtDebugMsg,
+                     QRegularExpression(QStringLiteral("Connected to Vehicle [0-9]+")));
+    _connectMockLink(MAV_AUTOPILOT_PX4);
+    Vehicle* const otherVehicle = _connectExtraVehicle();
+    QVERIFY(otherVehicle);
+    QCOMPARE(_masterController->managerVehicle(), _vehicle);
+    QVERIFY_TRUE_WAIT(!_masterController->syncInProgress(), TestTimeout::mediumMs());
+
+    QSignalSpy completedSpy(_masterController, &PlanMasterController::removeAllFromVehicleCompleted);
+
+    _masterController->removeAllFromVehicle();
+
+    // The active vehicle changes while the requested vehicle's acks are still in flight - on a real radio link this
+    // is the common case, and MultiVehicleManager itself switches active vehicle whenever any other vehicle drops out.
+    // Delivered synchronously here so the requested vehicle's acks deterministically arrive after the switch.
+    _masterController->_activeVehicleChanged(otherVehicle);
+
+    // The requested vehicle is still connected and confirms the removal, so the result must be a success
+    // rather than a spurious failure prompting the operator to "try again" against a different vehicle.
+    QVERIFY_TRUE_WAIT(completedSpy.count() >= 1, TestTimeout::mediumMs());
+    QVERIFY_NO_SIGNAL_WAIT(completedSpy, 100);  // Short on purpose: only guards against a duplicate emission
+    QCOMPARE(completedSpy.count(), 1);
+    QCOMPARE(completedSpy.first().at(0).toBool(), false);
+    QCOMPARE(completedSpy.first().at(1).toInt(), _vehicle->id());
+}
+
+void PlanMasterControllerTest::_testRemoveAllFromVehicleSupersededOnOtherVehicle()
+{
+    ignoreLogMessage("API.QGCApplication.AppMessage", QtDebugMsg,
+                     QRegularExpression(QStringLiteral("Connected to Vehicle [0-9]+")));
+    _connectMockLink(MAV_AUTOPILOT_PX4);
+    Vehicle* const otherVehicle = _connectExtraVehicle();
+    QVERIFY(otherVehicle);
+    QVERIFY_TRUE_WAIT(!_masterController->syncInProgress(), TestTimeout::mediumMs());
+
+    QSignalSpy completedSpy(_masterController, &PlanMasterController::removeAllFromVehicleCompleted);
+
+    _masterController->removeAllFromVehicle();
+    _masterController->_activeVehicleChanged(otherVehicle);
+    QVERIFY(!_masterController->syncInProgress());
+
+    // A new request on the now-active vehicle before the first one's acks arrive: the first can no longer be
+    // attributed, so it resolves as unconfirmed rather than hanging or being counted against the new request.
+    _masterController->removeAllFromVehicle();
+    QCOMPARE(completedSpy.count(), 1);
+    QCOMPARE(completedSpy.at(0).at(0).toBool(), true);
+    QCOMPARE(completedSpy.at(0).at(1).toInt(), _vehicle->id());
+
+    QVERIFY_TRUE_WAIT(completedSpy.count() >= 2, TestTimeout::mediumMs());
+    QVERIFY_NO_SIGNAL_WAIT(completedSpy, 100);  // Short on purpose: the first vehicle's late acks must be ignored
+    QCOMPARE(completedSpy.count(), 2);
+    QCOMPARE(completedSpy.at(1).at(0).toBool(), false);
+    QCOMPARE(completedSpy.at(1).at(1).toInt(), otherVehicle->id());
+}
+
+void PlanMasterControllerTest::_testRemoveAllFromVehicleUnderFleetChurn()
+{
+    ignoreLogMessage("API.QGCApplication.AppMessage", QtDebugMsg,
+                     QRegularExpression(QStringLiteral("Connected to Vehicle [0-9]+")));
+    MultiVehicleManager* const manager = MultiVehicleManager::instance();
+
+    for (int i = 0; i < 3; i++) {
+        QVERIFY(_connectExtraVehicle());
+    }
+
+    const quint32 seed = QRandomGenerator::global()->generate();  // Reported in every failure message for replay
+    QRandomGenerator random(seed);
+
+    QSignalSpy completedSpy(_masterController, &PlanMasterController::removeAllFromVehicleCompleted);
+
+    for (int iteration = 0; iteration < 20; iteration++) {
+        const QString context = QStringLiteral("seed %1 iteration %2").arg(seed).arg(iteration);
+        const int vehicleCount = manager->vehicles()->count();
+        QVERIFY2(vehicleCount >= 2, qPrintable(context));
+
+        QPointer<Vehicle> target = manager->vehicles()->value<Vehicle*>(random.bounded(vehicleCount));
+        manager->setActiveVehicle(target);
+        QVERIFY2(UnitTest::waitForCondition(
+                     [this, target] {
+                         return target && _masterController->managerVehicle() == target &&
+                                !_masterController->syncInProgress();
+                     },
+                     TestTimeout::longMs(), context),
+                 qPrintable(context));
+
+        completedSpy.clear();
+        const int targetId = target->id();
+        _masterController->removeAllFromVehicle();
+
+        Vehicle* bystander = nullptr;
+        for (int i = 0; i < manager->vehicles()->count(); i++) {
+            Vehicle* const vehicle = manager->vehicles()->value<Vehicle*>(i);
+            if (vehicle != target) {
+                bystander = vehicle;
+                break;
+            }
+        }
+        QVERIFY2(bystander, qPrintable(context));
+
+        switch (random.bounded(3)) {
+            case 0:
+                // Operator switches to another vehicle mid-clear
+                manager->setActiveVehicle(bystander);
+                break;
+            case 1: {
+                // An unrelated vehicle drops out mid-clear (MultiVehicleManager then re-picks vehicles[0] as active),
+                // and a replacement joins so the fleet keeps its size
+                for (const QPointer<MockLink>& link : std::as_const(_extraLinks)) {
+                    if (link && link->vehicleId() == bystander->id()) {
+                        link->disconnect();
+                        break;
+                    }
+                }
+                QVERIFY2(_connectExtraVehicle(), qPrintable(context));
+                break;
+            }
+            default:
+                break;
+        }
+
+        QVERIFY2(UnitTest::waitForCondition([&completedSpy] { return completedSpy.count() >= 1; },
+                                            TestTimeout::mediumMs(), QStringLiteral("completed")),
+                 qPrintable(context));
+        QVERIFY2(UnitTest::waitForNoSignal(completedSpy, 100, QStringLiteral("completed")), qPrintable(context));
+        QVERIFY2(completedSpy.count() == 1, qPrintable(context));
+        // The requested vehicle stayed connected throughout, so its confirmed removal must be reported as a success
+        QVERIFY2(!completedSpy.first().at(0).toBool(), qPrintable(context));
+        QVERIFY2(completedSpy.first().at(1).toInt() == targetId, qPrintable(context));
+    }
 }
 
 void PlanMasterControllerTest::_testSaveUpdatesFileName()

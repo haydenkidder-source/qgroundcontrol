@@ -543,7 +543,29 @@ private:
     static constexpr int _numberOfVehicles = 5;     ///< Number of ADS-B vehicles
     double _adsbAngles[_numberOfVehicles]{};        ///< Array for angles of each vehicle
 
-    static std::atomic<int> _nextVehicleSystemId;
+    /// Hands out incrementing vehicle sysids, wrapping within 128..254 instead of growing for the life of the process:
+    /// long in-process stress runs would otherwise reach the GCS's own sysid (255) and then values that pack to the
+    /// broadcast sysid (0).
+    class VehicleSystemIdAllocator
+    {
+    public:
+        operator int() const { return _next.load(); }
+
+        int operator++(int)
+        {
+            int current = _next.load();
+            while (!_next.compare_exchange_weak(current, (current >= _lastSystemId) ? _firstSystemId : (current + 1))) {
+            }
+            return current;
+        }
+
+    private:
+        static constexpr int _firstSystemId = 128;
+        static constexpr int _lastSystemId = 254;
+        std::atomic<int> _next{_firstSystemId};
+    };
+
+    static VehicleSystemIdAllocator _nextVehicleSystemId;
 
 #ifdef QGC_MOCKLINK_TERRAIN_TEST_HOME
     // Alternate vehicle location which is a good spot for testing varying terrain
