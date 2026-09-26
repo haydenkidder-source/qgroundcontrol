@@ -1,5 +1,8 @@
 #pragma once
 
+#include <QtCore/QList>
+#include <QtCore/QPointer>
+
 #include "BaseClasses/VehicleTest.h"
 
 class PlanMasterController;
@@ -26,6 +29,11 @@ private slots:
     void _testRemoveAllFromVehicleCompletedOnSuccess();
     void _testRemoveAllFromVehicleCompletedOnFailure();
     void _testRemoveAllFromVehicleCompletedOnVehicleDisconnect();
+    void _testRemoveAllFromVehicleCompletedFromVehicleAcks();
+    void _testRemoveAllFromVehicleRejectsOverlappingRequest();
+    void _testRemoveAllFromVehicleFollowsRequestedVehicle();
+    void _testRemoveAllFromVehicleSupersededOnOtherVehicle();
+    void _testRemoveAllFromVehicleUnderFleetChurn();
     void _testSaveUpdatesFileName();
     void _testFailedLoadClearsFileAssociation();
     void _testDownloadClearsFileAssociation();
@@ -48,6 +56,9 @@ private slots:
     void _testPlanCreatorsFiltered();
 
 private:
+    /// Connects an additional PX4 MockLink vehicle (tracked in _extraLinks) and waits for its initial connect
+    Vehicle* _connectExtraVehicle();
+
     enum DirtyScenario {
         UploadPreservesSaveDirtyTrue,
         UploadPreservesSaveDirtyFalse,
@@ -70,4 +81,5 @@ private:
     };
 
     PlanMasterController* _masterController = nullptr;
+    QList<QPointer<MockLink>> _extraLinks;
 };

@@ -134,8 +134,9 @@ signals:
     void managerVehicleChanged(Vehicle* managerVehicle);
     void promptForPlanUsageOnVehicleChange(void);
     void userSelectedManualCreationChanged();
-    void removeAllFromVehicleCompleted(
-        bool error);  ///< Emitted once all plan elements requested by removeAllFromVehicle have completed
+    /// Emitted once every plan element removeAllFromVehicle() requested from vehicleId has completed, even if another
+    /// vehicle has since become active
+    void removeAllFromVehicleCompleted(bool error, int vehicleId);
 
 private slots:
     void _activeVehicleChanged(Vehicle* activeVehicle);
@@ -145,7 +146,6 @@ private slots:
     void _sendMissionComplete(void);
     void _sendGeoFenceComplete(void);
     void _sendRallyPointsComplete(void);
-    void _removeAllFromVehicleStepComplete(bool error);
     void _updateOverallDirty(void);
     void _updateShowCreateFromTemplate(void);
     void _updatePlanCreatorsList(void);
@@ -172,6 +172,9 @@ private:
     void _setDirtyStates(bool dirtyForSave, bool dirtyForUpload);
     void _clearCurrentPlanFile();
     bool _loadPlanJson(const QByteArray& bytes, QString& errorString);
+    void _trackRemoveAllFromVehicle(bool geoFenceRequested, bool rallyPointsRequested);
+    void _removeAllFromVehicleStepComplete(bool error);
+    void _finishRemoveAllFromVehicle(bool error);
 
 #ifdef QGC_UNITTEST_BUILD
     // Used by unit tests to set dirty flags for initial state
@@ -200,4 +203,10 @@ private:
     bool _userSelectedManualCreation = false;
     int _removeAllFromVehiclePendingCount = 0;  ///< Count of supported plan elements still removing from the vehicle
     bool _removeAllFromVehicleError = false;    ///< Aggregate error state for the in-progress removeAllFromVehicle
+    int _removeAllFromVehicleId = 0;            ///< Vehicle the in-progress removeAllFromVehicle was issued to
+    QList<QMetaObject::Connection> _removeAllFromVehicleConnections;
+    /// Context for _removeAllFromVehicleConnections: they must outlive _activeVehicleChanged()'s disconnects from the
+    /// outgoing manager vehicle, since the request stays bound to the vehicle it was issued to. Declared last so it is
+    /// destroyed (dropping those connections) before any state they touch.
+    QObject _removeAllFromVehicleContext;
 };
