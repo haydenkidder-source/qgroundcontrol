@@ -7,17 +7,17 @@
 #include <QtCore/QTimer>
 
 #include "FTPManager.h"
-#include "OnboardLogController.h"
-#include "OnboardLogEntry.h"
 #include "MAVLinkProtocol.h"
 #include "MockLinkFTP.h"
 #include "MultiSignalSpy.h"
 #include "MultiVehicleManager.h"
+#include "OnboardLogController.h"
+#include "OnboardLogEntry.h"
 #include "QmlObjectListModel.h"
 #include "Vehicle.h"
 
 // Waits until an already started listing cycle has fully completed.
-static bool waitForListComplete(OnboardLogController *controller, MultiSignalSpy *multiSpy)
+static bool waitForListComplete(OnboardLogController* controller, MultiSignalSpy* multiSpy)
 {
     if (!multiSpy->waitForSignal("requestingListChanged", TestTimeout::longMs())) {
         return false;
@@ -36,7 +36,7 @@ static bool waitForListComplete(OnboardLogController *controller, MultiSignalSpy
 }
 
 // Runs a refresh and waits until the listing cycle has fully completed.
-static bool refreshAndWaitForListComplete(OnboardLogController *controller, MultiSignalSpy *multiSpy)
+static bool refreshAndWaitForListComplete(OnboardLogController* controller, MultiSignalSpy* multiSpy)
 {
     multiSpy->clearAllSignals();
     controller->refresh();
@@ -44,7 +44,8 @@ static bool refreshAndWaitForListComplete(OnboardLogController *controller, Mult
 }
 
 // Starts a download and waits until the download cycle has fully completed.
-static bool downloadAndWaitForComplete(OnboardLogController *controller, MultiSignalSpy *multiSpy, const QString &downloadTo)
+static bool downloadAndWaitForComplete(OnboardLogController* controller, MultiSignalSpy* multiSpy,
+                                       const QString& downloadTo)
 {
     multiSpy->clearAllSignals();
     controller->download(downloadTo);
@@ -234,14 +235,15 @@ void OnboardLogDownloadTest::_eraseAllTest()
 void OnboardLogFtpDownloadTest::_ftpListAndDownloadTest()
 {
     _connectMockLink(MAV_AUTOPILOT_PX4, MockConfiguration::FailNone, MockConfiguration::OptionFtpCapability);
-    if (QTest::currentTestFailed()) return;
+    if (QTest::currentTestFailed())
+        return;
 
     QVERIFY(_vehicle->capabilitiesKnown());
     QVERIFY(_vehicle->capabilityBits() & MAV_PROTOCOL_CAPABILITY_FTP);
 
     const QList<MockLinkFTP::LogFile> logFiles = {
-        { QStringLiteral("log_1.ulg"), 5000,  1700000000 },
-        { QStringLiteral("log_2.ulg"), 12345, 1700086400 },
+        {QStringLiteral("log_1.ulg"), 5000, 1700000000},
+        {QStringLiteral("log_2.ulg"), 12345, 1700086400},
     };
     _mockLink->mockLinkFTP()->setLogFiles(logFiles);
 
@@ -258,10 +260,10 @@ void OnboardLogFtpDownloadTest::_ftpListAndDownloadTest()
     QCOMPARE(model->count(), 2);
 
     // Entries are sorted by time so look them up by size
-    QGCOnboardLogEntry *firstLog = nullptr;
-    QGCOnboardLogEntry *secondLog = nullptr;
+    QGCOnboardLogEntry* firstLog = nullptr;
+    QGCOnboardLogEntry* secondLog = nullptr;
     for (int i = 0; i < model->count(); i++) {
-        QGCOnboardLogEntry *const entry = model->value<QGCOnboardLogEntry*>(i);
+        QGCOnboardLogEntry* const entry = model->value<QGCOnboardLogEntry*>(i);
         QVERIFY(entry);
         QVERIFY(entry->received());
         QCOMPARE(entry->status(), QStringLiteral("Available"));
@@ -273,7 +275,7 @@ void OnboardLogFtpDownloadTest::_ftpListAndDownloadTest()
     }
     QVERIFY(firstLog);
     QVERIFY(secondLog);
-    QCOMPARE(firstLog->time(),  QDateTime::fromSecsSinceEpoch(1700000000, QTimeZone::UTC));
+    QCOMPARE(firstLog->time(), QDateTime::fromSecsSinceEpoch(1700000000, QTimeZone::UTC));
     QCOMPARE(secondLog->time(), QDateTime::fromSecsSinceEpoch(1700086400, QTimeZone::UTC));
 
     QTemporaryDir tempDir;
@@ -292,17 +294,69 @@ void OnboardLogFtpDownloadTest::_ftpListAndDownloadTest()
     QCOMPARE(file.readAll(), _mockLink->mockLinkFTP()->logFileContents(QStringLiteral("log_1.ulg")));
 }
 
+void OnboardLogFtpDownloadTest::_ftpListSubdirTest_data()
+{
+    QTest::addColumn<bool>("dirEntriesWithTime");
+    QTest::addColumn<bool>("dotEntries");
+
+    QTest::newRow("bare dir entries") << false << false;
+    QTest::newRow("dir entries with time") << true << false;
+    QTest::newRow("dot entries") << false << true;
+}
+
+void OnboardLogFtpDownloadTest::_ftpListSubdirTest()
+{
+    QFETCH(bool, dirEntriesWithTime);
+    QFETCH(bool, dotEntries);
+
+    _connectMockLink(MAV_AUTOPILOT_PX4, MockConfiguration::FailNone, MockConfiguration::OptionFtpCapability);
+    if (QTest::currentTestFailed()) {
+        return;
+    }
+
+    MockLinkFTP* const mockLinkFTP = _mockLink->mockLinkFTP();
+    mockLinkFTP->setLogFiles({
+        {QStringLiteral("log_1.ulg"), 5000, 1700000000},
+        {QStringLiteral("2026-09-26/10_00_00.ulg"), 12345, 1700086400},
+    });
+    mockLinkFTP->setLogDirEntriesWithTime(dirEntriesWithTime);
+    mockLinkFTP->setLogDirDotEntries(dotEntries);
+
+    OnboardLogController* const controller = new OnboardLogController(this);
+    MultiSignalSpy* multiSpy = new MultiSignalSpy(this);
+    QVERIFY(multiSpy->init(controller));
+
+    QVERIFY(refreshAndWaitForListComplete(controller, multiSpy));
+
+    // A mis-parsed or "."/".." subdirectory listing would NAK and fall back to messages
+    QCOMPARE(controller->transport(), QStringLiteral("ftp"));
+
+    QmlObjectListModel* const model = controller->_getModel();
+    QVERIFY(model);
+    QStringList ftpPaths;
+    for (int i = 0; i < model->count(); i++) {
+        ftpPaths.append(model->value<QGCOnboardLogEntry*>(i)->ftpPath());
+    }
+    ftpPaths.sort();
+    const QStringList expectedPaths = {
+        QStringLiteral("@MAV_LOG/2026-09-26/10_00_00.ulg"),
+        QStringLiteral("@MAV_LOG/log_1.ulg"),
+    };
+    QCOMPARE(ftpPaths, expectedPaths);
+}
+
 void OnboardLogFtpDownloadTest::_ftpListNoTimeFallbackTest()
 {
     _connectMockLink(MAV_AUTOPILOT_PX4, MockConfiguration::FailNone, MockConfiguration::OptionFtpCapability);
-    if (QTest::currentTestFailed()) return;
+    if (QTest::currentTestFailed())
+        return;
 
     // Simulate firmware (PX4 <= 1.17) which doesn't implement kCmdListDirectoryWithTime:
     // the FTP listing has no modification times so the controller must fall back to the
     // message based transport where LOG_ENTRY reports the dates.
     const QList<MockLinkFTP::LogFile> logFiles = {
-        { QStringLiteral("log_1.ulg"), 5000,  1700000000 },
-        { QStringLiteral("log_2.ulg"), 12345, 1700086400 },
+        {QStringLiteral("log_1.ulg"), 5000, 1700000000},
+        {QStringLiteral("log_2.ulg"), 12345, 1700086400},
     };
     _mockLink->mockLinkFTP()->setLogFiles(logFiles);
     _mockLink->mockLinkFTP()->setListDirectoryWithTimeSupported(false);
@@ -319,10 +373,10 @@ void OnboardLogFtpDownloadTest::_ftpListNoTimeFallbackTest()
     QVERIFY(model);
     QCOMPARE(model->count(), 2);
 
-    QGCOnboardLogEntry *firstLog = nullptr;
-    QGCOnboardLogEntry *secondLog = nullptr;
+    QGCOnboardLogEntry* firstLog = nullptr;
+    QGCOnboardLogEntry* secondLog = nullptr;
     for (int i = 0; i < model->count(); i++) {
-        QGCOnboardLogEntry *const entry = model->value<QGCOnboardLogEntry*>(i);
+        QGCOnboardLogEntry* const entry = model->value<QGCOnboardLogEntry*>(i);
         QVERIFY(entry);
         QVERIFY(entry->received());
         if (entry->size() == 5000) {
@@ -335,7 +389,7 @@ void OnboardLogFtpDownloadTest::_ftpListNoTimeFallbackTest()
     QVERIFY(secondLog);
 
     // Dates come from the LOG_ENTRY time_utc values
-    QCOMPARE(firstLog->time(),  QDateTime::fromSecsSinceEpoch(1700000000, QTimeZone::UTC));
+    QCOMPARE(firstLog->time(), QDateTime::fromSecsSinceEpoch(1700000000, QTimeZone::UTC));
     QCOMPARE(secondLog->time(), QDateTime::fromSecsSinceEpoch(1700086400, QTimeZone::UTC));
 
     // Message downloads of the advertised logs must serve the matching per-id contents
@@ -356,14 +410,15 @@ void OnboardLogFtpDownloadTest::_ftpListNoTimeFallbackTest()
 void OnboardLogFtpDownloadTest::_messagesZeroByteLogTest()
 {
     _connectMockLink(MAV_AUTOPILOT_PX4, MockConfiguration::FailNone, MockConfiguration::OptionFtpCapability);
-    if (QTest::currentTestFailed()) return;
+    if (QTest::currentTestFailed())
+        return;
 
     // A 0 byte log has nothing to request over the message transport, so it must be
     // completed immediately and not stall the rest of the queue (issue #15068).
     const QList<MockLinkFTP::LogFile> logFiles = {
-        { QStringLiteral("log_1.ulg"), 5000, 1700000000 },
-        { QStringLiteral("log_2.ulg"), 0,    1700086400 },
-        { QStringLiteral("log_3.ulg"), 3000, 1700172800 },
+        {QStringLiteral("log_1.ulg"), 5000, 1700000000},
+        {QStringLiteral("log_2.ulg"), 0, 1700086400},
+        {QStringLiteral("log_3.ulg"), 3000, 1700172800},
     };
     _mockLink->mockLinkFTP()->setLogFiles(logFiles);
     _mockLink->mockLinkFTP()->setListDirectoryWithTimeSupported(false);
@@ -399,7 +454,7 @@ void OnboardLogFtpDownloadTest::_messagesZeroByteLogTest()
     QCOMPARE(zeroByteEntry->status(), QStringLiteral("Downloaded"));
     QCOMPARE(controller->selectedCount(), 0);
     const QStringList zeroByteFiles =
-        downloadDir.entryList({ QStringLiteral("log_%1_*").arg(zeroByteEntry->id()) }, QDir::Files);
+        downloadDir.entryList({QStringLiteral("log_%1_*").arg(zeroByteEntry->id())}, QDir::Files);
     QCOMPARE(zeroByteFiles.count(), 1);
     QCOMPARE(QFileInfo(downloadDir.filePath(zeroByteFiles.first())).size(), qint64(0));
     QVERIFY(QFile::remove(downloadDir.filePath(zeroByteFiles.first())));
@@ -419,8 +474,7 @@ void OnboardLogFtpDownloadTest::_messagesZeroByteLogTest()
         QVERIFY(entry);
         QCOMPARE(entry->status(), QStringLiteral("Downloaded"));
 
-        const QStringList matches =
-            downloadDir.entryList({ QStringLiteral("log_%1_*").arg(entry->id()) }, QDir::Files);
+        const QStringList matches = downloadDir.entryList({QStringLiteral("log_%1_*").arg(entry->id())}, QDir::Files);
         QCOMPARE(matches.count(), 1);
         QFile file(downloadDir.filePath(matches.first()));
         QVERIFY2(file.open(QIODevice::ReadOnly), qPrintable(matches.first()));
@@ -431,9 +485,10 @@ void OnboardLogFtpDownloadTest::_messagesZeroByteLogTest()
 void OnboardLogFtpDownloadTest::_ftpCancelListNoFallbackTest()
 {
     _connectMockLink(MAV_AUTOPILOT_PX4, MockConfiguration::FailNone, MockConfiguration::OptionFtpCapability);
-    if (QTest::currentTestFailed()) return;
+    if (QTest::currentTestFailed())
+        return;
 
-    _mockLink->mockLinkFTP()->setLogFiles({ { QStringLiteral("log_1.ulg"), 5000, 1700000000 } });
+    _mockLink->mockLinkFTP()->setLogFiles({{QStringLiteral("log_1.ulg"), 5000, 1700000000}});
     _mockLink->mockLinkFTP()->setListDirectoryWithTimeSupported(false);
 
     // Prime FTPManager's cached NAK of kCmdListDirectoryWithTime with a listing which
@@ -467,12 +522,14 @@ void OnboardLogFtpDownloadTest::_ftpCancelListNoFallbackTest()
 void OnboardLogFtpDownloadTest::_ftpListFallbackTest()
 {
     _connectMockLink(MAV_AUTOPILOT_PX4, MockConfiguration::FailNone, MockConfiguration::OptionFtpCapability);
-    if (QTest::currentTestFailed()) return;
+    if (QTest::currentTestFailed())
+        return;
 
     // Nak all FTP requests so the FTP listing fails and the controller must
     // fall back to the message-based transport.
     _mockLink->mockLinkFTP()->setErrorMode(MockLinkFTP::errModeNakResponse);
-    expectLogMessage("AnalyzeView.OnboardLogController", QtWarningMsg, QRegularExpression(QStringLiteral("ftp: listing error")));
+    expectLogMessage("AnalyzeView.OnboardLogController", QtWarningMsg,
+                     QRegularExpression(QStringLiteral("ftp: listing error")));
 
     OnboardLogController* const controller = new OnboardLogController(this);
     MultiSignalSpy* multiSpy = new MultiSignalSpy(this);
@@ -492,12 +549,13 @@ void OnboardLogFtpDownloadTest::_ftpListFallbackTest()
 void OnboardLogFtpDownloadTest::_ftpMultiDownloadAndDedupTest()
 {
     _connectMockLink(MAV_AUTOPILOT_PX4, MockConfiguration::FailNone, MockConfiguration::OptionFtpCapability);
-    if (QTest::currentTestFailed()) return;
+    if (QTest::currentTestFailed())
+        return;
 
     const QList<MockLinkFTP::LogFile> logFiles = {
-        { QStringLiteral("log_1.ulg"), 4000, 1700000000 },
-        { QStringLiteral("log_2.ulg"), 5000, 1700086400 },
-        { QStringLiteral("log_3.ulg"), 6000, 1700172800 },
+        {QStringLiteral("log_1.ulg"), 4000, 1700000000},
+        {QStringLiteral("log_2.ulg"), 5000, 1700086400},
+        {QStringLiteral("log_3.ulg"), 6000, 1700172800},
     };
     _mockLink->mockLinkFTP()->setLogFiles(logFiles);
 
@@ -530,9 +588,9 @@ void OnboardLogFtpDownloadTest::_ftpMultiDownloadAndDedupTest()
 
     // log_1.ulg collided with the pre-existing file so it was saved with a _1 suffix
     const QHash<QString, QString> expectedFiles = {
-        { QStringLiteral("log_1.ulg"), QStringLiteral("log_1_1.ulg") },
-        { QStringLiteral("log_2.ulg"), QStringLiteral("log_2.ulg") },
-        { QStringLiteral("log_3.ulg"), QStringLiteral("log_3.ulg") },
+        {QStringLiteral("log_1.ulg"), QStringLiteral("log_1_1.ulg")},
+        {QStringLiteral("log_2.ulg"), QStringLiteral("log_2.ulg")},
+        {QStringLiteral("log_3.ulg"), QStringLiteral("log_3.ulg")},
     };
     for (auto it = expectedFiles.constBegin(); it != expectedFiles.constEnd(); ++it) {
         QFile file(QDir(tempDir.path()).filePath(it.value()));
@@ -548,9 +606,10 @@ void OnboardLogFtpDownloadTest::_ftpMultiDownloadAndDedupTest()
 void OnboardLogFtpDownloadTest::_ftpDownloadErrorDisablesFtpTest()
 {
     _connectMockLink(MAV_AUTOPILOT_PX4, MockConfiguration::FailNone, MockConfiguration::OptionFtpCapability);
-    if (QTest::currentTestFailed()) return;
+    if (QTest::currentTestFailed())
+        return;
 
-    _mockLink->mockLinkFTP()->setLogFiles({ { QStringLiteral("log_1.ulg"), 5000, 1700000000 } });
+    _mockLink->mockLinkFTP()->setLogFiles({{QStringLiteral("log_1.ulg"), 5000, 1700000000}});
 
     OnboardLogController* const controller = new OnboardLogController(this);
     MultiSignalSpy* multiSpy = new MultiSignalSpy(this);
@@ -564,7 +623,8 @@ void OnboardLogFtpDownloadTest::_ftpDownloadErrorDisablesFtpTest()
     // Listing succeeded but downloads fail: entry must be marked Error and
     // FTP must be disabled for subsequent refreshes.
     _mockLink->mockLinkFTP()->setErrorMode(MockLinkFTP::errModeNakResponse);
-    expectLogMessage("AnalyzeView.OnboardLogController", QtWarningMsg, QRegularExpression(QStringLiteral("ftp: download error")));
+    expectLogMessage("AnalyzeView.OnboardLogController", QtWarningMsg,
+                     QRegularExpression(QStringLiteral("ftp: download error")));
 
     QTemporaryDir tempDir;
     QVERIFY(tempDir.isValid());
@@ -584,13 +644,14 @@ void OnboardLogFtpDownloadTest::_ftpDownloadErrorDisablesFtpTest()
 void OnboardLogFtpDownloadTest::_ftpSortOrderTest()
 {
     _connectMockLink(MAV_AUTOPILOT_PX4, MockConfiguration::FailNone, MockConfiguration::OptionFtpCapability);
-    if (QTest::currentTestFailed()) return;
+    if (QTest::currentTestFailed())
+        return;
 
     const QDateTime olderTime = QDateTime::fromSecsSinceEpoch(1700000000, QTimeZone::UTC);
     const QDateTime newerTime = QDateTime::fromSecsSinceEpoch(1700086400, QTimeZone::UTC);
     const QList<MockLinkFTP::LogFile> logFiles = {
-        { QStringLiteral("log_old.ulg"), 4000, 1700000000 },
-        { QStringLiteral("log_new.ulg"), 5000, 1700086400 },
+        {QStringLiteral("log_old.ulg"), 4000, 1700000000},
+        {QStringLiteral("log_new.ulg"), 5000, 1700086400},
     };
     _mockLink->mockLinkFTP()->setLogFiles(logFiles);
 
@@ -620,10 +681,11 @@ void OnboardLogFtpDownloadTest::_ftpSortOrderTest()
 void OnboardLogFtpDownloadTest::_ftpCancelDownloadTest()
 {
     _connectMockLink(MAV_AUTOPILOT_PX4, MockConfiguration::FailNone, MockConfiguration::OptionFtpCapability);
-    if (QTest::currentTestFailed()) return;
+    if (QTest::currentTestFailed())
+        return;
 
     // Large enough that the download cannot complete before cancel() is called
-    _mockLink->mockLinkFTP()->setLogFiles({ { QStringLiteral("log_big.ulg"), 1000000, 1700000000 } });
+    _mockLink->mockLinkFTP()->setLogFiles({{QStringLiteral("log_big.ulg"), 1000000, 1700000000}});
 
     OnboardLogController* const controller = new OnboardLogController(this);
     MultiSignalSpy* multiSpy = new MultiSignalSpy(this);
@@ -648,10 +710,11 @@ void OnboardLogFtpDownloadTest::_ftpCancelDownloadTest()
 void OnboardLogFtpDownloadTest::_ftpRefreshDuringDownloadTest()
 {
     _connectMockLink(MAV_AUTOPILOT_PX4, MockConfiguration::FailNone, MockConfiguration::OptionFtpCapability);
-    if (QTest::currentTestFailed()) return;
+    if (QTest::currentTestFailed())
+        return;
 
     // Large enough that the download spans multiple FTP bursts and outlives the refresh() call
-    _mockLink->mockLinkFTP()->setLogFiles({ { QStringLiteral("log_big.ulg"), 1000000, 1700000000 } });
+    _mockLink->mockLinkFTP()->setLogFiles({{QStringLiteral("log_big.ulg"), 1000000, 1700000000}});
 
     OnboardLogController* const controller = new OnboardLogController(this);
     MultiSignalSpy* multiSpy = new MultiSignalSpy(this);
@@ -693,12 +756,13 @@ void OnboardLogFtpDownloadTest::_ftpRefreshDuringDownloadTest()
 void OnboardLogFtpDownloadTest::_ftpEraseSelectedTest()
 {
     _connectMockLink(MAV_AUTOPILOT_PX4, MockConfiguration::FailNone, MockConfiguration::OptionFtpCapability);
-    if (QTest::currentTestFailed()) return;
+    if (QTest::currentTestFailed())
+        return;
 
     const QList<MockLinkFTP::LogFile> logFiles = {
-        { QStringLiteral("log_1.ulg"), 4000, 1700000000 },
-        { QStringLiteral("log_2.ulg"), 5000, 1700086400 },
-        { QStringLiteral("log_3.ulg"), 6000, 1700172800 },
+        {QStringLiteral("log_1.ulg"), 4000, 1700000000},
+        {QStringLiteral("log_2.ulg"), 5000, 1700086400},
+        {QStringLiteral("log_3.ulg"), 6000, 1700172800},
     };
     _mockLink->mockLinkFTP()->setLogFiles(logFiles);
 
@@ -734,12 +798,13 @@ void OnboardLogFtpDownloadTest::_ftpEraseSelectedTest()
 void OnboardLogFtpDownloadTest::_ftpCancelEraseSelectedTest()
 {
     _connectMockLink(MAV_AUTOPILOT_PX4, MockConfiguration::FailNone, MockConfiguration::OptionFtpCapability);
-    if (QTest::currentTestFailed()) return;
+    if (QTest::currentTestFailed())
+        return;
 
     const QList<MockLinkFTP::LogFile> logFiles = {
-        { QStringLiteral("log_1.ulg"), 4000, 1700000000 },
-        { QStringLiteral("log_2.ulg"), 5000, 1700086400 },
-        { QStringLiteral("log_3.ulg"), 6000, 1700172800 },
+        {QStringLiteral("log_1.ulg"), 4000, 1700000000},
+        {QStringLiteral("log_2.ulg"), 5000, 1700086400},
+        {QStringLiteral("log_3.ulg"), 6000, 1700172800},
     };
     _mockLink->mockLinkFTP()->setLogFiles(logFiles);
 
