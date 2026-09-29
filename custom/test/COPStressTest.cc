@@ -470,6 +470,31 @@ void COPStressUITest::_activeHighlightRequiresActiveVehicle()
 UT_REGISTER_TEST(COPStressTest, TestLabel::Unit)
 UT_REGISTER_TEST(COPStressUITest, TestLabel::Integration, TestLabel::Vehicle)
 
+
+namespace {
+QQuickItem* findByName(QQuickItem* root, const QString& name)
+{
+    if (!root) return nullptr;
+    if (root->objectName() == name) return root;
+    for (auto* child : root->childItems()) {
+        if (auto* item = findByName(child, name)) return item;
+    }
+    return nullptr;
+}
+void dumpMapItems(QQuickItem* root, int depth, int& n)
+{
+    for (auto* child : root->childItems()) {
+        const QString cn = QString::fromLatin1(child->metaObject()->className());
+        if (cn.contains(QStringLiteral("Map")) && !cn.contains(QStringLiteral("Quick"))) {
+            qWarning() << "PREVIEW item" << cn << "vis" << child->isVisible() << "geom" << QRectF(child->x(), child->y(), child->width(), child->height())
+                       << "pathLen" << child->property("path").toList().size() << "color" << child->property("color");
+            n++;
+        }
+        dumpMapItems(child, depth + 1, n);
+    }
+}
+}  // namespace
+
 // SCRATCH preview (not for commit): renders COP overlays for 3 vehicles and saves PNGs.
 void COPStressUITest::_overlayPreview()
 {
@@ -509,10 +534,9 @@ void COPStressUITest::_overlayPreview()
         QList<MissionItem*> items;
         items << wp(0, base);
         items << wp(1, at(150, a));
-        items << new MissionItem(2, MAV_CMD_DO_CHANGE_SPEED, MAV_FRAME_MISSION, 1, 5, -1, 0, 0, 0, 0, true, false, this);
-        items << wp(3, at(300, a + 20));
-        items << wp(4, at(450, a));
-        items << wp(5, at(300, a - 25));
+        items << wp(2, at(300, a + 20));
+        items << wp(3, at(450, a));
+        items << wp(4, at(300, a - 25));
         QSignalSpy sent(v->missionManager(), &PlanManager::sendComplete);
         v->missionManager()->writeMissionItems(items);
         QTRY_VERIFY_WITH_TIMEOUT(sent.count() > 0, TestTimeout::longMs());
@@ -538,13 +562,14 @@ void COPStressUITest::_overlayPreview()
         qWarning() << "PREVIEW after-upload (no reload)" << e->label() << "mission" << e->missionCoordinates().size()
                    << "polys" << e->fencePolygons().size() << "circles" << e->fenceCircles().size() << "rally" << e->rallyPoints().size();
     }
+    // Simulate the download-complete signals COP listens for, using the data the managers already hold.
     for (int id : ids) {
         auto* v = _entryFor(id)->vehicle();
-        v->missionManager()->loadFromVehicle();
-        v->geoFenceManager()->loadFromVehicle();
-        v->rallyPointManager()->loadFromVehicle();
+        emit v->missionManager()->newMissionItemsAvailable(false);
+        emit v->geoFenceManager()->loadComplete();
+        emit v->rallyPointManager()->loadComplete();
     }
-    QTest::qWait(4000);
+    QTest::qWait(1000);
     for (int id : ids) {
         auto* e = _entryFor(id);
         qWarning() << "PREVIEW after-reload" << e->label() << "mission" << e->missionCoordinates().size() << e->missionCoordinates()
@@ -553,10 +578,17 @@ void COPStressUITest::_overlayPreview()
     }
     controller->selectVehicle(0);
     QTest::qWait(1000);
-    if (auto* fit = findText(_rootItem, QStringLiteral("Fit vehicles"))) {
-        _clickItemAt(fit, 0.5, 0.5, QStringLiteral("Fit vehicles"));
+    if (auto* map = findByName(_rootItem, QStringLiteral("copMap"))) {
+        map->setProperty("zoomLevel", 15.2);
+        map->setProperty("center", QVariant::fromValue(base));
     }
     QTest::qWait(2500);
+    if (auto* map = findByName(_rootItem, QStringLiteral("copMap"))) {
+        qWarning() << "PREVIEW map zoom" << map->property("zoomLevel") << "center" << map->property("center") << "size" << map->width() << map->height() << "visible" << map->isVisible();
+        int n = 0;
+        dumpMapItems(map, 0, n);
+        qWarning() << "PREVIEW item count" << n;
+    }
     const QString dir = QStringLiteral("/tmp/qgc-scratch/");
     qWarning() << "PREVIEW saved" << _window->grabWindow().save(dir + QStringLiteral("cop_overlay_all.png"));
     _entryFor(ids[1])->setPlanOverlayVisible(false);
