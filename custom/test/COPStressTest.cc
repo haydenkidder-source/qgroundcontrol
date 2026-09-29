@@ -11,6 +11,14 @@
 #include "AppSettings.h"
 #include "COPController.h"
 #include "COPVideoSession.h"
+#include "GeoFenceManager.h"
+#include "MissionItem.h"
+#include "PlanManager.h"
+#include "QGCFenceCircle.h"
+#include "QGCFencePolygon.h"
+#include "QmlObjectListModel.h"
+#include "RallyPointManager.h"
+#include "MissionManager.h"
 #include "LinkManager.h"
 #include "MultiVehicleManager.h"
 #include "QGCCorePlugin.h"
@@ -461,3 +469,98 @@ void COPStressUITest::_activeHighlightRequiresActiveVehicle()
 
 UT_REGISTER_TEST(COPStressTest, TestLabel::Unit)
 UT_REGISTER_TEST(COPStressUITest, TestLabel::Integration, TestLabel::Vehicle)
+
+// SCRATCH preview (not for commit): renders COP overlays for 3 vehicles and saves PNGs.
+void COPStressUITest::_overlayPreview()
+{
+    startUI();
+    QVERIFY(!QTest::currentTestFailed());
+    LinkManager::instance()->setConnectionsAllowed();
+    auto* manager = MultiVehicleManager::instance();
+    auto* controller = _controller();
+    QVERIFY(controller);
+    QPointer<MockLink> rover = _start(MAV_TYPE_GROUND_ROVER);
+    QPointer<MockLink> hex = _start(MAV_TYPE_QUADROTOR);
+    QPointer<MockLink> stallion = _start(MAV_TYPE_FIXED_WING, false);
+    QVERIFY(rover && hex && stallion);
+    const int ids[3] = {rover->vehicleId(), hex->vehicleId(), stallion->vehicleId()};
+    auto* roles = _engine->singletonInstance<VehicleRoleController*>("QGC", "VehicleRoleController");
+    QVERIFY(roles);
+    roles->addEntry(ids[0], QStringLiteral("Rover"), QString(), 0);
+    roles->addEntry(ids[1], QStringLiteral("Copter"), QString(), 0);
+    roles->addEntry(ids[2], QStringLiteral("Plane"), QString(), 0);
+    QTRY_COMPARE_WITH_TIMEOUT(manager->vehicles()->count(), 3, TestTimeout::longMs());
+    for (int id : ids) {
+        QTRY_VERIFY_WITH_TIMEOUT(_entryFor(id) && _entryFor(id)->vehicle(), TestTimeout::longMs());
+        QTRY_VERIFY_WITH_TIMEOUT(_entryFor(id)->vehicle()->isInitialConnectComplete(), TestTimeout::longMs());
+        QTRY_VERIFY_WITH_TIMEOUT(_entryFor(id)->coordinate().isValid(), TestTimeout::longMs());
+    }
+    const QGeoCoordinate base = _entryFor(ids[0])->coordinate();
+    qWarning() << "PREVIEW base" << base << "coords" << _entryFor(ids[0])->coordinate() << _entryFor(ids[1])->coordinate() << _entryFor(ids[2])->coordinate();
+    auto at = [&](double d, double az) { return base.atDistanceAndAzimuth(d, az); };
+    auto wp = [&](int seq, const QGeoCoordinate& c, MAV_CMD cmd = MAV_CMD_NAV_WAYPOINT) {
+        return new MissionItem(seq, cmd, MAV_FRAME_GLOBAL_RELATIVE_ALT, 0, 0, 0, 0, c.latitude(), c.longitude(), 30, true, false, this);
+    };
+    struct Spec { int id; double az; };
+    const Spec specs[3] = {{ids[0], 270}, {ids[1], 45}, {ids[2], 135}};
+    for (const Spec& sp : specs) {
+        Vehicle* v = _entryFor(sp.id)->vehicle();
+        const double a = sp.az;
+        QList<MissionItem*> items;
+        items << wp(0, base);
+        items << wp(1, at(150, a));
+        items << new MissionItem(2, MAV_CMD_DO_CHANGE_SPEED, MAV_FRAME_MISSION, 1, 5, -1, 0, 0, 0, 0, true, false, this);
+        items << wp(3, at(300, a + 20));
+        items << wp(4, at(450, a));
+        items << wp(5, at(300, a - 25));
+        QSignalSpy sent(v->missionManager(), &PlanManager::sendComplete);
+        v->missionManager()->writeMissionItems(items);
+        QTRY_VERIFY_WITH_TIMEOUT(sent.count() > 0, TestTimeout::longMs());
+
+        QmlObjectListModel polys, circles;
+        auto* incl = new QGCFencePolygon(true);
+        for (double b : {0.0, 90.0, 180.0, 270.0}) { incl->appendVertex(at(550, a + b * 0.25 + b)); }
+        polys.append(incl);
+        auto* excl = new QGCFencePolygon(false);
+        for (double b : {0.0, 120.0, 240.0}) { excl->appendVertex(at(80, a + 10).atDistanceAndAzimuth(40, b)); }
+        polys.append(excl);
+        circles.append(new QGCFenceCircle(at(300, a - 60), 90, sp.id == ids[1]));
+        QSignalSpy fenceSent(v->geoFenceManager(), &GeoFenceManager::sendComplete);
+        v->geoFenceManager()->sendToVehicle(base, polys, circles);
+        QTRY_VERIFY_WITH_TIMEOUT(fenceSent.count() > 0, TestTimeout::longMs());
+
+        QSignalSpy rallySent(v->rallyPointManager(), &RallyPointManager::sendComplete);
+        v->rallyPointManager()->sendToVehicle({at(120, a + 60), at(200, a - 70)});
+        QTRY_VERIFY_WITH_TIMEOUT(rallySent.count() > 0, TestTimeout::longMs());
+    }
+    for (int id : ids) {
+        auto* e = _entryFor(id);
+        qWarning() << "PREVIEW after-upload (no reload)" << e->label() << "mission" << e->missionCoordinates().size()
+                   << "polys" << e->fencePolygons().size() << "circles" << e->fenceCircles().size() << "rally" << e->rallyPoints().size();
+    }
+    for (int id : ids) {
+        auto* v = _entryFor(id)->vehicle();
+        v->missionManager()->loadFromVehicle();
+        v->geoFenceManager()->loadFromVehicle();
+        v->rallyPointManager()->loadFromVehicle();
+    }
+    QTest::qWait(4000);
+    for (int id : ids) {
+        auto* e = _entryFor(id);
+        qWarning() << "PREVIEW after-reload" << e->label() << "mission" << e->missionCoordinates().size() << e->missionCoordinates()
+                   << "polys" << e->fencePolygons().size() << "circles" << e->fenceCircles().size() << "rally" << e->rallyPoints().size();
+        e->setPlanOverlayVisible(true);
+    }
+    controller->selectVehicle(0);
+    QTest::qWait(1000);
+    if (auto* fit = findText(_rootItem, QStringLiteral("Fit vehicles"))) {
+        _clickItemAt(fit, 0.5, 0.5, QStringLiteral("Fit vehicles"));
+    }
+    QTest::qWait(2500);
+    const QString dir = QStringLiteral("/tmp/qgc-scratch/");
+    qWarning() << "PREVIEW saved" << _window->grabWindow().save(dir + QStringLiteral("cop_overlay_all.png"));
+    _entryFor(ids[1])->setPlanOverlayVisible(false);
+    _entryFor(ids[2])->setPlanOverlayVisible(false);
+    QTest::qWait(1500);
+    qWarning() << "PREVIEW saved rover-only" << _window->grabWindow().save(dir + QStringLiteral("cop_overlay_rover_only.png"));
+}
