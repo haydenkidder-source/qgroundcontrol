@@ -29,6 +29,29 @@ const QList<QColor> kVehicleColors = {
     QColor(QStringLiteral("#FFEB3B")),  // yellow
     QColor(QStringLiteral("#00BCD4")),  // cyan
 };
+
+// Only commands that fly to a place belong on the route line. Other items (speed changes, servo or camera
+// commands, RTL) carry zeros in their coordinate parameters, which would otherwise draw a leg to (0, 0).
+bool isRoutePoint(const MissionItem* item)
+{
+    switch (item->command()) {
+        case MAV_CMD_NAV_WAYPOINT:
+        case MAV_CMD_NAV_SPLINE_WAYPOINT:
+        case MAV_CMD_NAV_LOITER_UNLIM:
+        case MAV_CMD_NAV_LOITER_TURNS:
+        case MAV_CMD_NAV_LOITER_TIME:
+        case MAV_CMD_NAV_LOITER_TO_ALT:
+        case MAV_CMD_NAV_TAKEOFF:
+        case MAV_CMD_NAV_LAND:
+        case MAV_CMD_NAV_VTOL_TAKEOFF:
+        case MAV_CMD_NAV_VTOL_LAND:
+            break;
+        default:
+            return false;
+    }
+    const QGeoCoordinate coordinate = item->coordinate();
+    return coordinate.isValid() && !(coordinate.latitude() == 0.0 && coordinate.longitude() == 0.0);
+}
 }  // namespace
 
 COPVehicle::COPVehicle(int sysid, VehicleRoleController* roles, QObject* parent)
@@ -92,9 +115,8 @@ void COPVehicle::_refreshPlanData()
 
     if (_vehicle) {
         for (const MissionItem* item : _vehicle->missionManager()->missionItems()) {
-            const QGeoCoordinate coordinate = item->coordinate();
-            if (coordinate.isValid()) {
-                _missionCoordinates.append(QVariant::fromValue(coordinate));
+            if (isRoutePoint(item)) {
+                _missionCoordinates.append(QVariant::fromValue(item->coordinate()));
             }
         }
 
@@ -161,6 +183,14 @@ void COPVehicle::setVehicle(Vehicle* vehicle)
         connect(vehicle->missionManager(), &PlanManager::newMissionItemsAvailable, this, &COPVehicle::_refreshPlanData);
         connect(vehicle->geoFenceManager(), &GeoFenceManager::loadComplete, this, &COPVehicle::_refreshPlanData);
         connect(vehicle->rallyPointManager(), &RallyPointManager::loadComplete, this, &COPVehicle::_refreshPlanData);
+        // An operator upload or clear changes what the vehicle holds without any download, so refresh then too.
+        connect(vehicle->missionManager(), &PlanManager::sendComplete, this, &COPVehicle::_refreshPlanData);
+        connect(vehicle->missionManager(), &PlanManager::removeAllComplete, this, &COPVehicle::_refreshPlanData);
+        connect(vehicle->geoFenceManager(), &GeoFenceManager::sendComplete, this, &COPVehicle::_refreshPlanData);
+        connect(vehicle->geoFenceManager(), &GeoFenceManager::removeAllComplete, this, &COPVehicle::_refreshPlanData);
+        connect(vehicle->rallyPointManager(), &RallyPointManager::sendComplete, this, &COPVehicle::_refreshPlanData);
+        connect(vehicle->rallyPointManager(), &RallyPointManager::removeAllComplete, this,
+                &COPVehicle::_refreshPlanData);
         _snapshot();
     }
     emit stateChanged();

@@ -36,6 +36,7 @@ private slots:
     void _disconnectOtherPreservesControl();
     void _navigationAndLayout();
     void _activeHighlightRequiresActiveVehicle();
+    void _overlayDataTracksUploadsAndSkipsNonRoutePoints();
 
 private:
     COPController* _controller() const;

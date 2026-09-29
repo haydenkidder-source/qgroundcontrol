@@ -19,6 +19,8 @@ Rectangle {
     property var hostWindow
     readonly property var selected: COPController.selected
     property bool centered: false
+    // Keep-out zones are red whatever the vehicle color, so "forbidden" never depends on which vehicle owns it.
+    readonly property color _keepOutColor: "#E53935"
     readonly property bool overview: COPController.selectedSysid === 0
 
     // Flattened, reactive views over whichever vehicles currently have their COP "Plan" overlay
@@ -49,7 +51,7 @@ Rectangle {
         const result = []
         for (const vehicle of root._overlayVehicles()) {
             for (const polygon of vehicle.fencePolygons) {
-                result.push({ path: polygon.path, color: vehicle.color })
+                result.push({ path: polygon.path, inclusion: polygon.inclusion, color: vehicle.color })
             }
         }
         return result
@@ -59,7 +61,20 @@ Rectangle {
         const result = []
         for (const vehicle of root._overlayVehicles()) {
             for (const circle of vehicle.fenceCircles) {
-                result.push({ center: circle.center, radius: circle.radius, color: vehicle.color })
+                result.push({ center: circle.center, radius: circle.radius, inclusion: circle.inclusion, color: vehicle.color })
+            }
+        }
+        return result
+    }
+
+    // One entry per route point, so each waypoint gets a marker and the first/last are labelled S and E.
+    function _overlayMissionPoints() {
+        const result = []
+        for (const vehicle of root._overlayVehicles()) {
+            const path = vehicle.missionCoordinates
+            for (let i = 0; i < path.length; i++) {
+                result.push({ point: path[i], color: vehicle.color, start: i === 0,
+                              end: i === path.length - 1 && path.length > 1 })
             }
         }
         return result
@@ -116,17 +131,22 @@ Rectangle {
                         color: QGroundControl.globalPalette.colorOrange
                     }
                 }
-                // Read-only per-vehicle plan overlay (COPNavigation.qml's "Plan" toggle), drawn
-                // below the vehicle markers below. Fence/rally items first so the mission polyline
-                // and vehicle markers show up on top of them.
+                // Read-only per-vehicle plan overlay (COPNavigation.qml's "Plan" toggle). The owning vehicle
+                // is always the outline/route color; the layer type is told apart by shape and fill:
+                //   route      - thick line with waypoint dots, S = start, E = end
+                //   keep-in    - outline only (stay inside)
+                //   keep-out   - red fill (stay out)
+                //   rally      - diamond
+                // Drawn bottom to top: fences, rally, route, waypoints, then the vehicle markers below.
                 MapItemView {
                     model: root._overlayFencePolygons()
                     delegate: MapPolygon {
                         required property var modelData
                         path: modelData.path
-                        color: Qt.rgba(modelData.color.r, modelData.color.g, modelData.color.b, 0.15)
+                        color: modelData.inclusion ? "transparent"
+                               : Qt.rgba(root._keepOutColor.r, root._keepOutColor.g, root._keepOutColor.b, 0.35)
                         border.color: modelData.color
-                        border.width: 2
+                        border.width: 3
                     }
                 }
                 MapItemView {
@@ -135,20 +155,41 @@ Rectangle {
                         required property var modelData
                         center: modelData.center
                         radius: modelData.radius
-                        color: Qt.rgba(modelData.color.r, modelData.color.g, modelData.color.b, 0.15)
+                        color: modelData.inclusion ? "transparent"
+                               : Qt.rgba(root._keepOutColor.r, root._keepOutColor.g, root._keepOutColor.b, 0.35)
                         border.color: modelData.color
-                        border.width: 2
+                        border.width: 3
                     }
                 }
                 MapItemView {
                     model: root._overlayRallyPoints()
-                    delegate: MapCircle {
+                    delegate: MapQuickItem {
+                        id: rallyItem
                         required property var modelData
-                        center: modelData.point
-                        radius: 15
-                        color: modelData.color
-                        border.color: QGroundControl.globalPalette.window
-                        border.width: 1
+                        coordinate: rallyItem.modelData.point
+                        anchorPoint.x: rallyMarker.width / 2
+                        anchorPoint.y: rallyMarker.height / 2
+                        sourceItem: Item {
+                            id: rallyMarker
+                            width: ScreenTools.defaultFontPixelHeight * 1.6
+                            height: width
+                            Rectangle {
+                                anchors.centerIn: parent
+                                width: parent.width * 0.72
+                                height: width
+                                rotation: 45
+                                color: rallyItem.modelData.color
+                                border.color: "white"
+                                border.width: 2
+                            }
+                            QGCLabel {
+                                anchors.centerIn: parent
+                                text: qsTr("R")
+                                color: "black"
+                                font.bold: true
+                                font.pointSize: ScreenTools.smallFontPointSize
+                            }
+                        }
                     }
                 }
                 MapItemView {
@@ -157,7 +198,35 @@ Rectangle {
                         required property var modelData
                         path: modelData.path
                         line.color: modelData.color
-                        line.width: 2
+                        line.width: 4
+                    }
+                }
+                MapItemView {
+                    model: root._overlayMissionPoints()
+                    delegate: MapQuickItem {
+                        id: waypointItem
+                        required property var modelData
+                        coordinate: waypointItem.modelData.point
+                        anchorPoint.x: dot.width / 2
+                        anchorPoint.y: dot.height / 2
+                        sourceItem: Rectangle {
+                            id: dot
+                            readonly property bool labelled: waypointItem.modelData.start || waypointItem.modelData.end
+                            width: ScreenTools.defaultFontPixelHeight * (labelled ? 1.4 : 0.75)
+                            height: width
+                            radius: width / 2
+                            color: waypointItem.modelData.color
+                            border.color: "white"
+                            border.width: 2
+                            QGCLabel {
+                                anchors.centerIn: parent
+                                visible: dot.labelled
+                                text: waypointItem.modelData.start ? qsTr("S") : qsTr("E")
+                                color: "black"
+                                font.bold: true
+                                font.pointSize: ScreenTools.smallFontPointSize
+                            }
+                        }
                     }
                 }
                 MapItemView {
@@ -190,6 +259,83 @@ Rectangle {
                                 anchors.centerIn: parent
                                 text: vehicleMarker.object.label
                             }
+                        }
+                    }
+                }
+                Rectangle {
+                    id: legend
+                    objectName: "copOverlayLegend"
+                    visible: root._overlayVehicles().length > 0
+                    anchors.left: parent.left
+                    anchors.bottom: parent.bottom
+                    anchors.margins: ScreenTools.defaultFontPixelWidth
+                    width: legendColumn.implicitWidth + ScreenTools.defaultFontPixelWidth * 2
+                    height: legendColumn.implicitHeight + ScreenTools.defaultFontPixelWidth * 2
+                    radius: ScreenTools.defaultFontPixelWidth / 2
+                    color: Qt.rgba(QGroundControl.globalPalette.window.r, QGroundControl.globalPalette.window.g,
+                                   QGroundControl.globalPalette.window.b, 0.88)
+                    ColumnLayout {
+                        id: legendColumn
+                        anchors.centerIn: parent
+                        spacing: ScreenTools.defaultFontPixelHeight / 6
+                        Repeater {
+                            model: root._overlayVehicles()
+                            delegate: RowLayout {
+                                required property var modelData
+                                spacing: ScreenTools.defaultFontPixelWidth
+                                Rectangle {
+                                    Layout.preferredWidth: ScreenTools.defaultFontPixelHeight
+                                    Layout.preferredHeight: ScreenTools.defaultFontPixelHeight * 0.6
+                                    color: modelData.color
+                                }
+                                QGCLabel { text: modelData.label; font.pointSize: ScreenTools.smallFontPointSize }
+                            }
+                        }
+                        RowLayout {
+                            spacing: ScreenTools.defaultFontPixelWidth
+                            Rectangle {
+                                Layout.preferredWidth: ScreenTools.defaultFontPixelHeight
+                                Layout.preferredHeight: 4
+                                color: QGroundControl.globalPalette.text
+                            }
+                            QGCLabel { text: qsTr("Route (S start, E end)"); font.pointSize: ScreenTools.smallFontPointSize }
+                        }
+                        RowLayout {
+                            spacing: ScreenTools.defaultFontPixelWidth
+                            Rectangle {
+                                Layout.preferredWidth: ScreenTools.defaultFontPixelHeight
+                                Layout.preferredHeight: ScreenTools.defaultFontPixelHeight * 0.6
+                                color: "transparent"
+                                border.color: QGroundControl.globalPalette.text
+                                border.width: 3
+                            }
+                            QGCLabel { text: qsTr("Keep-in fence (stay inside)"); font.pointSize: ScreenTools.smallFontPointSize }
+                        }
+                        RowLayout {
+                            spacing: ScreenTools.defaultFontPixelWidth
+                            Rectangle {
+                                Layout.preferredWidth: ScreenTools.defaultFontPixelHeight
+                                Layout.preferredHeight: ScreenTools.defaultFontPixelHeight * 0.6
+                                color: Qt.rgba(root._keepOutColor.r, root._keepOutColor.g, root._keepOutColor.b, 0.35)
+                                border.color: QGroundControl.globalPalette.text
+                                border.width: 3
+                            }
+                            QGCLabel { text: qsTr("Keep-out zone (stay outside)"); font.pointSize: ScreenTools.smallFontPointSize }
+                        }
+                        RowLayout {
+                            spacing: ScreenTools.defaultFontPixelWidth
+                            Item {
+                                Layout.preferredWidth: ScreenTools.defaultFontPixelHeight
+                                Layout.preferredHeight: ScreenTools.defaultFontPixelHeight
+                                Rectangle {
+                                    anchors.centerIn: parent
+                                    width: parent.width * 0.72
+                                    height: width
+                                    rotation: 45
+                                    color: QGroundControl.globalPalette.text
+                                }
+                            }
+                            QGCLabel { text: qsTr("Rally point"); font.pointSize: ScreenTools.smallFontPointSize }
                         }
                     }
                 }

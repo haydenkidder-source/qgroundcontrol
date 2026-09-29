@@ -11,9 +11,17 @@
 #include "AppSettings.h"
 #include "COPController.h"
 #include "COPVideoSession.h"
+#include "GeoFenceManager.h"
 #include "LinkManager.h"
+#include "MissionItem.h"
+#include "MissionManager.h"
 #include "MultiVehicleManager.h"
+#include "PlanManager.h"
 #include "QGCCorePlugin.h"
+#include "QGCFenceCircle.h"
+#include "QGCFencePolygon.h"
+#include "QmlObjectListModel.h"
+#include "RallyPointManager.h"
 #include "SettingsManager.h"
 #include "Vehicle.h"
 #include "VehicleLinkManager.h"
@@ -461,3 +469,128 @@ void COPStressUITest::_activeHighlightRequiresActiveVehicle()
 
 UT_REGISTER_TEST(COPStressTest, TestLabel::Unit)
 UT_REGISTER_TEST(COPStressUITest, TestLabel::Integration, TestLabel::Vehicle)
+
+void COPStressUITest::_overlayDataTracksUploadsAndSkipsNonRoutePoints()
+{
+    startUI();
+    QVERIFY(!QTest::currentTestFailed());
+    LinkManager::instance()->setConnectionsAllowed();
+    QPointer<MockLink> rover = _start(MAV_TYPE_GROUND_ROVER);
+    QVERIFY(rover);
+    const int id = rover->vehicleId();
+    QTRY_VERIFY_WITH_TIMEOUT(_entryFor(id) && _entryFor(id)->vehicle(), TestTimeout::longMs());
+    COPVehicle* entry = _entryFor(id);
+    Vehicle* vehicle = entry->vehicle();
+    QTRY_VERIFY_WITH_TIMEOUT(vehicle->isInitialConnectComplete(), TestTimeout::longMs());
+    QTRY_VERIFY_WITH_TIMEOUT(entry->coordinate().isValid(), TestTimeout::longMs());
+    QVERIFY(entry->missionCoordinates().isEmpty());
+
+    const QGeoCoordinate base = entry->coordinate();
+    auto waypoint = [&](int sequence, const QGeoCoordinate& coordinate) {
+        return new MissionItem(sequence, MAV_CMD_NAV_WAYPOINT, MAV_FRAME_GLOBAL_RELATIVE_ALT, 0, 0, 0, 0,
+                               coordinate.latitude(), coordinate.longitude(), 30, true, false, this);
+    };
+    // A speed change has no place to fly to; its zero coordinate parameters must not become a route point.
+    QList<MissionItem*> items;
+    items << waypoint(0, base) << waypoint(1, base.atDistanceAndAzimuth(100, 90))
+          << new MissionItem(2, MAV_CMD_DO_CHANGE_SPEED, MAV_FRAME_MISSION, 1, 5, -1, 0, 0, 0, 0, true, false, this)
+          << waypoint(3, base.atDistanceAndAzimuth(200, 90));
+
+    // COP connected to these signals when it attached to the vehicle, so with direct connections it has already
+    // refreshed by the time these handlers run. Sample there rather than later: the mock vehicle's post-upload
+    // reads can change what the managers hold afterwards, which is not what is being tested.
+    struct Sample
+    {
+        bool sent = false;
+        qsizetype held = -1;
+        qsizetype shown = -1;
+        QVariantList shownList;
+        QVariantList shownPolygons;
+    };
+
+    QObject connections;
+    Sample mission;
+    Sample fence;
+    Sample rally;
+    connect(
+        vehicle->missionManager(), &PlanManager::sendComplete, &connections,
+        [&](bool) {
+            mission = {true,
+                       vehicle->missionManager()->missionItems().size(),
+                       entry->missionCoordinates().size(),
+                       entry->missionCoordinates(),
+                       {}};
+        },
+        Qt::DirectConnection);
+    connect(
+        vehicle->geoFenceManager(), &GeoFenceManager::sendComplete, &connections,
+        [&](bool) {
+            fence = {true,
+                     vehicle->geoFenceManager()->polygons().size(),
+                     entry->fencePolygons().size(),
+                     {},
+                     entry->fencePolygons()};
+        },
+        Qt::DirectConnection);
+    connect(
+        vehicle->rallyPointManager(), &RallyPointManager::sendComplete, &connections,
+        [&](bool) {
+            rally = {true, vehicle->rallyPointManager()->points().size(), entry->rallyPoints().size(), {}, {}};
+        },
+        Qt::DirectConnection);
+
+    // The fly view re-reads the active vehicle's plan after an upload, and the mock vehicle may fail that read. Whether
+    // and when that happens is timing dependent and unrelated to what COP shows, so tolerate the message if it occurs.
+    ignoreLogMessage("API.QGCApplication.AppMessage", QtDebugMsg,
+                     QRegularExpression(QStringLiteral("Mission transfer failed")));
+    // A manager ignores a write while one of its own transfers, such as the vehicle's initial plan read, is still
+    // running, so start only once all three are idle.
+    QVERIFY(waitForCondition(
+        [vehicle] {
+            return !vehicle->missionManager()->inProgress() && !vehicle->geoFenceManager()->inProgress() &&
+                   !vehicle->rallyPointManager()->inProgress();
+        },
+        TestTimeout::longMs(), QStringLiteral("initial plan transfers finished")));
+    vehicle->missionManager()->writeMissionItems(items);
+    QTRY_VERIFY_WITH_TIMEOUT(mission.sent, TestTimeout::longMs());
+
+    QmlObjectListModel polygons;
+    QmlObjectListModel circles;
+    auto* keepIn = new QGCFencePolygon(true);
+    for (double azimuth : {0.0, 120.0, 240.0}) {
+        keepIn->appendVertex(base.atDistanceAndAzimuth(300, azimuth));
+    }
+    auto* keepOut = new QGCFencePolygon(false);
+    for (double azimuth : {0.0, 120.0, 240.0}) {
+        keepOut->appendVertex(base.atDistanceAndAzimuth(50, azimuth));
+    }
+    polygons.append(keepIn);
+    polygons.append(keepOut);
+    circles.append(new QGCFenceCircle(base.atDistanceAndAzimuth(150, 180), 40, false));
+    vehicle->geoFenceManager()->sendToVehicle(base, polygons, circles);
+    polygons.clearAndDeleteContents();
+    circles.clearAndDeleteContents();
+    QTRY_VERIFY_WITH_TIMEOUT(fence.sent, TestTimeout::longMs());
+
+    vehicle->rallyPointManager()->sendToVehicle(
+        {base.atDistanceAndAzimuth(60, 45), base.atDistanceAndAzimuth(90, 300)});
+    QTRY_VERIFY_WITH_TIMEOUT(rally.sent, TestTimeout::longMs());
+
+    // Only uploads happened, no download: COP must still pick each new plan up.
+    QCOMPARE(mission.held, 4);
+    QCOMPARE(mission.shown, 3);  // the speed change is held by the vehicle but is not a route point
+    for (const QVariant& point : mission.shownList) {
+        const auto coordinate = point.value<QGeoCoordinate>();
+        QVERIFY(coordinate.isValid());
+        QVERIFY(coordinate.latitude() != 0.0 || coordinate.longitude() != 0.0);
+    }
+    QCOMPARE(fence.held, 2);
+    QCOMPARE(fence.shown, 2);
+    QCOMPARE(fence.shownPolygons.at(0).toMap().value(QStringLiteral("inclusion")).toBool(), true);
+    QCOMPARE(fence.shownPolygons.at(1).toMap().value(QStringLiteral("inclusion")).toBool(), false);
+    QCOMPARE(rally.held, 2);
+    QCOMPARE(rally.shown, 2);
+
+    QVERIFY(waitForCondition([vehicle] { return !vehicle->missionManager()->inProgress(); }, TestTimeout::longMs(),
+                             QStringLiteral("mission transfers finished")));
+}
