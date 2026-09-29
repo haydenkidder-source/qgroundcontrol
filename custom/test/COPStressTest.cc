@@ -508,11 +508,12 @@ void COPStressUITest::_overlayDataTracksUploadsAndSkipsNonRoutePoints()
         QVariantList shownPolygons;
     };
 
+    QObject connections;
     Sample mission;
     Sample fence;
     Sample rally;
     connect(
-        vehicle->missionManager(), &PlanManager::sendComplete, this,
+        vehicle->missionManager(), &PlanManager::sendComplete, &connections,
         [&](bool) {
             mission = {true,
                        vehicle->missionManager()->missionItems().size(),
@@ -522,7 +523,7 @@ void COPStressUITest::_overlayDataTracksUploadsAndSkipsNonRoutePoints()
         },
         Qt::DirectConnection);
     connect(
-        vehicle->geoFenceManager(), &GeoFenceManager::sendComplete, this,
+        vehicle->geoFenceManager(), &GeoFenceManager::sendComplete, &connections,
         [&](bool) {
             fence = {true,
                      vehicle->geoFenceManager()->polygons().size(),
@@ -532,15 +533,16 @@ void COPStressUITest::_overlayDataTracksUploadsAndSkipsNonRoutePoints()
         },
         Qt::DirectConnection);
     connect(
-        vehicle->rallyPointManager(), &RallyPointManager::sendComplete, this,
+        vehicle->rallyPointManager(), &RallyPointManager::sendComplete, &connections,
         [&](bool) {
             rally = {true, vehicle->rallyPointManager()->points().size(), entry->rallyPoints().size(), {}, {}};
         },
         Qt::DirectConnection);
 
-    // The mock vehicle fails a mission read that follows the upload. That failure is its own behavior, unrelated to
-    // what COP shows, so declare it rather than let strict logging fail the test.
-    expectAppMessage(QRegularExpression(QStringLiteral("Mission transfer failed")));
+    // The fly view re-reads the active vehicle's plan after an upload, and the mock vehicle may fail that read. Whether
+    // and when that happens is timing dependent and unrelated to what COP shows, so tolerate the message if it occurs.
+    ignoreLogMessage("API.QGCApplication.AppMessage", QtDebugMsg,
+                     QRegularExpression(QStringLiteral("Mission transfer failed")));
     // A manager ignores a write while one of its own transfers, such as the vehicle's initial plan read, is still
     // running, so start only once all three are idle.
     QVERIFY(waitForCondition(
@@ -566,6 +568,8 @@ void COPStressUITest::_overlayDataTracksUploadsAndSkipsNonRoutePoints()
     polygons.append(keepOut);
     circles.append(new QGCFenceCircle(base.atDistanceAndAzimuth(150, 180), 40, false));
     vehicle->geoFenceManager()->sendToVehicle(base, polygons, circles);
+    polygons.clearAndDeleteContents();
+    circles.clearAndDeleteContents();
     QTRY_VERIFY_WITH_TIMEOUT(fence.sent, TestTimeout::longMs());
 
     vehicle->rallyPointManager()->sendToVehicle(
@@ -589,5 +593,4 @@ void COPStressUITest::_overlayDataTracksUploadsAndSkipsNonRoutePoints()
 
     QVERIFY(waitForCondition([vehicle] { return !vehicle->missionManager()->inProgress(); }, TestTimeout::longMs(),
                              QStringLiteral("mission transfers finished")));
-    verifyExpectedLogMessage();
 }
