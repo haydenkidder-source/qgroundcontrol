@@ -77,4 +77,59 @@ void VehicleRoleControllerTest::_loadMigratesUnrecognizedSavedRoleToName()
     QCOMPARE(controller.portForSysid(5), 14550);
 }
 
+void VehicleRoleControllerTest::_nicknamesMustBeDistinct()
+{
+    VehicleRoleController controller;
+    controller.addEntry(1, QStringLiteral("Rover"), QStringLiteral("Mower-1"), 0);
+
+    // Case and surrounding whitespace do not make a nickname distinct; a vehicle's own nickname and an empty one never
+    // clash.
+    QVERIFY(controller.isNicknameTaken(QStringLiteral(" mower-1 "), 2));
+    QVERIFY(!controller.isNicknameTaken(QStringLiteral("Mower-1"), 1));
+    QVERIFY(!controller.isNicknameTaken(QString(), 2));
+    QVERIFY(!controller.isNicknameTaken(QStringLiteral("Scout"), 2));
+
+    expectLogMessage("Custom.VehicleRoles", QtWarningMsg,
+                     QRegularExpression(QStringLiteral("^Ignoring entry - nickname already used")));
+    controller.addEntry(2, QStringLiteral("Copter"), QStringLiteral("MOWER-1"), 0);
+    verifyExpectedLogMessage();
+    QCOMPARE(controller.roleEntries()->count(), 1);
+
+    controller.addEntry(2, QStringLiteral("Copter"), QStringLiteral("Scout"), 0);
+    QCOMPARE(controller.roleEntries()->count(), 2);
+
+    expectLogMessage("Custom.VehicleRoles", QtWarningMsg,
+                     QRegularExpression(QStringLiteral("^Ignoring nickname already used")));
+    controller.setName(1, QStringLiteral("mower-1"));
+    verifyExpectedLogMessage();
+    QCOMPARE(controller.nameForSysid(2), QStringLiteral("Scout"));
+
+    // Saving a vehicle again under its own nickname is not a clash.
+    controller.addEntry(1, QStringLiteral("Rover"), QStringLiteral("Mower-1"), 14550);
+    QCOMPARE(controller.portForSysid(1), 14550);
+}
+
+void VehicleRoleControllerTest::_savedDuplicateNicknamesStillLoad()
+{
+    const QString filePath =
+        SettingsManager::instance()->appSettings()->settingsSavePath() + QStringLiteral("/VehicleRoles.json");
+    {
+        QFile file(filePath);
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        // A save from before nicknames had to be distinct.
+        file.write(R"([{"sysid": 5, "role": "Rover", "name": "Same", "port": 0},
+                       {"sysid": 6, "role": "Copter", "name": "Same", "port": 0}])");
+    }
+
+    VehicleRoleController controller;
+    QCOMPARE(controller.roleEntries()->count(), 2);
+    QCOMPARE(controller.nameForSysid(5), QStringLiteral("Same"));
+    QCOMPARE(controller.nameForSysid(6), QStringLiteral("Same"));
+    QVERIFY(controller.isNicknameTaken(QStringLiteral("Same"), 5));
+
+    // The operator can fix it by renaming either one.
+    controller.setName(1, QStringLiteral("Other"));
+    QCOMPARE(controller.nameForSysid(6), QStringLiteral("Other"));
+}
+
 UT_REGISTER_TEST(VehicleRoleControllerTest, TestLabel::Unit)

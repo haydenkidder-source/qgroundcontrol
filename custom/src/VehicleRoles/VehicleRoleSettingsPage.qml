@@ -122,10 +122,18 @@ AnalyzePage {
                                 }
 
                                 QGCTextField {
+                                    id:                     entryNameField
+                                    readonly property bool taken: _controller.isNicknameTaken(text, entryRow.object.sysid)
                                     Layout.preferredWidth: ScreenTools.defaultFontPixelWidth * 20
                                     text:                   entryRow.object.name
                                     placeholderText:        qsTr("Nickname (optional)")
-                                    onEditingFinished:      _controller.setName(entryRow.rowIndex, text)
+                                    onEditingFinished:      { if (!taken) { _controller.setName(entryRow.rowIndex, text) } }
+                                }
+
+                                QGCLabel {
+                                    visible:    entryNameField.taken
+                                    color:      QGroundControl.globalPalette.warningText
+                                    text:       qsTr("Nickname already used by another vehicle")
                                 }
 
                                 QGCTextField {
@@ -191,10 +199,18 @@ AnalyzePage {
                             }
 
                             QGCTextField {
+                                id:                     unassignedNameField
+                                readonly property bool taken: _controller.isNicknameTaken(text, unassignedRow.object.sysid)
                                 Layout.preferredWidth: ScreenTools.defaultFontPixelWidth * 20
                                 text:                   unassignedRow.object.name
                                 placeholderText:        qsTr("Nickname (optional)")
-                                onEditingFinished:      _controller.setName(unassignedRow.rowIndex, text)
+                                onEditingFinished:      { if (!taken) { _controller.setName(unassignedRow.rowIndex, text) } }
+                            }
+
+                            QGCLabel {
+                                visible:    unassignedNameField.taken
+                                color:      QGroundControl.globalPalette.warningText
+                                text:       qsTr("Nickname already used by another vehicle")
                             }
 
                             QGCButton {
@@ -230,6 +246,7 @@ AnalyzePage {
 
                 QGCTextField {
                     id:                     newNameField
+                    readonly property bool taken: _controller.isNicknameTaken(text, parseInt(newSysidField.text) || 0)
                     Layout.preferredWidth:  ScreenTools.defaultFontPixelWidth * 20
                     placeholderText:        qsTr("Nickname (optional)")
                 }
@@ -243,7 +260,7 @@ AnalyzePage {
 
                 QGCButton {
                     text:       qsTr("Add")
-                    enabled:    newSysidField.acceptableInput
+                    enabled:    newSysidField.acceptableInput && !newNameField.taken
                     onClicked: {
                         _controller.addEntry(parseInt(newSysidField.text), newRoleCombo.currentText, newNameField.text,
                                               newPortField.text === "" ? 0 : parseInt(newPortField.text))
@@ -251,6 +268,12 @@ AnalyzePage {
                         newNameField.text = ""
                         newPortField.text = ""
                     }
+                }
+
+                QGCLabel {
+                    visible:    newNameField.taken
+                    color:      QGroundControl.globalPalette.warningText
+                    text:       qsTr("Nickname already used by another vehicle")
                 }
             }
         }

@@ -103,6 +103,12 @@ void VehicleRoleController::addEntry(int sysid, const QString& role, const QStri
         return;
     }
 
+    if (isNicknameTaken(name, sysid)) {
+        qCWarning(VehicleRoleLog) << "Ignoring entry - nickname already used by another vehicle - sysid:" << sysid
+                                  << "name:" << name;
+        return;
+    }
+
     const int existingIndex = _indexForSysid(sysid);
     if (existingIndex >= 0) {
         setRole(existingIndex, role);
@@ -139,6 +145,11 @@ void VehicleRoleController::setRole(int index, const QString& role)
 void VehicleRoleController::setName(int index, const QString& name)
 {
     if (auto* entry = qobject_cast<VehicleRoleEntry*>(_roleEntries->get(index))) {
+        if (isNicknameTaken(name, entry->sysid())) {
+            qCWarning(VehicleRoleLog) << "Ignoring nickname already used by another vehicle - sysid:" << entry->sysid()
+                                      << "name:" << name;
+            return;
+        }
         entry->setName(name);
         _save();
     }
@@ -175,6 +186,22 @@ void VehicleRoleController::createLinkForEntry(int index)
     SharedLinkConfigurationPtr config = linkManager->addConfiguration(udpConfig);
     linkManager->saveLinkConfigurationList();
     linkManager->createConnectedLink(config);
+}
+
+bool VehicleRoleController::isNicknameTaken(const QString& name, int exceptSysid) const
+{
+    const QString wanted = name.trimmed();
+    if (wanted.isEmpty()) {
+        return false;
+    }
+    for (int i = 0; i < _roleEntries->count(); i++) {
+        const auto* entry = qobject_cast<VehicleRoleEntry*>(_roleEntries->get(i));
+        if (entry && entry->sysid() != exceptSysid &&
+            entry->name().trimmed().compare(wanted, Qt::CaseInsensitive) == 0) {
+            return true;
+        }
+    }
+    return false;
 }
 
 QString VehicleRoleController::nameForSysid(int sysid) const
