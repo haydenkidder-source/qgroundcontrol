@@ -90,6 +90,9 @@ public:
     /// Adds the Exclusion Zones review/approve/push page and the Vehicle Roles page to the Analyze view.
     const QVariantList& analyzePages() final;
     bool startStandardVideoReceivers() const final;
+
+    /// A vehicle's page shows only that vehicle's plan; COP overlays are the place to compare plans.
+    bool showAllVehiclePlans() const final { return false; }
     QUrl navigationHeader() const final;
     QUrl flyViewOverlay() const final;
     QUrl notificationFooter() const final;
