@@ -52,6 +52,7 @@ class QGCCorePlugin : public QObject
     Q_PROPERTY(QUrl navigationHeader READ navigationHeader CONSTANT)
     Q_PROPERTY(QUrl flyViewOverlay READ flyViewOverlay CONSTANT)
     Q_PROPERTY(QUrl notificationFooter READ notificationFooter CONSTANT)
+    Q_PROPERTY(bool showAllVehiclePlans READ showAllVehiclePlans CONSTANT)
     Q_PROPERTY(QVariantList analyzePages                READ analyzePages                                                   CONSTANT)
     Q_PROPERTY(QVariantList toolBarIndicators           READ toolBarIndicators                                              CONSTANT)
 
@@ -108,6 +109,10 @@ public:
 
     /// @return true if the initial setup prompt should show measurement units.
     virtual bool showInitialSetupMeasurementUnits() const;
+
+    /// @return true if the Fly View map draws the flight plan of every connected vehicle, false to draw only the
+    /// active vehicle's plan.
+    virtual bool showAllVehiclePlans() const { return true; }
 
     /// @return An instance of an alternate position source (or NULL if not available)
     virtual QGeoPositionInfoSource *createPositionSource(QObject *parent) { Q_UNUSED(parent); return nullptr; }

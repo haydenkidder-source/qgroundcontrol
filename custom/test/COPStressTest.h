@@ -37,6 +37,7 @@ private slots:
     void _navigationAndLayout();
     void _activeHighlightRequiresActiveVehicle();
     void _overlayDataTracksUploadsAndSkipsNonRoutePoints();
+    void _flyViewDrawsOnlyActiveVehiclePlan();
 
 private:
     COPController* _controller() const;

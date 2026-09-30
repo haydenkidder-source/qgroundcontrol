@@ -153,6 +153,19 @@ QQuickItem* findText(QQuickItem* root, const QString& text)
     return nullptr;
 }
 
+void collectByObjectName(QQuickItem* root, const QString& name, QList<QQuickItem*>& found)
+{
+    if (!root) {
+        return;
+    }
+    if (root->objectName() == name) {
+        found.append(root);
+    }
+    for (auto* child : root->childItems()) {
+        collectByObjectName(child, name, found);
+    }
+}
+
 }  // namespace
 
 COPController* COPStressUITest::_controller() const
@@ -593,4 +606,54 @@ void COPStressUITest::_overlayDataTracksUploadsAndSkipsNonRoutePoints()
 
     QVERIFY(waitForCondition([vehicle] { return !vehicle->missionManager()->inProgress(); }, TestTimeout::longMs(),
                              QStringLiteral("mission transfers finished")));
+}
+
+void COPStressUITest::_flyViewDrawsOnlyActiveVehiclePlan()
+{
+    startUI();
+    QVERIFY(!QTest::currentTestFailed());
+    LinkManager::instance()->setConnectionsAllowed();
+    QPointer<MockLink> first = _start(MAV_TYPE_GROUND_ROVER);
+    QPointer<MockLink> second = _start(MAV_TYPE_QUADROTOR);
+    QVERIFY(first && second);
+    auto* manager = MultiVehicleManager::instance();
+    QTRY_COMPARE_WITH_TIMEOUT(manager->vehicles()->count(), 2, TestTimeout::longMs());
+    QVector<Vehicle*> vehicles;
+    for (const auto& link : {first, second}) {
+        QTRY_VERIFY_WITH_TIMEOUT(_entryFor(link->vehicleId()) && _entryFor(link->vehicleId())->vehicle(),
+                                 TestTimeout::longMs());
+        vehicles.append(_entryFor(link->vehicleId())->vehicle());
+        QTRY_VERIFY_WITH_TIMEOUT(vehicles.last()->isInitialConnectComplete(), TestTimeout::longMs());
+    }
+    manager->setActiveVehicle(vehicles.first());
+    QTRY_COMPARE_WITH_TIMEOUT(manager->activeVehicle(), vehicles.first(), TestTimeout::longMs());
+    // A vehicle's page is the fly view, which is shown once its tab is selected.
+    QVERIFY(_selectTab(first->vehicleId()));
+
+    // The fly view map keeps one entry per vehicle; the plan visuals inside it are what must follow the active vehicle.
+    const auto planVisualsShown = [this](Vehicle* vehicle) {
+        QList<QQuickItem*> entries;
+        collectByObjectName(_rootItem, QStringLiteral("flyViewVehiclePlan"), entries);
+        for (auto* entry : entries) {
+            if (qvariant_cast<QObject*>(entry->parentItem()->property("_vehicle")) != vehicle) {
+                continue;
+            }
+            auto* visuals = qvariant_cast<QObject*>(entry->property("item"));
+            return visuals && qvariant_cast<QObject*>(visuals->property("vehicle")) == vehicle;
+        }
+        return false;
+    };
+    const auto entryCount = [this] {
+        QList<QQuickItem*> entries;
+        collectByObjectName(_rootItem, QStringLiteral("flyViewVehiclePlan"), entries);
+        return entries.size();
+    };
+
+    QTRY_COMPARE_WITH_TIMEOUT(entryCount(), 2, TestTimeout::longMs());
+    QTRY_VERIFY_WITH_TIMEOUT(planVisualsShown(vehicles.first()), TestTimeout::longMs());
+    QVERIFY(!planVisualsShown(vehicles.last()));
+
+    manager->setActiveVehicle(vehicles.last());
+    QTRY_VERIFY_WITH_TIMEOUT(planVisualsShown(vehicles.last()), TestTimeout::longMs());
+    QTRY_VERIFY_WITH_TIMEOUT(!planVisualsShown(vehicles.first()), TestTimeout::longMs());
 }

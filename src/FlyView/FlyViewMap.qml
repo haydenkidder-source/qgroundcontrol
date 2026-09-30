@@ -254,17 +254,28 @@ FlightMap {
     Repeater {
         model: QGroundControl.multiVehicleManager.vehicles
 
-        PlanMapItems {
-            map:                    _root
-            largeMapView:           !pipMode
-            planMasterController:   masterController
-            vehicle:                _vehicle
+        Item {
+            id: vehiclePlan
 
             property var _vehicle: object
 
+            // The controller stays loaded for every vehicle so a plan is not downloaded again each time the active
+            // vehicle changes; only the map visuals follow the plugin's plan visibility rule.
             PlanMasterController {
                 id: masterController
                 Component.onCompleted: startStaticActiveVehicle(object)
+            }
+
+            Loader {
+                objectName: "flyViewVehiclePlan"
+                active:     QGroundControl.corePlugin.showAllVehiclePlans || vehiclePlan._vehicle === _activeVehicle
+
+                sourceComponent: PlanMapItems {
+                    map:                    _root
+                    largeMapView:           !pipMode
+                    planMasterController:   masterController
+                    vehicle:                vehiclePlan._vehicle
+                }
             }
         }
     }
