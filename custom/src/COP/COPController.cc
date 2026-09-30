@@ -308,7 +308,8 @@ void COPController::_vehicleAdded(Vehicle* vehicle)
             [this, entry](int, int, int severity, const QString& text, const QString&) {
                 // Emergency/Alert require immediate action; subsystem health remains in Vehicle's message display.
                 if (severity >= MAV_SEVERITY_EMERGENCY && severity <= MAV_SEVERITY_ALERT) {
-                    notify(tr("%1: %2").arg(entry->label(), text));
+                    notify(tr("%1 needs attention now: \u201c%2\u201d. Look at the vehicle before sending any command.")
+                               .arg(entry->label(), text));
                 }
             });
     auto* links = vehicle->vehicleLinkManager();
@@ -321,12 +322,16 @@ void COPController::_vehicleAdded(Vehicle* vehicle)
         }
     });
     connect(relayTimer, &QTimer::timeout, this, [this, entry]() {
-        notify(tr("%1: No telemetry for over 60 seconds. Review aircraft status and consider a relay-related action.")
+        notify(tr("%1 has not reported for over a minute. Check that it is powered and that the relay aircraft is in "
+                  "range of it.")
                    .arg(entry->label()));
     });
     connect(links, &VehicleLinkManager::communicationLostChanged, this, [this, entry, relayTimer](bool lost) {
         if (lost) {
-            notify(tr("%1: Communication lost").arg(entry->label()));
+            notify(
+                tr("Lost contact with %1. The map shows where it was last seen. It will reconnect on its own when the "
+                   "radio link returns.")
+                    .arg(entry->label()));
         }
         Vehicle* current = entry->vehicle();
         if (!lost && current && _pendingSysid == entry->sysid()) {
@@ -364,7 +369,8 @@ void COPController::_vehicleRemoved(Vehicle* vehicle)
         entry->setVehicle(nullptr);
         disconnect(vehicle, nullptr, this, nullptr);
         disconnect(vehicle->vehicleLinkManager(), nullptr, this, nullptr);
-        notify(tr("%1 disconnected; showing last received state.").arg(entry->label()));
+        notify(tr("%1 disconnected. The screen shows its last known position and mode, not live data.")
+                   .arg(entry->label()));
     }
     connect(vehicle, &QObject::destroyed, this, [this]() {
         _activeBeforeRemoval.clear();
