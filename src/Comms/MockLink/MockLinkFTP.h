@@ -122,7 +122,7 @@ public:
     void setErrorMode(ErrorMode_t errMode) { _errMode = errMode; };
 
     /// Controls whether the server implements the kCmdListDirectoryWithTime command. When false the
-    /// server Naks it with kErrUnknownCommand so the client fallback to kCmdListDirectory can be tested.
+    /// server Naks it (see setListWithTimeFailure) so the client fallback to kCmdListDirectory can be tested.
     void setListDirectoryWithTimeSupported(bool supported) { _listDirectoryWithTimeSupported = supported; }
 
     enum class ListWithTimeFailure

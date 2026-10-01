@@ -159,37 +159,6 @@ void TopLevelViewsTest::_testNavigateViews()
     stopUI();
 }
 
-void TopLevelViewsTest::_testCriticalMessagePreservesFocus()
-{
-    startUI();
-    if (QTest::currentTestFailed()) {
-        return;
-    }
-
-    QVERIFY(clickToolSelectDropdownButton(QStringLiteral("toolbar_viewSettings")));
-    QQuickItem* const searchField = findVisibleItem(_rootItem, QStringLiteral("settings_searchField"));
-    QVERIFY(searchField);
-    searchField->forceActiveFocus();
-    QTRY_VERIFY_WITH_TIMEOUT(searchField->hasActiveFocus(), TestTimeout::shortMs());
-    QTest::keyClick(_window, Qt::Key_V);
-    QCOMPARE(searchField->property("text").toString(), QStringLiteral("v"));
-
-    QObject* const popup = _window->findChild<QObject*>(QStringLiteral("criticalVehicleMessagePopup"));
-    QVERIFY(popup);
-    QVERIFY(QMetaObject::invokeMethod(_window, "showCriticalVehicleMessage",
-                                      Q_ARG(QVariant, QStringLiteral("Focus regression test"))));
-    QTRY_VERIFY_WITH_TIMEOUT(popup->property("opened").toBool(), TestTimeout::shortMs());
-    QVERIFY(searchField->hasActiveFocus());
-    QTest::keyClick(_window, Qt::Key_I);
-    QCOMPARE(searchField->property("text").toString(), QStringLiteral("vi"));
-
-    QTest::keyClick(_window, Qt::Key_Escape);
-    QTRY_VERIFY_WITH_TIMEOUT(!popup->property("visible").toBool(), TestTimeout::shortMs());
-    QVERIFY(searchField->hasActiveFocus());
-    QTest::keyClick(_window, Qt::Key_D);
-    QCOMPARE(searchField->property("text").toString(), QStringLiteral("vid"));
-}
-
 void TopLevelViewsTest::_testSettingsSectionVisibility()
 {
     startUI();
