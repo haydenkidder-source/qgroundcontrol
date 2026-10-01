@@ -13,6 +13,8 @@ private slots:
     void _availableRolesAreArduPilotVehicleTypes();
     void _addEntryRejectsUnrecognizedRole();
     void _loadMigratesUnrecognizedSavedRoleToName();
+    void _nicknamesMustBeDistinct();
+    void _savedDuplicateNicknamesStillLoad();
 
 private:
     QTemporaryDir _directory;

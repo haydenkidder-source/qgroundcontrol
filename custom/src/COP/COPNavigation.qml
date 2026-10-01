@@ -186,7 +186,8 @@ Rectangle {
             property string suggestedRole: ""
             title: qsTr("Vehicle %1 — name and role").arg(sysid)
             buttons: Dialog.Save | Dialog.Cancel
-            acceptButtonEnabled: roleCombo.currentIndex >= 0
+            readonly property bool nicknameTaken: VehicleRoleController.isNicknameTaken(nickname.text, sysid)
+            acceptButtonEnabled: roleCombo.currentIndex >= 0 && !nicknameTaken
             onAccepted: VehicleRoleController.addEntry(sysid, roleCombo.currentText, nickname.text, VehicleRoleController.portForSysid(sysid))
 
             ColumnLayout {
@@ -197,6 +198,13 @@ Rectangle {
                     Layout.fillWidth: true
                     text: VehicleRoleController.nameForSysid(dialog.sysid)
                     placeholderText: qsTr("Nickname (optional)")
+                }
+                QGCLabel {
+                    Layout.fillWidth: true
+                    visible: dialog.nicknameTaken
+                    wrapMode: Text.WordWrap
+                    color: QGroundControl.globalPalette.warningText
+                    text: qsTr("Another vehicle already uses this nickname. Give each vehicle its own.")
                 }
                 QGCLabel { text: qsTr("Role (vehicle type)") }
                 QGCComboBox {

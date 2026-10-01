@@ -136,7 +136,8 @@ public:
 
     /// Adds a new sysid/role/name/port assignment, or updates the existing entry for that sysid if
     /// one is already present. Ignored if sysid is outside the valid MAVLink range [1,255], role
-    /// isn't one of availableRoles(), or port is outside [0,65535] (0 means unassigned).
+    /// isn't one of availableRoles(), port is outside [0,65535] (0 means unassigned), or name is
+    /// already another vehicle's nickname (see isNicknameTaken()).
     Q_INVOKABLE void addEntry(int sysid, const QString& role, const QString& name, int port);
 
     Q_INVOKABLE void removeEntry(int index);
@@ -151,6 +152,12 @@ public:
     /// nothing here keeps it in sync with this entry if either is edited later. No-op if the
     /// entry has no port assigned.
     Q_INVOKABLE void createLinkForEntry(int index);
+
+    /// True if a vehicle other than exceptSysid already has this nickname, ignoring case and
+    /// surrounding whitespace. Nicknames identify vehicles to the operator, so each must be
+    /// distinct. An empty nickname is never taken. Callers editing a vehicle's own nickname pass
+    /// its sysid as exceptSysid.
+    Q_INVOKABLE bool isNicknameTaken(const QString& name, int exceptSysid) const;
 
     /// Returns the assigned name for sysid, or an empty string if unassigned. Callers should fall
     /// back to a generic label.

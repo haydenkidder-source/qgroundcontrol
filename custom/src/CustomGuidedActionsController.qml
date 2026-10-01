@@ -19,9 +19,9 @@ QtObject {
     readonly property int actionAssumeRoverControl: _guidedController.customActionStart + 1
     readonly property int actionReturnToAuto: _guidedController.customActionStart + 2
     readonly property string assumeRoverControlTitle: qsTr("Assume Rover Control")
-    readonly property string assumeRoverControlMessage: qsTr("Switch the rover to manual driving control?")
+    readonly property string assumeRoverControlMessage: qsTr("Take manual control of the rover? Its mission will pause where it is.")
     readonly property string returnToAutoTitle: qsTr("Return to Auto")
-    readonly property string returnToAutoMessage: qsTr("Return the rover to autonomous Auto mode?")
+    readonly property string returnToAutoMessage: qsTr("Hand control back to the rover's autopilot? It will continue its mission from where it paused.")
 
     // Looked up directly rather than relying on ambient _guidedController/_activeVehicle scoping,
     // since this object is a nested child of GuidedActionsController.qml, not a standalone file
@@ -44,8 +44,8 @@ QtObject {
         }
 
         function _warn() {
-            const message = qsTr("The change to Manual mode was not confirmed. " +
-                                 "Verify the rover's actual state before assuming manual control.")
+            const message = qsTr("The rover did not confirm the switch to Manual. It may still be driving itself. " +
+                                 "Check its mode before you take the controls.")
             QGroundControl.corePlugin.operatorNotification(qsTr("Vehicle %1: %2").arg(_vehicle ? _vehicle.id : "?").arg(message))
             _reset()
             QGroundControl.showMessageDialog(mainWindow, _root.assumeRoverControlTitle, message)
@@ -76,8 +76,8 @@ QtObject {
         }
 
         function _warn() {
-            const message = qsTr("The change to Auto mode was not confirmed. " +
-                                 "Verify the rover's actual state before assuming autonomous control has resumed.")
+            const message = qsTr("The rover did not confirm the switch to Auto. It may still be under manual control. " +
+                                 "Check its mode before you walk away.")
             QGroundControl.corePlugin.operatorNotification(qsTr("Vehicle %1: %2").arg(_vehicle ? _vehicle.id : "?").arg(message))
             _reset()
             QGroundControl.showMessageDialog(mainWindow, _root.returnToAutoTitle, message)
@@ -164,15 +164,15 @@ QtObject {
                 break
             }
             if (!_activeVehicle.rover) {
-                QGroundControl.showMessageDialog(mainWindow, assumeRoverControlTitle, qsTr("Active vehicle is not a rover."))
+                QGroundControl.showMessageDialog(mainWindow, assumeRoverControlTitle, qsTr("This button is for the rover, but the vehicle you are controlling is not a rover. Select the rover first."))
                 break
             }
             if (_activeVehicle.vehicleLinkManager.communicationLost) {
-                QGroundControl.showMessageDialog(mainWindow, assumeRoverControlTitle, qsTr("Cannot assume control: no telemetry from the rover."))
+                QGroundControl.showMessageDialog(mainWindow, assumeRoverControlTitle, qsTr("Can't switch to Manual: the rover is not reporting in right now. Wait for it to reconnect, then try again."))
                 break
             }
             if (_activeVehicle.flightModes.indexOf("Manual") === -1) {
-                QGroundControl.showMessageDialog(mainWindow, assumeRoverControlTitle, qsTr("Rover does not report a Manual flight mode."))
+                QGroundControl.showMessageDialog(mainWindow, assumeRoverControlTitle, qsTr("This rover does not offer a Manual mode, so it can't be switched."))
                 break
             }
             _returnToAutoTimer._reset()
@@ -187,15 +187,15 @@ QtObject {
                 break
             }
             if (!_activeVehicle.rover) {
-                QGroundControl.showMessageDialog(mainWindow, returnToAutoTitle, qsTr("Active vehicle is not a rover."))
+                QGroundControl.showMessageDialog(mainWindow, returnToAutoTitle, qsTr("This button is for the rover, but the vehicle you are controlling is not a rover. Select the rover first."))
                 break
             }
             if (_activeVehicle.vehicleLinkManager.communicationLost) {
-                QGroundControl.showMessageDialog(mainWindow, returnToAutoTitle, qsTr("Cannot return to Auto: no telemetry from the rover."))
+                QGroundControl.showMessageDialog(mainWindow, returnToAutoTitle, qsTr("Can't switch to Auto: the rover is not reporting in right now. Wait for it to reconnect, then try again."))
                 break
             }
             if (_activeVehicle.flightModes.indexOf("Auto") === -1) {
-                QGroundControl.showMessageDialog(mainWindow, returnToAutoTitle, qsTr("Rover does not report an Auto flight mode."))
+                QGroundControl.showMessageDialog(mainWindow, returnToAutoTitle, qsTr("This rover does not offer an Auto mode, so it can't be switched."))
                 break
             }
             _assumeRoverControlTimer._reset()
