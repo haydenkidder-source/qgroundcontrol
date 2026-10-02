@@ -49,7 +49,7 @@ class QGCCorePlugin : public QObject
     Q_PROPERTY(const QGCOptions *options                READ options                                                        CONSTANT)
     Q_PROPERTY(const QmlObjectListModel *customMapItems READ customMapItems                                                 CONSTANT)
     Q_PROPERTY(QString showAdvancedUIMessage            READ showAdvancedUIMessage                                          CONSTANT)
-    Q_PROPERTY(QString stableDownloadUrl                READ stableDownloadUrl                                              CONSTANT)
+    Q_PROPERTY(QString stableDownloadUrl READ stableDownloadUrl CONSTANT)
     Q_PROPERTY(QUrl navigationHeader READ navigationHeader CONSTANT)
     Q_PROPERTY(QUrl flyViewOverlay READ flyViewOverlay CONSTANT)
     Q_PROPERTY(QUrl notificationFooter READ notificationFooter CONSTANT)
