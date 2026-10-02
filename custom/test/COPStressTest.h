@@ -40,6 +40,9 @@ private slots:
     void _flyViewDrawsOnlyActiveVehiclePlan();
     void _flyViewPlansSurviveSwitchingAndDisconnect();
 
+protected:
+    bool usesPluginFlyViewOverlay() const override { return true; }
+
 private:
     COPController* _controller() const;
     COPVehicle* _entryFor(int sysid) const;

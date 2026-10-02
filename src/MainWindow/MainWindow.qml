@@ -356,6 +356,7 @@ ApplicationWindow {
 
     Loader {
         id: flyViewOverlayLoader
+        objectName: "flyViewOverlayLoader"
         anchors.fill: parent
         anchors.topMargin: ScreenTools.toolbarHeight
         clip: true

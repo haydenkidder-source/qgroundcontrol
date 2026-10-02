@@ -158,6 +158,12 @@ void QmlUITestBase::startUI()
     _pageDelay = (qApp->platformName() != QLatin1String("offscreen")) ? 400 : 0;
 
     _rootItem = _window->contentItem();
+
+    if (!usesPluginFlyViewOverlay()) {
+        QQuickItem* const overlayLoader = findItem(_rootItem, QStringLiteral("flyViewOverlayLoader"));
+        QVERIFY2(overlayLoader, "MainWindow has no flyViewOverlayLoader");
+        overlayLoader->setProperty("active", false);
+    }
 }
 
 void QmlUITestBase::closeUIWindow()
