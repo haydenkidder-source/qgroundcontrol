@@ -74,7 +74,7 @@ void DataFlashParserTest::_getTagsFromLogInvalidTest()
     QVERIFY(cameraFeedback.isEmpty());
 }
 
-void DataFlashParserTest::_getTagsFromLogTruncatedValueTest()
+void DataFlashParserTest::_getTagsFromLogInvalidFmtLengthTest()
 {
     QByteArray format(86, '\0');
     format[0] = 100;
@@ -86,7 +86,7 @@ void DataFlashParserTest::_getTagsFromLogTruncatedValueTest()
     QList<GeoTagData> cameraFeedback;
     QString errorMessage;
     expectLogMessage("Utilities.APMDataFlashUtility", QtWarningMsg,
-                     QRegularExpression(QStringLiteral("^Missing or truncated DataFlash value for format:")));
+                     QRegularExpression(QStringLiteral("^Invalid DataFlash FMT length for type:")));
     QVERIFY(!DataFlashParser::getTagsFromLog(logBuffer, cameraFeedback, errorMessage));
     verifyExpectedLogMessage();
     QVERIFY(cameraFeedback.isEmpty());
