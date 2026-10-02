@@ -1,15 +1,6 @@
 name: MacOS
 
 on:
-  push:
-    branches:
-      - master
-      - 'Stable*'
-    tags:
-      - 'v[0-9]+.[0-9]+.[0-9]+'
-    paths-ignore:
-      - 'docs/**'
-  merge_group:
   workflow_dispatch:
     inputs:
       debug_runner:
