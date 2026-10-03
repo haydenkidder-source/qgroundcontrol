@@ -345,19 +345,23 @@ ApplicationWindow {
         onLoaded: item.hostWindow = mainWindow
     }
 
+    // Disabled under the tool drawer: pointer handlers (e.g. GeoMap DragHandler) still get presses through it and steal drags
     FlyView {
         id:                     flyView
         objectName:             "mainView_fly"
         contentCovered:         flyViewOverlayLoader.item && flyViewOverlayLoader.item.visible
         anchors.fill:           parent
+        enabled:                !toolDrawer.visible
     }
 
     Loader {
         id: flyViewOverlayLoader
+        objectName: "flyViewOverlayLoader"
         anchors.fill: parent
         anchors.topMargin: ScreenTools.toolbarHeight
         clip: true
         visible: flyView.visible
+        enabled: !toolDrawer.visible
         source: QGroundControl.corePlugin.flyViewOverlay
         onLoaded: item.hostWindow = mainWindow
     }
@@ -367,6 +371,7 @@ ApplicationWindow {
         objectName:     "mainView_plan"
         anchors.fill:   parent
         visible:        false
+        enabled:        !toolDrawer.visible
     }
 
     footer: Column {
@@ -531,14 +536,16 @@ ApplicationWindow {
         }
     }
 
+    // No focus and no Escape handler: either would steal keys from whatever the user is typing in.
     Popup {
         id:                 criticalVehicleMessagePopup
-        objectName:         "criticalVehicleMessagePopup"
+        objectName:         "criticalVehicleMessage_popup"
         y:                  ScreenTools.toolbarHeight + ScreenTools.defaultFontPixelHeight
         x:                  Math.round((mainWindow.width - width) * 0.5)
         width:              mainWindow.width  * 0.55
         height:             criticalVehicleMessageText.contentHeight + ScreenTools.defaultFontPixelHeight * 2
         modal:              false
+        closePolicy:        Popup.CloseOnPressOutside
 
         property alias  criticalVehicleMessage:             criticalVehicleMessageText.text
         property bool   additionalCriticalMessagesReceived: false
@@ -546,17 +553,11 @@ ApplicationWindow {
         function acknowledge() {
             close()
             if (additionalCriticalMessagesReceived) {
-                additionalCriticalMessagesReceived = false;
-                flyView.dropMainStatusIndicatorTool();
+                additionalCriticalMessagesReceived = false
+                flyView.dropMainStatusIndicatorTool()
             } else if (QGroundControl.multiVehicleManager.activeVehicle) {
-                QGroundControl.multiVehicleManager.activeVehicle.resetErrorLevelMessages();
+                QGroundControl.multiVehicleManager.activeVehicle.resetErrorLevelMessages()
             }
-        }
-
-        Shortcut {
-            sequence:   "Escape"
-            enabled:    criticalVehicleMessagePopup.visible
-            onActivated: criticalVehicleMessagePopup.acknowledge()
         }
 
         background: Rectangle {
@@ -615,6 +616,7 @@ ApplicationWindow {
 
         QGCLabel {
             id:                 criticalVehicleMessageText
+            objectName:         "criticalVehicleMessage_text"
             width:              criticalVehicleMessagePopup.width - ScreenTools.defaultFontPixelHeight
             anchors.centerIn:   parent
             wrapMode:           Text.WordWrap

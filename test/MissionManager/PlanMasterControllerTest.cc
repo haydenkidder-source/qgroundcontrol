@@ -708,6 +708,8 @@ void PlanMasterControllerTest::_testRemoveAllFromVehicleUnderFleetChurn()
 {
     ignoreLogMessage("API.QGCApplication.AppMessage", QtDebugMsg,
                      QRegularExpression(QStringLiteral("Connected to Vehicle [0-9]+")));
+    // A vehicle torn down while its available-modes request is in flight fails that request
+    ignoreLogMessage("Vehicle.StandardModes", QtWarningMsg, QRegularExpression("Failed to retrieve available modes"));
     MultiVehicleManager* const manager = MultiVehicleManager::instance();
 
     for (int i = 0; i < 3; i++) {

@@ -5,28 +5,30 @@
 
 add_subdirectory(GeoTag)
 
-target_sources(${CMAKE_PROJECT_NAME}
-    PRIVATE
-        MAVLinkChartControllerTest.cc
-        MAVLinkChartControllerTest.h
-        MAVLinkConsoleControllerTest.cc
-        MAVLinkConsoleControllerTest.h
-        MAVLinkInspectorControllerTest.cc
-        MAVLinkInspectorControllerTest.h
-        OnboardLogDownloadTest.cc
-        OnboardLogDownloadTest.h
-        MAVLinkMessageFieldTest.cc
-        MAVLinkMessageFieldTest.h
-        MAVLinkMessageTest.cc
-        MAVLinkMessageTest.h
-        MAVLinkSystemTest.cc
-        MAVLinkSystemTest.h
-        MavlinkLogTest.cc
-        MavlinkLogTest.h
-        APMDataFlashLogParserTest.cc
-        APMDataFlashLogParserTest.h
-        LogFileParserTest.cc
-        LogFileParserTest.h
+target_sources(
+    ${CMAKE_PROJECT_NAME}
+    PRIVATE MAVLinkChartControllerTest.cc
+            MAVLinkChartControllerTest.h
+            MAVLinkConsoleControllerTest.cc
+            MAVLinkConsoleControllerTest.h
+            MAVLinkInspectorControllerTest.cc
+            MAVLinkInspectorControllerTest.h
+            OnboardLogDownloadTest.cc
+            OnboardLogDownloadTest.h
+            MAVLinkMessageFieldTest.cc
+            MAVLinkMessageFieldTest.h
+            MAVLinkMessageTest.cc
+            MAVLinkMessageTest.h
+            MAVLinkSystemTest.cc
+            MAVLinkSystemTest.h
+            MavlinkLogTest.cc
+            MavlinkLogTest.h
+            APMDataFlashLogParserTest.cc
+            APMDataFlashLogParserTest.h
+            LogFileParserTest.cc
+            LogFileParserTest.h
+            LogViewerControllerTest.cc
+            LogViewerControllerTest.h
 )
 
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
@@ -42,3 +44,4 @@ add_qgc_test(MAVLinkSystemTest LABELS Unit AnalyzeView)
 add_qgc_test(MavlinkLogTest LABELS Integration AnalyzeView Vehicle)
 add_qgc_test(APMDataFlashLogParserTest LABELS Unit AnalyzeView)
 add_qgc_test(LogFileParserTest LABELS Unit AnalyzeView)
+add_qgc_test(LogViewerControllerTest LABELS Unit AnalyzeView)

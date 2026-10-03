@@ -114,8 +114,6 @@ void QmlUITestBase::startUI()
     // Ignore benign Qt platform warnings that cannot be avoided in offscreen mode
     ignoreLogMessage("default", QtWarningMsg,
                      QRegularExpression(QStringLiteral("This plugin does not support propagateSizeHints")));
-    ignoreLogMessage("qt.qpa.fonts", QtWarningMsg,
-                     QRegularExpression(QStringLiteral("Populating font family aliases")));
     ignoreLogMessage("default", QtWarningMsg, QRegularExpression(QStringLiteral("QRhiGles2")));
     // Async QML incubation rides QQuickWindow's render-loop controller, which never pumps in
     // offscreen mode, so a component still incubating at engine teardown logs this.
@@ -160,6 +158,12 @@ void QmlUITestBase::startUI()
     _pageDelay = (qApp->platformName() != QLatin1String("offscreen")) ? 400 : 0;
 
     _rootItem = _window->contentItem();
+
+    if (!usesPluginFlyViewOverlay()) {
+        QQuickItem* const overlayLoader = findItem(_rootItem, QStringLiteral("flyViewOverlayLoader"));
+        QVERIFY2(overlayLoader, "MainWindow has no flyViewOverlayLoader");
+        overlayLoader->setProperty("active", false);
+    }
 }
 
 void QmlUITestBase::closeUIWindow()

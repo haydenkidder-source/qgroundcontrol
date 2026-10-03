@@ -55,6 +55,11 @@ protected:
     /// on return to propagate failures to the calling test slot.
     void startUI();
 
+    /// Whether startUI() leaves the plugin's fly view overlay loaded. Overlays such as a plugin's
+    /// retained-state page can cover the stock Fly View and absorb the clicks these tests send it,
+    /// so the default is to run without one. Tests that exercise the overlay itself return true.
+    virtual bool usesPluginFlyViewOverlay() const { return false; }
+
     /// Close the QML window and wait for it to settle.
     void closeUIWindow();
 
