@@ -21,6 +21,11 @@ Rectangle {
     property bool centered: false
     // Keep-out zones are red whatever the vehicle color, so "forbidden" never depends on which vehicle owns it.
     readonly property color _keepOutColor: "#E53935"
+    // The vehicle color is taken, so the boundary types are told apart by dash length (multiples of line width):
+    // long dashes keep a vehicle in, short dashes keep it out, and the route is solid.
+    readonly property var _keepInDash: [6, 3]
+    readonly property var _keepOutDash: [2, 2]
+    readonly property int _circleOutlineSegments: 120
     readonly property bool overview: COPController.selectedSysid === 0
 
     // Flattened, reactive views over whichever vehicles currently have their COP "Plan" overlay
@@ -61,8 +66,17 @@ Rectangle {
         const result = []
         for (const vehicle of root._overlayVehicles()) {
             for (const circle of vehicle.fenceCircles) {
-                result.push({ center: circle.center, radius: circle.radius, inclusion: circle.inclusion, color: vehicle.color })
+                result.push({ center: circle.center, radius: circle.radius, inclusion: circle.inclusion,
+                              outline: root._circleOutline(circle.center, circle.radius), color: vehicle.color })
             }
+        }
+        return result
+    }
+
+    function _circleOutline(center, radius) {
+        const result = []
+        for (let i = 0; i < root._circleOutlineSegments; i++) {
+            result.push(center.atDistanceAndAzimuth(radius, i * 360 / root._circleOutlineSegments))
         }
         return result
     }
@@ -132,12 +146,14 @@ Rectangle {
                     }
                 }
                 // Read-only per-vehicle plan overlay (COPNavigation.qml's "Plan" toggle). The owning vehicle
-                // is always the outline/route color; the layer type is told apart by shape and fill:
-                //   route      - thick line with waypoint dots, S = start, E = end
-                //   keep-in    - outline only (stay inside)
-                //   keep-out   - red fill (stay out)
+                // is always the outline/route color; the layer type is told apart by line style and fill:
+                //   route      - solid thick line with waypoint dots, S = start, E = end
+                //   keep-in    - long-dash outline (stay inside)
+                //   keep-out   - short-dash outline and red fill (stay out)
                 //   rally      - diamond
                 // Drawn bottom to top: fences, rally, route, waypoints, then the vehicle markers below.
+                // Map polygons and circles cannot dash their borders, so they only provide the fill and the
+                // extent for "Fit vehicles"; COPBoundaryOutline draws the dashed outline over each.
                 MapItemView {
                     model: root._overlayFencePolygons()
                     delegate: MapPolygon {
@@ -145,8 +161,18 @@ Rectangle {
                         path: modelData.path
                         color: modelData.inclusion ? "transparent"
                                : Qt.rgba(root._keepOutColor.r, root._keepOutColor.g, root._keepOutColor.b, 0.35)
-                        border.color: modelData.color
-                        border.width: 3
+                        border.width: 0
+                    }
+                }
+                MapItemView {
+                    model: root._overlayFencePolygons()
+                    delegate: COPBoundaryOutline {
+                        required property var modelData
+                        objectName: modelData.inclusion ? "copKeepInOutline" : "copKeepOutOutline"
+                        mapControl: map
+                        vertices: modelData.path
+                        lineColor: modelData.color
+                        dashPattern: modelData.inclusion ? root._keepInDash : root._keepOutDash
                     }
                 }
                 MapItemView {
@@ -157,8 +183,18 @@ Rectangle {
                         radius: modelData.radius
                         color: modelData.inclusion ? "transparent"
                                : Qt.rgba(root._keepOutColor.r, root._keepOutColor.g, root._keepOutColor.b, 0.35)
-                        border.color: modelData.color
-                        border.width: 3
+                        border.width: 0
+                    }
+                }
+                MapItemView {
+                    model: root._overlayFenceCircles()
+                    delegate: COPBoundaryOutline {
+                        required property var modelData
+                        objectName: modelData.inclusion ? "copKeepInOutline" : "copKeepOutOutline"
+                        mapControl: map
+                        vertices: modelData.outline
+                        lineColor: modelData.color
+                        dashPattern: modelData.inclusion ? root._keepInDash : root._keepOutDash
                     }
                 }
                 MapItemView {
@@ -265,6 +301,7 @@ Rectangle {
                 Rectangle {
                     id: legend
                     objectName: "copOverlayLegend"
+                    readonly property real swatchWidth: ScreenTools.defaultFontPixelHeight * 3
                     visible: root._overlayVehicles().length > 0
                     anchors.left: parent.left
                     anchors.bottom: parent.bottom
@@ -284,7 +321,7 @@ Rectangle {
                                 required property var modelData
                                 spacing: ScreenTools.defaultFontPixelWidth
                                 Rectangle {
-                                    Layout.preferredWidth: ScreenTools.defaultFontPixelHeight
+                                    Layout.preferredWidth: legend.swatchWidth
                                     Layout.preferredHeight: ScreenTools.defaultFontPixelHeight * 0.6
                                     color: modelData.color
                                 }
@@ -294,42 +331,44 @@ Rectangle {
                         RowLayout {
                             spacing: ScreenTools.defaultFontPixelWidth
                             Rectangle {
-                                Layout.preferredWidth: ScreenTools.defaultFontPixelHeight
+                                Layout.preferredWidth: legend.swatchWidth
                                 Layout.preferredHeight: 4
                                 color: QGroundControl.globalPalette.text
                             }
                             QGCLabel { text: qsTr("Route (S start, E end)"); font.pointSize: ScreenTools.smallFontPointSize }
                         }
-                        RowLayout {
-                            spacing: ScreenTools.defaultFontPixelWidth
-                            Rectangle {
-                                Layout.preferredWidth: ScreenTools.defaultFontPixelHeight
-                                Layout.preferredHeight: ScreenTools.defaultFontPixelHeight * 0.6
-                                color: "transparent"
-                                border.color: QGroundControl.globalPalette.text
-                                border.width: 3
+                        Repeater {
+                            model: [
+                                { text: qsTr("Keep-in fence (stay inside)"), dash: root._keepInDash, filled: false },
+                                { text: qsTr("Keep-out zone (stay outside)"), dash: root._keepOutDash, filled: true }
+                            ]
+                            delegate: RowLayout {
+                                required property var modelData
+                                spacing: ScreenTools.defaultFontPixelWidth
+                                Rectangle {
+                                    Layout.preferredWidth: legend.swatchWidth
+                                    Layout.preferredHeight: ScreenTools.defaultFontPixelHeight * 0.8
+                                    color: modelData.filled
+                                           ? Qt.rgba(root._keepOutColor.r, root._keepOutColor.g, root._keepOutColor.b, 0.35)
+                                           : "transparent"
+                                    COPDashedLine {
+                                        anchors.fill: parent
+                                        color: QGroundControl.globalPalette.text
+                                        dashPattern: modelData.dash
+                                        points: [Qt.point(0, height / 2), Qt.point(width, height / 2)]
+                                    }
+                                }
+                                QGCLabel { text: modelData.text; font.pointSize: ScreenTools.smallFontPointSize }
                             }
-                            QGCLabel { text: qsTr("Keep-in fence (stay inside)"); font.pointSize: ScreenTools.smallFontPointSize }
-                        }
-                        RowLayout {
-                            spacing: ScreenTools.defaultFontPixelWidth
-                            Rectangle {
-                                Layout.preferredWidth: ScreenTools.defaultFontPixelHeight
-                                Layout.preferredHeight: ScreenTools.defaultFontPixelHeight * 0.6
-                                color: Qt.rgba(root._keepOutColor.r, root._keepOutColor.g, root._keepOutColor.b, 0.35)
-                                border.color: QGroundControl.globalPalette.text
-                                border.width: 3
-                            }
-                            QGCLabel { text: qsTr("Keep-out zone (stay outside)"); font.pointSize: ScreenTools.smallFontPointSize }
                         }
                         RowLayout {
                             spacing: ScreenTools.defaultFontPixelWidth
                             Item {
-                                Layout.preferredWidth: ScreenTools.defaultFontPixelHeight
+                                Layout.preferredWidth: legend.swatchWidth
                                 Layout.preferredHeight: ScreenTools.defaultFontPixelHeight
                                 Rectangle {
                                     anchors.centerIn: parent
-                                    width: parent.width * 0.72
+                                    width: parent.height * 0.72
                                     height: width
                                     rotation: 45
                                     color: QGroundControl.globalPalette.text

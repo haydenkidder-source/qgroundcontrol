@@ -608,6 +608,124 @@ void COPStressUITest::_overlayDataTracksUploadsAndSkipsNonRoutePoints()
                              QStringLiteral("mission transfers finished")));
 }
 
+void COPStressUITest::_overlayBoundariesUseDistinctDashPatterns()
+{
+    startUI();
+    QVERIFY(!QTest::currentTestFailed());
+    LinkManager::instance()->setConnectionsAllowed();
+    QPointer<MockLink> rover = _start(MAV_TYPE_GROUND_ROVER);
+    QVERIFY(rover);
+    const int id = rover->vehicleId();
+    QTRY_VERIFY_WITH_TIMEOUT(_entryFor(id) && _entryFor(id)->vehicle(), TestTimeout::longMs());
+    COPVehicle* entry = _entryFor(id);
+    Vehicle* vehicle = entry->vehicle();
+    QTRY_VERIFY_WITH_TIMEOUT(vehicle->isInitialConnectComplete(), TestTimeout::longMs());
+    QTRY_VERIFY_WITH_TIMEOUT(entry->coordinate().isValid(), TestTimeout::longMs());
+
+    // See _overlayDataTracksUploadsAndSkipsNonRoutePoints: the fly view's re-read after an upload may fail on the mock.
+    ignoreLogMessage("API.QGCApplication.AppMessage", QtDebugMsg,
+                     QRegularExpression(QStringLiteral("Mission transfer failed")));
+    QVERIFY(waitForCondition([vehicle] { return !vehicle->geoFenceManager()->inProgress(); }, TestTimeout::longMs(),
+                             QStringLiteral("initial fence transfer finished")));
+
+    const QGeoCoordinate base = entry->coordinate();
+    QmlObjectListModel polygons;
+    QmlObjectListModel circles;
+    auto* keepIn = new QGCFencePolygon(true);
+    auto* keepOut = new QGCFencePolygon(false);
+    for (double azimuth : {0.0, 120.0, 240.0}) {
+        keepIn->appendVertex(base.atDistanceAndAzimuth(300, azimuth));
+        keepOut->appendVertex(base.atDistanceAndAzimuth(50, azimuth));
+    }
+    polygons.append(keepIn);
+    polygons.append(keepOut);
+    circles.append(new QGCFenceCircle(base.atDistanceAndAzimuth(150, 180), 40, false));
+    QSignalSpy sent(vehicle->geoFenceManager(), &GeoFenceManager::sendComplete);
+    QVERIFY(sent.isValid());
+    vehicle->geoFenceManager()->sendToVehicle(base, polygons, circles);
+    polygons.clearAndDeleteContents();
+    circles.clearAndDeleteContents();
+    QTRY_VERIFY_WITH_TIMEOUT(sent.count() >= 1, TestTimeout::longMs());
+    QTRY_COMPARE_WITH_TIMEOUT(entry->fencePolygons().size(), 2, TestTimeout::longMs());
+    QTRY_COMPARE_WITH_TIMEOUT(entry->fenceCircles().size(), 1, TestTimeout::longMs());
+
+    QVERIFY(_selectTab(0));
+    entry->setPlanOverlayVisible(true);
+
+    const auto outlines = [this](const QString& name) {
+        QList<QQuickItem*> found;
+        collectByObjectName(_rootItem, name, found);
+        return found;
+    };
+    const QString keepInName = QStringLiteral("copKeepInOutline");
+    const QString keepOutName = QStringLiteral("copKeepOutOutline");
+    QTRY_COMPARE_WITH_TIMEOUT(outlines(keepInName).size(), 1, TestTimeout::longMs());
+    QTRY_COMPARE_WITH_TIMEOUT(outlines(keepOutName).size(), 2, TestTimeout::longMs());
+
+    // Told apart by line style: keep-in is long dashes, keep-out is shorter ones, and both polygons and circles of a
+    // type match.
+    const QVariantList keepInDash = outlines(keepInName).first()->property("dashPattern").toList();
+    const QVariantList keepOutDash = outlines(keepOutName).first()->property("dashPattern").toList();
+    QVERIFY(keepInDash.size() >= 2);
+    QVERIFY(keepOutDash.size() >= 2);
+    QVERIFY(keepInDash.first().toDouble() > keepOutDash.first().toDouble());
+    for (auto* outline : outlines(keepOutName)) {
+        QCOMPARE(outline->property("dashPattern").toList(), keepOutDash);
+    }
+
+    // Each outline is projected onto the map as a closed ring that starts and ends at its anchor point, which sits on
+    // the first vertex's map position. Qt's dash stroker drops dashes outside the Shape's bounds, so every point must
+    // lie within them.
+    auto* map = findItem(_rootItem, QStringLiteral("copMap"));
+    QVERIFY(map);
+    const auto screenPoints = [](QQuickItem* outline) { return outline->property("_screenPoints").toList(); };
+    const auto anchorOf = [](QQuickItem* outline) { return outline->property("anchorPoint").toPointF(); };
+    const auto extent = [&](QQuickItem* outline) {
+        qreal largest = 0;
+        for (const QVariant& point : screenPoints(outline)) {
+            largest = qMax(largest, (point.toPointF() - anchorOf(outline)).manhattanLength());
+        }
+        return largest;
+    };
+    for (const QString& name : {keepInName, keepOutName}) {
+        for (auto* outline : outlines(name)) {
+            const int vertexCount = outline->property("vertices").toList().size();
+            QVERIFY(vertexCount >= 3);
+            QTRY_COMPARE_WITH_TIMEOUT(screenPoints(outline).size(), vertexCount + 1, TestTimeout::shortMs());
+            QCOMPARE(screenPoints(outline).first().toPointF(), anchorOf(outline));
+            QCOMPARE(screenPoints(outline).last().toPointF(), anchorOf(outline));
+            QVERIFY(extent(outline) > 0);
+            auto* shape = qvariant_cast<QQuickItem*>(outline->property("sourceItem"));
+            QVERIFY(shape);
+            const QRectF bounds(0, 0, shape->width(), shape->height());
+            for (const QVariant& point : screenPoints(outline)) {
+                QVERIFY2(bounds.contains(point.toPointF()), qPrintable(QStringLiteral("%1 outside %2x%3")
+                                                                           .arg(point.toPointF().x())
+                                                                           .arg(bounds.width())
+                                                                           .arg(bounds.height())));
+            }
+            QPointF mapPosition;
+            QVERIFY(QMetaObject::invokeMethod(
+                map, "fromCoordinate", Q_RETURN_ARG(QPointF, mapPosition),
+                Q_ARG(QGeoCoordinate, outline->property("vertices").toList().first().value<QGeoCoordinate>()),
+                Q_ARG(bool, false)));
+            const QPointF expectedScene = map->mapToScene(mapPosition);
+            QTRY_VERIFY_WITH_TIMEOUT(
+                (shape->mapToScene(screenPoints(outline).first().toPointF()) - expectedScene).manhattanLength() < 1,
+                TestTimeout::shortMs());
+        }
+    }
+
+    // The projection follows the map's zoom: one level doubles the on-screen size.
+    const qreal before = extent(outlines(keepInName).first());
+    const double zoom = map->property("zoomLevel").toDouble();
+    const bool zoomIn = zoom + 1 <= map->property("maximumZoomLevel").toDouble();
+    QVERIFY(map->setProperty("zoomLevel", zoomIn ? zoom + 1 : zoom - 1));
+    const qreal expected = before * (zoomIn ? 2.0 : 0.5);
+    QTRY_VERIFY_WITH_TIMEOUT(qAbs(extent(outlines(keepInName).first()) - expected) < expected * 0.05,
+                             TestTimeout::shortMs());
+}
+
 void COPStressUITest::_flyViewDrawsOnlyActiveVehiclePlan()
 {
     startUI();
