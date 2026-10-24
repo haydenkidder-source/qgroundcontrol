@@ -25,27 +25,6 @@ Rectangle {
         }
     }
 
-    // Best-guess ArduPilot vehicle type from the connected vehicle's own MAV_TYPE, offered as the
-    // default when a sysid has no role assigned yet - the operator can still override it.
-    function suggestedRoleFor(vehicle) {
-        if (!vehicle) {
-            return ""
-        }
-        if (vehicle.rover) {
-            return "Rover"
-        }
-        if (vehicle.sub) {
-            return "Sub"
-        }
-        if (vehicle.multiRotor) {
-            return "Copter"
-        }
-        if (vehicle.fixedWing || vehicle.vtol) {
-            return "Plane"
-        }
-        return ""
-    }
-
     ColumnLayout {
         id: layout
         width: parent.width
@@ -148,7 +127,7 @@ Rectangle {
                 onClicked: {
                     if (root.selected && root.hostWindow && root.hostWindow.allowViewSwitch()) {
                         editVehicleDialog.open({ sysid: root.selected.sysid,
-                                                  suggestedRole: root.suggestedRoleFor(root.selected.vehicle) })
+                                                  suggestedRole: VehicleRoleController.suggestedRole(root.selected.vehicle) })
                     }
                 }
             }

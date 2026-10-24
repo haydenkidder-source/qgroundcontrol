@@ -6,10 +6,11 @@ passes itself to each loaded item's `hostWindow` property; navigation uses its e
 validation guard and view-switch functions.
 
 COP is the landing page. Vehicle tabs retain first-seen order in `QSettings` and include
-saved Vehicle Roles entries. A role change updates existing labels. Selecting a tab does
-not change the active vehicle. **Assume Control** selects a connected vehicle, or remembers
-one system ID to select when it connects. The pending request can be cancelled. This action
-changes QGC's active vehicle; it does not arm, change flight mode, or transfer radio authority.
+saved vehicle entries (Analyze > Vehicle Links). A role change updates existing labels.
+Selecting a tab does not change the active vehicle. **Assume Control** selects a connected
+vehicle, or remembers one system ID to select when it connects. The pending request can be
+cancelled. This action changes QGC's active vehicle; it does not arm, change flight mode,
+or transfer radio authority.
 
 Disconnected or inactive tabs show the last received position, flight mode, and update time.
 The normal FlyView is exposed only when that tab's vehicle is connected and active. These

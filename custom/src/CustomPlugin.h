@@ -87,7 +87,8 @@ public:
     QList<PlanCreator*> planCreators(PlanMasterController* planMasterController) final;
     /// Registers the CustomSettings group so the generated Custom settings page can access it.
     void registerCustomSettings(SettingsManager* settingsManager) final;
-    /// Adds the Exclusion Zones review/approve/push page and the Vehicle Roles page to the Analyze view.
+    /// Adds the Exclusion Zones review/approve/push page, the App Log Viewer and the Vehicle Links page to the Analyze
+    /// view.
     const QVariantList& analyzePages() final;
     bool startStandardVideoReceivers() const final;
 

@@ -23,12 +23,14 @@ into command-timeout behavior on this same mesh, which also flagged this exact r
 1. **On each Microhard radio**, set its serial-to-IP forward destination to the *same* ground
    station IP, but a **distinct** destination port per vehicle. Do not let two radios share a
    destination port, even temporarily during testing.
-2. **In QGC**, add one UDP comm link per vehicle, each listening on its assigned port. Do not
-   rely on a single UDP link (or autoconnect) to receive multiple vehicles' traffic on one port.
-3. Vehicle identification (which sysid is Rover/Stallion/Hex) is handled separately via the
-   Vehicle Roles page (Analyze > Vehicle Roles) - port assignment is purely to prevent stream
-   corruption and is independent of that sysid mapping. Reassigning a radio's port does not
-   require touching the Vehicle Roles mapping, and vice versa.
+2. **In QGC**, add one UDP comm link per vehicle, each listening on its assigned port. Do this
+   from the vehicle's card on Analyze > Vehicle Links: add a link, choose "Create New Link...",
+   pick UDP and set the port. Do not rely on a single UDP link (or autoconnect) to receive
+   multiple vehicles' traffic on one port.
+3. Vehicle identification (which sysid is which vehicle) is the type and nickname on that same
+   card. The port is only a setting of the vehicle's link: it prevents stream corruption and is
+   independent of the sysid mapping. Reassigning a radio's port means editing that vehicle's
+   link; the sysid mapping does not change, and vice versa.
 
 ## Current port assignments
 
