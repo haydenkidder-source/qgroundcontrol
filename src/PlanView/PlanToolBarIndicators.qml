@@ -90,10 +90,18 @@ RowLayout {
     }
 
     function _vehicleClearButtonClicked() {
+        // The plan is removed from the vehicle this was confirmed for, never from one that became active meanwhile
+        const confirmedVehicle = _planMasterController.managerVehicle
         QGroundControl.showMessageDialog(root, qsTr("Clear"),
                                      qsTr("Are you sure you want to remove the plan from the vehicle and the plan editor?"),
                                      Dialog.Yes | Dialog.Cancel,
                                      function() {
+                                        if (_planMasterController.managerVehicle !== confirmedVehicle) {
+                                            QGroundControl.showMessageDialog(root, qsTr("Plan not removed"),
+                                                                         qsTr("The active vehicle changed, so no plan was removed. Select the vehicle and try again."),
+                                                                         Dialog.Ok)
+                                            return
+                                        }
                                         _planMasterController.removeAllFromVehicle()
                                      })
     }

@@ -84,6 +84,7 @@
 #endif
 
 #include <QtCore/QDateTime>
+#include <QtCore/QSettings>
 
 QGC_LOGGING_CATEGORY(VehicleLog, "Vehicle.Vehicle")
 
@@ -125,8 +126,8 @@ Vehicle::Vehicle(LinkInterface*             link,
 
     connect(this, &Vehicle::flightModeChanged,          this, &Vehicle::_handleFlightModeChanged);
     connect(this, &Vehicle::armedChanged,               this, &Vehicle::_announceArmedChanged);
-    connect(this, &Vehicle::flyingChanged, this, [this](bool flying){
-        if (flying) {
+    connect(this, &Vehicle::airborneChanged, this, [this](bool airborne) {
+        if (airborne) {
             setInitialGCSPressure(QGCSensors::QGCPressure::instance()->pressure());
             setInitialGCSTemperature(QGCSensors::QGCPressure::instance()->temperature());
         }
@@ -235,6 +236,7 @@ void Vehicle::_commonInit(LinkInterface* link)
     connect(this, &Vehicle::homePositionChanged,    this, &Vehicle::_updateDistanceHeadingHome);
     connect(this, &Vehicle::hobbsMeterChanged,      this, &Vehicle::_updateHobbsMeter);
     connect(this, &Vehicle::vehicleTypeChanged,     this, &Vehicle::inFwdFlightChanged);
+    connect(this, &Vehicle::vehicleTypeChanged, this, &Vehicle::_updateAirborne);
     connect(this, &Vehicle::vtolInFwdFlightChanged, this, &Vehicle::inFwdFlightChanged);
 
     connect(QGCPositionManager::instance(), &QGCPositionManager::gcsPositionChanged, this, &Vehicle::_updateDistanceHeadingGCS);
@@ -1041,16 +1043,16 @@ void Vehicle::_handleExtendedSysState(mavlink_message_t& message)
 
     switch (extendedState.landed_state) {
     case MAV_LANDED_STATE_ON_GROUND:
-        _setFlying(false);
+        _setUnderway(false);
         _setLanding(false);
         break;
     case MAV_LANDED_STATE_TAKEOFF:
     case MAV_LANDED_STATE_IN_AIR:
-        _setFlying(true);
+        _setUnderway(true);
         _setLanding(false);
         break;
     case MAV_LANDED_STATE_LANDING:
-        _setFlying(true);
+        _setUnderway(true);
         _setLanding(true);
         break;
     default:
@@ -1068,13 +1070,13 @@ void Vehicle::_handleExtendedSysState(mavlink_message_t& message)
 
 bool Vehicle::_apmArmingNotRequired()
 {
-    QString armingRequireParam("ARMING_REQUIRE");
+    const QString armingRequireParam("ARMING_REQUIRE");
     if (!_parameterManager->parameterExists(ParameterManager::defaultComponentId, armingRequireParam)) {
         return false;
     }
-    const Fact* armingRequired =
+    const Fact* const armingRequire =
         _parameterManager->getParameter(ParameterManager::defaultComponentId, armingRequireParam);
-    return armingRequired && armingRequired->rawValue().toInt() == 0;
+    return armingRequire && (armingRequire->rawValue().toInt() == 0);
 }
 
 void Vehicle::_handleSysStatus(mavlink_message_t& message)
@@ -1418,8 +1420,14 @@ int Vehicle::motorCount()
 {
     uint8_t frameType = 0;
     if (_vehicleType == MAV_TYPE_SUBMARINE) {
-        if (const Fact* frameConfig = parameterManager()->getParameter(_compID, "FRAME_CONFIG")) {
+        const QString frameConfigParam = QStringLiteral("FRAME_CONFIG");
+        const Fact* const frameConfig = _parameterManager->parameterExists(_compID, frameConfigParam)
+                                            ? _parameterManager->getParameter(_compID, frameConfigParam)
+                                            : nullptr;
+        if (frameConfig) {
             frameType = frameConfig->rawValue().toInt();
+        } else {
+            qCDebug(VehicleLog) << frameConfigParam << "not available, using default frame";
         }
     }
     return QGCMAVLink::motorCount(_vehicleType, frameType);
@@ -1813,11 +1821,21 @@ void Vehicle::_announceArmedChanged(bool armed)
     }
 }
 
-void Vehicle::_setFlying(bool flying)
+void Vehicle::_setUnderway(bool underway)
 {
-    if (_flying != flying) {
-        _flying = flying;
-        emit flyingChanged(flying);
+    if (_underway != underway) {
+        _underway = underway;
+        emit underwayChanged(underway);
+        _updateAirborne();
+    }
+}
+
+void Vehicle::_updateAirborne()
+{
+    const bool airborne = _underway && !rover() && !sub();
+    if (_airborne != airborne) {
+        _airborne = airborne;
+        emit airborneChanged(airborne);
     }
 }
 
@@ -2332,6 +2350,59 @@ void Vehicle::rebootVehicle()
     handlerInfo.resultHandlerData   = this;
 
     sendMavCommandWithHandler(&handlerInfo, _defaultComponentId, MAV_CMD_PREFLIGHT_REBOOT_SHUTDOWN, 1);
+}
+
+void Vehicle::setRebootRequired()
+{
+    if (_rebootRequired) {
+        return;
+    }
+
+    _rebootRequired = true;
+    emit rebootRequiredChanged();
+}
+
+void Vehicle::setNewStableFirmwareVersion(const QString& version)
+{
+    if (_newStableFirmwareVersion == version) {
+        return;
+    }
+
+    _newStableFirmwareVersion = version;
+    _newStableFirmwareVersionAcknowledged = _isNewStableFirmwareVersionAcknowledged();
+    emit newStableFirmwareVersionChanged();
+}
+
+void Vehicle::acknowledgeNewStableFirmwareVersion()
+{
+    if (_newStableFirmwareVersion.isEmpty() || _newStableFirmwareVersionAcknowledged) {
+        return;
+    }
+
+    QSettings().setValue(_acknowledgedStableFirmwareSettingsKey(), _newStableFirmwareVersion);
+
+    // The acknowledgement is shared by all vehicles of the same firmware/vehicle class
+    const QmlObjectListModel* const vehicles = MultiVehicleManager::instance()->vehicles();
+    for (int i = 0; i < vehicles->count(); i++) {
+        Vehicle* const vehicle = vehicles->value<Vehicle*>(i);
+        if (vehicle && !vehicle->_newStableFirmwareVersionAcknowledged &&
+            vehicle->_isNewStableFirmwareVersionAcknowledged()) {
+            vehicle->_newStableFirmwareVersionAcknowledged = true;
+            emit vehicle->newStableFirmwareVersionChanged();
+        }
+    }
+}
+
+bool Vehicle::_isNewStableFirmwareVersionAcknowledged() const
+{
+    const QString acknowledgedVersion = QSettings().value(_acknowledgedStableFirmwareSettingsKey()).toString();
+    return !_newStableFirmwareVersion.isEmpty() &&
+           !FirmwarePlugin::isStableFirmwareVersionUnseen(_newStableFirmwareVersion, acknowledgedVersion);
+}
+
+QString Vehicle::_acknowledgedStableFirmwareSettingsKey() const
+{
+    return QStringLiteral("AcknowledgedStableFirmware/") + FirmwarePlugin::stableFirmwareSettingsKey(this);
 }
 
 void Vehicle::startCalibration(QGCMAVLink::CalibrationType calType)
@@ -3399,21 +3470,22 @@ void Vehicle::motorInterlock(bool enable)
 /*                         Status Text Handler                               */
 /*===========================================================================*/
 
-void Vehicle::resetAllMessages() { m_statusTextHandler->resetAllMessages(); }
-void Vehicle::resetErrorLevelMessages() { m_statusTextHandler->resetErrorLevelMessages(); }
-void Vehicle::clearMessages() { m_statusTextHandler->clearMessages(); }
-bool Vehicle::messageTypeNone() const { return m_statusTextHandler->messageTypeNone(); }
-bool Vehicle::messageTypeNormal() const { return m_statusTextHandler->messageTypeNormal(); }
-bool Vehicle::messageTypeWarning() const { return m_statusTextHandler->messageTypeWarning(); }
-bool Vehicle::messageTypeError() const { return m_statusTextHandler->messageTypeError(); }
-int Vehicle::messageCount() const { return m_statusTextHandler->messageCount(); }
+void Vehicle::clearMessages()
+{
+    m_statusTextHandler->clearMessages();
+}
+
+int Vehicle::criticalMessageCount() const
+{
+    return m_statusTextHandler->criticalMessageCount();
+}
 QString Vehicle::formattedMessages() const { return m_statusTextHandler->formattedMessages(); }
 
 void Vehicle::_createStatusTextHandler()
 {
     m_statusTextHandler = new StatusTextHandler(this);
-    (void) connect(m_statusTextHandler, &StatusTextHandler::messageTypeChanged, this, &Vehicle::messageTypeChanged);
-    (void) connect(m_statusTextHandler, &StatusTextHandler::messageCountChanged, this, &Vehicle::messageCountChanged);
+    (void) connect(m_statusTextHandler, &StatusTextHandler::criticalMessageCountChanged, this,
+                   &Vehicle::criticalMessageCountChanged);
     (void) connect(m_statusTextHandler, &StatusTextHandler::newFormattedMessage, this, &Vehicle::newFormattedMessage);
     (void) connect(m_statusTextHandler, &StatusTextHandler::textMessageReceived, this, &Vehicle::_textMessageReceived);
     (void) connect(m_statusTextHandler, &StatusTextHandler::newErrorMessage, this, &Vehicle::_errorMessageReceived);

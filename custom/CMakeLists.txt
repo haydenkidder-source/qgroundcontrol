@@ -303,6 +303,7 @@ set(CUSTOM_QT_COMPONENTS
 )
 
 set(COP_QML_FILES
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/COP/COPBoundaryOutline.qml ${CMAKE_CURRENT_SOURCE_DIR}/src/COP/COPDashedLine.qml
     ${CMAKE_CURRENT_SOURCE_DIR}/src/COP/COPNavigation.qml ${CMAKE_CURRENT_SOURCE_DIR}/src/COP/COPPage.qml
     ${CMAKE_CURRENT_SOURCE_DIR}/src/COP/COPNotifications.qml ${CMAKE_CURRENT_SOURCE_DIR}/src/COP/COPVideoGrid.qml
 )
@@ -333,6 +334,8 @@ if(QGC_BUILD_TESTING)
                 ${CMAKE_CURRENT_SOURCE_DIR}/test/COPControllerTest.h
                 ${CMAKE_CURRENT_SOURCE_DIR}/test/COPStressTest.cc
                 ${CMAKE_CURRENT_SOURCE_DIR}/test/COPStressTest.h
+                ${CMAKE_CURRENT_SOURCE_DIR}/test/GuidedActionTargetUITest.cc
+                ${CMAKE_CURRENT_SOURCE_DIR}/test/GuidedActionTargetUITest.h
                 ${CMAKE_CURRENT_SOURCE_DIR}/test/VehicleRoleControllerTest.cc
                 ${CMAKE_CURRENT_SOURCE_DIR}/test/VehicleRoleControllerTest.h
                 ${CMAKE_CURRENT_SOURCE_DIR}/test/VehicleRoleLinksTest.cc
@@ -357,6 +360,18 @@ if(QGC_BUILD_TESTING)
         COPStressUITest
         LABELS
         Integration
+        Vehicle
+    )
+    cmake_language(
+        DEFER
+        DIRECTORY
+        "${CMAKE_SOURCE_DIR}"
+        CALL
+        add_qgc_test
+        GuidedActionTargetUITest
+        LABELS
+        Integration
+        NoSanitizer
         Vehicle
     )
     cmake_language(

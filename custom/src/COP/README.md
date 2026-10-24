@@ -40,6 +40,15 @@ an inferred vehicle position or proof of an RTK fix. A source/session change cle
 arrives, no reference marker is shown. Field layout was checked against
 [RTKLIB's RTCM decoder](https://github.com/tomojitakasu/RTKLIB/blob/master/src/rtcm3.c).
 
+A vehicle tab's **Plan Overlay** toggle draws that vehicle's mission, fences and rally points on
+the map in the vehicle's color, and a legend explains the symbols. Line style tells the layers
+apart: the route is a solid line with waypoint dots (S start, E end), a keep-in fence is a
+long-dash outline, a keep-out zone is a short-dash outline over a red fill, and a rally point
+is a diamond. Qt Location polygons and circles cannot dash their borders, so
+`COPBoundaryOutline.qml` draws each outline as a `Shape` anchored at the boundary's first
+vertex and re-projects it when the map zooms or resizes. The map polygons and circles remain
+for the fill and for **Fit vehicles**.
+
 The footer retains up to 200 acknowledged messages and up to 1,000 outstanding messages
 with timestamps. If outstanding messages exceed that limit, it displays the number omitted
 until the operator acknowledges them. Emergency/alert vehicle status text, communication

@@ -23,8 +23,18 @@ private slots:
     void _testNeverStartedLinkNotConnected();
     void _testLinkActiveStableAcrossReconnect();
     void _testStaleBytesNotAttributedToRecycledLinkAddress();
+    void _testUdpUnresolvedHostFailsConnect();
+    void _testUdpUnresolvedHostAllowedStaysConnected();
+    void _testUdpBindFailureDisconnects();
+    void _testUdpAutoConnectBindFailureReusesConfig();
+    void _testForwardingLinkUnresolvedHostRetries();
+    void _testSupportForwardingFailureAllowsRetry();
+    void _testDynamicUdpLinkIgnoresSameNamedUserLink();
 
 private:
     SharedLinkConfigurationPtr _addMockConfig(const QString &name, bool dynamic, bool autoConnect);
     void _reconnect();
+    void _expectUdpBindFailureLogs();
+    void _verifyUdpBindFailureLogs();
+    QList<SharedLinkConfigurationPtr> _configsNamed(const char* name);
 };
