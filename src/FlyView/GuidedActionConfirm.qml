@@ -15,6 +15,7 @@ Item {
     property var    messageDisplay
     property string title
     property string message
+    property var    vehicle             // Vehicle the confirmation was opened for
     property int    action
     property var    actionData
     property bool   hideTrigger:        false
@@ -95,6 +96,11 @@ Item {
 
             onActivated: {
                 control.visible = false
+                if (guidedController._activeVehicle !== control.vehicle) {
+                    // Never run the action on a vehicle that became active while the confirmation was held
+                    confirmCancelled()
+                    return
+                }
                 var sliderOutputValue = 0
                 if (guidedValueSlider.visible) {
                     sliderOutputValue = guidedValueSlider.getOutputValue()

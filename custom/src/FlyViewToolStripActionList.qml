@@ -26,6 +26,7 @@ ToolStripActionList {
         GuidedToolStripAction {
             property var _activeVehicle: QGroundControl.multiVehicleManager.activeVehicle
 
+            objectName: "flyToolStrip_assumeRoverControlButton"
             text:       _guidedController._customController.assumeRoverControlTitle
             iconSource: "/res/gear-white.svg"
             visible:    _activeVehicle && _activeVehicle.rover && _activeVehicle.flightMode !== "Manual"
@@ -35,6 +36,7 @@ ToolStripActionList {
         GuidedToolStripAction {
             property var _activeVehicle: QGroundControl.multiVehicleManager.activeVehicle
 
+            objectName: "flyToolStrip_returnToAutoButton"
             text:       _guidedController._customController.returnToAutoTitle
             iconSource: "/res/gear-white.svg"
             visible:    _activeVehicle && _activeVehicle.rover && _activeVehicle.flightMode === "Manual"

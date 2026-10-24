@@ -394,6 +394,18 @@ Item {
         guidedValueSlider.visible = false
     }
 
+    // A confirmation belongs to the vehicle that was active when it opened. Cancel it if another vehicle becomes
+    // active or that one goes away, so the operator confirms again for the vehicle that is now selected.
+    Connections {
+        target: _root
+
+        function on_ActiveVehicleChanged() {
+            if (confirmDialog) {
+                confirmDialog.confirmCancelled()
+            }
+        }
+    }
+
     // Called when an action is about to be executed in order to confirm
     function confirmAction(actionCode, actionData, mapIndicator) {
         var showImmediate = true
@@ -401,6 +413,7 @@ Item {
         // Cancel any previously pending action, notifying its map indicator if it differs from the incoming one
         confirmDialog.confirmCancelled(mapIndicator)
 
+        confirmDialog.vehicle = _activeVehicle
         confirmDialog.action = actionCode
         confirmDialog.actionData = actionData
         confirmDialog.mapIndicator = mapIndicator
