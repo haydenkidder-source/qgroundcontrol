@@ -16,6 +16,8 @@ private slots:
     void cleanup() final;
 
     void _testMissionPlannerFileLoad();
+    void _testManualTestPlansLoad_data();
+    void _testManualTestPlansLoad();
     void _testTakeoffTextFileLoad_data();
     void _testTakeoffTextFileLoad();
     void _testActiveVehicleChanged();
@@ -54,6 +56,9 @@ private slots:
     void _testManualCreationRestoredOnIndividualItemRemoval();
 
     void _testPlanCreatorsFiltered();
+
+    void _testEditMarksDirtyForSave_data();
+    void _testEditMarksDirtyForSave();
 
 private:
     /// Connects an additional PX4 MockLink vehicle (tracked in _extraLinks) and waits for its initial connect

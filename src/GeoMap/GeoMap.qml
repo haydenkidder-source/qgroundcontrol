@@ -53,6 +53,8 @@ Item {
     property alias allowVehicleLocationCenter: _positionTracker.allowVehicleLocationCenter
     property alias keepVehicleCentered: _positionTracker.keepVehicleCentered
     property alias positionTracker: _positionTracker
+    property rect followViewportRect: Qt.rect(0, 0, width, height)   ///< Map area the followed vehicle is kept within
+    property var followOccluders: []                                ///< Rects within the viewport covered by host UI
 
     // Live SurfaceModel stats for debug overlays
     property alias patchCount: patchModel.patchCount
@@ -75,7 +77,7 @@ Item {
     readonly property var _activeVehicle: QGroundControl.multiVehicleManager.activeVehicle
     readonly property var _activeVehicleCoordinate: _activeVehicle ? _activeVehicle.coordinate : QtPositioning.coordinate()
     // Vehicle items render at coordinate.altitude + home terrain bias (see
-    // GeoMapVehicleItem): inset-follow must track that same rendered point or
+    // GeoMapVehicleItem): occluder-follow must track that same rendered point or
     // the recenter target is vertically off by the bias under a tilted camera
     readonly property var _trackedVehicleCoordinate: QtPositioning.coordinate(_activeVehicleCoordinate.latitude,
                                                                               _activeVehicleCoordinate.longitude,
@@ -118,6 +120,12 @@ Item {
         // final value back to 0
         headingAnimation.to = (geoCamera.heading > 180) ? 360 : 0
         headingAnimation.start()
+    }
+
+    // Show the whole QGeoRectangle at the current heading/tilt
+    function fitToRegion(region) {
+        completeCameraAnimations()
+        geoCamera.fitToRegion(region)
     }
 
     // LOD checker colors for debug mode (imagery off)
@@ -225,8 +233,6 @@ Item {
         }
     }
 
-    // Inset-follow evaluation: no view chrome here yet, so the unobstructed
-    // center rect is the full viewport and there are no corner rects
     Timer {
         interval: 500
         running: root.visible
@@ -235,7 +241,7 @@ Item {
             const screenPos = geoScene.screenPositionFor(root._trackedVehicleCoordinate)
             // Unprojectable (behind camera) counts as off-screen: recenter
             const vehiclePoint = (screenPos === undefined) ? Qt.point(-1, -1) : screenPos
-            _positionTracker.evaluateInsetFollow(vehiclePoint, Qt.rect(0, 0, root.width, root.height), [])
+            _positionTracker.evaluateOccluderFollow(vehiclePoint, root.followViewportRect, root.followOccluders)
         }
     }
 
@@ -655,7 +661,7 @@ Item {
 
     Connections {
         target: patchModel
-        function onTerrainHeightsChanged() {
+        function onTerrainDataChanged() {
             root._updateCenterElevation()
             root._updateHomeTerrainBias()
         }

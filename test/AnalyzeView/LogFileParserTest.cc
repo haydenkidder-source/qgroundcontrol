@@ -31,14 +31,14 @@ namespace {
 // Callers add formats, subscriptions, and data messages via the callbacks.
 using WriterFn = std::function<void(ulog_cpp::Writer &)>;
 
-QByteArray buildULog(WriterFn headerFn, WriterFn dataFn)
+QByteArray buildULog(WriterFn headerFn, WriterFn dataFn, uint64_t headerTimestampUs = 0)
 {
     std::vector<uint8_t> buffer;
     ulog_cpp::Writer writer([&](const uint8_t *data, int length) {
         buffer.insert(buffer.end(), data, data + length);
     });
 
-    writer.fileHeader(ulog_cpp::FileHeader{});
+    writer.fileHeader(ulog_cpp::FileHeader{headerTimestampUs});
     if (headerFn) {
         headerFn(writer);
     }
@@ -335,6 +335,47 @@ void LogFileParserTest::_parseULogModeSegmentsTest()
 
     QVERIFY(modes.contains(QStringLiteral("Manual")));
     QVERIFY(modes.contains(QStringLiteral("Mission")));
+}
+
+void LogFileParserTest::_parseULogStaleInitialSamplesTest()
+{
+    // PX4 logs each topic's last value when logging starts, keeping its original (older) timestamp
+    constexpr uint64_t logStartUs = 148300000ULL;
+    const QByteArray bytes = buildULog(
+        [](ulog_cpp::Writer& w) {
+            w.messageFormat(ulog_cpp::MessageFormat{
+                "transponder_report",
+                {ulog_cpp::Field{"uint64_t", "timestamp"}, ulog_cpp::Field{"float", "altitude"}}});
+            w.messageFormat(ulog_cpp::MessageFormat{
+                "sensor_combined", {ulog_cpp::Field{"uint64_t", "timestamp"}, ulog_cpp::Field{"float", "gyro_rad_x"}}});
+        },
+        [](ulog_cpp::Writer& w) {
+            w.addLoggedMessage(ulog_cpp::AddLoggedMessage{0, 1, "transponder_report"});
+            w.addLoggedMessage(ulog_cpp::AddLoggedMessage{0, 2, "sensor_combined"});
+            w.data(ulog_cpp::Data{1, makePayload64Float(0ULL, 42.0f)});
+            w.data(ulog_cpp::Data{2, makePayload64Float(logStartUs + 20000ULL, 0.1f)});
+            w.data(ulog_cpp::Data{2, makePayload64Float(212500000ULL, 0.2f)});
+        },
+        logStartUs);
+
+    QTemporaryFile tmp;
+    tmp.setFileTemplate(QDir::tempPath() + QStringLiteral("/logtest_XXXXXX.ulg"));
+    QVERIFY(writeTempFile(tmp, bytes));
+
+    LogFileParser parser;
+    QVERIFY(parser.parseFile(tmp.fileName()));
+
+    QCOMPARE_LT(qAbs(parser.minTimestamp() - 148.3), 1e-6);
+    QCOMPARE_LT(qAbs(parser.maxTimestamp() - 212.5), 1e-6);
+
+    const QVariantList stale = parser.fieldSamples(QStringLiteral("transponder_report.altitude"));
+    QCOMPARE(stale.size(), 1);
+    QCOMPARE_LT(qAbs(stale[0].toPointF().x() - 148.3), 1e-6);
+    QCOMPARE_LT(qAbs(stale[0].toPointF().y() - 42.0), 1e-5);
+
+    const QVariantList fresh = parser.fieldSamples(QStringLiteral("sensor_combined.gyro_rad_x"));
+    QCOMPARE(fresh.size(), 2);
+    QCOMPARE_LT(qAbs(fresh[0].toPointF().x() - 148.32), 1e-6);
 }
 
 void LogFileParserTest::_parseULogDropoutTest()
@@ -803,6 +844,119 @@ void LogFileParserTest::_gpsPathAPMDataFlashPOSTest()
         // 'L' precision is 1e-7 degrees; allow a small rounding tolerance
         QVERIFY(qAbs(coord.value(QStringLiteral("latitude")).toDouble()  - samples[i].lat) < 1e-6);
         QVERIFY(qAbs(coord.value(QStringLiteral("longitude")).toDouble() - samples[i].lon) < 1e-6);
+    }
+}
+
+void LogFileParserTest::_gpsPathAPMDataFlashMultiInstanceTest()
+{
+    // GPS: Q(TimeUS) + B(I) + B(Status) + L(Lat) + L(Lng) + e(Alt) = 22 byte payload
+    QByteArray bytes;
+    appendBinMessage(bytes, 128, makeFmtPayloadStr(153, 25, "GPS", "QBBLLe", "TimeUS,I,Status,Lat,Lng,Alt"));
+    appendBinMessage(bytes, 128, makeFmtPayloadStr(177, 44, "FMTU", "QBNN", "TimeUS,FmtType,UnitIds,MultIds"));
+
+    QByteArray fmtu(41, '\0');
+    fmtu[8] = static_cast<char>(153);
+    memcpy(fmtu.data() + 9, "s#-DUm", 6);
+    memcpy(fmtu.data() + 25, "F--GGB", 6);
+    appendBinMessage(bytes, 177, fmtu);
+
+    const auto makeGps = [](int i, uint8_t instance, uint8_t status, double lat, double lon) {
+        QByteArray payload(22, '\0');
+        const uint64_t timeUs = static_cast<uint64_t>(i + 1) * 1000000ULL;
+        const int32_t latRaw = static_cast<int32_t>(lat * 1.0e7);
+        const int32_t lonRaw = static_cast<int32_t>(lon * 1.0e7);
+        const int32_t altRaw = 58400;
+        memcpy(payload.data(), &timeUs, 8);
+        payload[8] = static_cast<char>(instance);
+        payload[9] = static_cast<char>(status);
+        memcpy(payload.data() + 10, &latRaw, 4);
+        memcpy(payload.data() + 14, &lonRaw, 4);
+        memcpy(payload.data() + 18, &altRaw, 4);
+        return payload;
+    };
+
+    // Instance 0 never gets a 3D fix, so the path must come from instance 1
+    for (int i = 0; i < 3; i++) {
+        appendBinMessage(bytes, 153, makeGps(i, 0, 1, 10.0, 20.0));
+        appendBinMessage(bytes, 153, makeGps(i, 1, 3, -35.0 + (i * 0.001), 149.0));
+    }
+
+    QTemporaryFile tmp;
+    tmp.setFileTemplate(QDir::tempPath() + QStringLiteral("/logtest_XXXXXX.bin"));
+    QVERIFY(writeTempFile(tmp, bytes));
+
+    LogFileParser parser;
+    QVERIFY(parser.parseFile(tmp.fileName()));
+    QVERIFY(parser.parseComplete());
+
+    const QVariantList path = parser.gpsPath();
+    QCOMPARE(path.size(), 3);
+    for (int i = 0; i < path.size(); i++) {
+        const QVariantMap coord = path[i].toMap();
+        QVERIFY(qAbs(coord.value(QStringLiteral("latitude")).toDouble() - (-35.0 + (i * 0.001))) < 1e-6);
+        QVERIFY(qAbs(coord.value(QStringLiteral("longitude")).toDouble() - 149.0) < 1e-6);
+    }
+    QCOMPARE(parser.gpsAltitudeFieldName(), QStringLiteral("GPS[1].Alt"));
+}
+
+void LogFileParserTest::_parseDataFlashMultiInstanceTest()
+{
+    QByteArray bytes;
+    // IMU/BARO: Q(TimeUS) + B(I) + f = 13 byte payload
+    appendBinMessage(bytes, 128, makeFmtPayloadStr(150, 16, "IMU", "QBf", "TimeUS,I,GyrX"));
+    appendBinMessage(bytes, 128, makeFmtPayloadStr(151, 16, "BARO", "QBf", "TimeUS,I,Alt"));
+    appendBinMessage(bytes, 128, makeFmtPayloadStr(177, 44, "FMTU", "QBNN", "TimeUS,FmtType,UnitIds,MultIds"));
+
+    for (const uint8_t fmtType : {uint8_t(150), uint8_t(151)}) {
+        QByteArray fmtu(41, '\0');
+        fmtu[8] = static_cast<char>(fmtType);
+        memcpy(fmtu.data() + 9, "s#E", 3);
+        memcpy(fmtu.data() + 25, "F-0", 3);
+        appendBinMessage(bytes, 177, fmtu);
+    }
+
+    const auto makeRecord = [](int i, uint8_t instance, float value) {
+        QByteArray payload(13, '\0');
+        const uint64_t timeUs = static_cast<uint64_t>(i + 1) * 1000000ULL;
+        memcpy(payload.data(), &timeUs, 8);
+        payload[8] = static_cast<char>(instance);
+        memcpy(payload.data() + 9, &value, 4);
+        return payload;
+    };
+    for (int i = 0; i < 3; i++) {
+        appendBinMessage(bytes, 150, makeRecord(i, 0, 1.0f));
+        appendBinMessage(bytes, 150, makeRecord(i, 1, 2.0f));
+        appendBinMessage(bytes, 151, makeRecord(i, 0, 3.0f));
+    }
+
+    QTemporaryFile tmp;
+    tmp.setFileTemplate(QDir::tempPath() + QStringLiteral("/logtest_XXXXXX.bin"));
+    QVERIFY(writeTempFile(tmp, bytes));
+
+    LogFileParser parser;
+    QVERIFY(parser.parseFile(tmp.fileName()));
+    QVERIFY(parser.parseComplete());
+
+    QVERIFY(parser.availableFields().contains(QStringLiteral("IMU[0].GyrX")));
+    QVERIFY(parser.availableFields().contains(QStringLiteral("IMU[1].GyrX")));
+    QVERIFY(!parser.availableFields().contains(QStringLiteral("IMU.GyrX")));
+    QVERIFY(!parser.availableFields().contains(QStringLiteral("IMU[0].I")));
+    QVERIFY(!parser.availableFields().contains(QStringLiteral("IMU[1].I")));
+
+    QVERIFY(parser.availableFields().contains(QStringLiteral("BARO.Alt")));
+    QVERIFY(!parser.availableFields().contains(QStringLiteral("BARO[0].Alt")));
+    QVERIFY(!parser.availableFields().contains(QStringLiteral("BARO.I")));
+    QCOMPARE(parser.fieldSamples(QStringLiteral("BARO.Alt")).size(), 3);
+
+    const QVariantList instance0 = parser.fieldSamples(QStringLiteral("IMU[0].GyrX"));
+    const QVariantList instance1 = parser.fieldSamples(QStringLiteral("IMU[1].GyrX"));
+    QCOMPARE(instance0.size(), 3);
+    QCOMPARE(instance1.size(), 3);
+    for (const QVariant& v : instance0) {
+        QCOMPARE(v.toPointF().y(), 1.0);
+    }
+    for (const QVariant& v : instance1) {
+        QCOMPARE(v.toPointF().y(), 2.0);
     }
 }
 
