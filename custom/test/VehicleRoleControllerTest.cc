@@ -38,6 +38,40 @@ void VehicleRoleControllerTest::_availableRolesAreArduPilotVehicleTypes()
                                  QStringLiteral("Sub"), QStringLiteral("Tracker"), QStringLiteral("Blimp")}));
 }
 
+void VehicleRoleControllerTest::_suggestedRoleFollowsVehicleType_data()
+{
+    QTest::addColumn<int>("mavType");
+    QTest::addColumn<QString>("role");
+
+    QTest::newRow("quadrotor") << int(MAV_TYPE_QUADROTOR) << QStringLiteral("Copter");
+    QTest::newRow("hexarotor") << int(MAV_TYPE_HEXAROTOR) << QStringLiteral("Copter");
+    QTest::newRow("helicopter") << int(MAV_TYPE_HELICOPTER) << QStringLiteral("Copter");
+    QTest::newRow("fixed wing") << int(MAV_TYPE_FIXED_WING) << QStringLiteral("Plane");
+    QTest::newRow("quadplane") << int(MAV_TYPE_VTOL_FIXEDROTOR) << QStringLiteral("Plane");
+    QTest::newRow("tiltrotor") << int(MAV_TYPE_VTOL_TILTROTOR) << QStringLiteral("Plane");
+    QTest::newRow("ground rover") << int(MAV_TYPE_GROUND_ROVER) << QStringLiteral("Rover");
+    QTest::newRow("surface boat") << int(MAV_TYPE_SURFACE_BOAT) << QStringLiteral("Rover");
+    QTest::newRow("submarine") << int(MAV_TYPE_SUBMARINE) << QStringLiteral("Sub");
+    QTest::newRow("antenna tracker") << int(MAV_TYPE_ANTENNA_TRACKER) << QStringLiteral("Tracker");
+    QTest::newRow("airship") << int(MAV_TYPE_AIRSHIP) << QStringLiteral("Blimp");
+    // Types with no matching ArduPilot product leave the choice to the operator
+    QTest::newRow("generic") << int(MAV_TYPE_GENERIC) << QString();
+    QTest::newRow("gcs") << int(MAV_TYPE_GCS) << QString();
+}
+
+void VehicleRoleControllerTest::_suggestedRoleFollowsVehicleType()
+{
+    QFETCH(int, mavType);
+    QFETCH(QString, role);
+
+    QCOMPARE(VehicleRoleController::roleForMavType(mavType), role);
+    if (!role.isEmpty()) {
+        QVERIFY(VehicleRoleController().availableRoles().contains(role));
+    }
+    // No vehicle, nothing to suggest
+    QVERIFY(VehicleRoleController().suggestedRole(nullptr).isEmpty());
+}
+
 void VehicleRoleControllerTest::_addEntryRejectsUnrecognizedRole()
 {
     VehicleRoleController controller;

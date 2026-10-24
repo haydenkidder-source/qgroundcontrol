@@ -8,9 +8,10 @@
 #include "AppSettings.h"
 #include "LinkManager.h"
 #include "QGCLoggingCategory.h"
+#include "QGCMAVLink.h"
 #include "QmlObjectListModel.h"
 #include "SettingsManager.h"
-#include "UDPLink.h"
+#include "Vehicle.h"
 
 QGC_LOGGING_CATEGORY(VehicleRoleLog, "Custom.VehicleRoles")
 
@@ -167,25 +168,33 @@ void VehicleRoleController::setPort(int index, int port)
     }
 }
 
-void VehicleRoleController::createLinkForEntry(int index)
+QString VehicleRoleController::roleForMavType(int mavType)
 {
-    auto* entry = qobject_cast<VehicleRoleEntry*>(_roleEntries->get(index));
-    if (!entry || entry->port() <= 0) {
-        qCWarning(VehicleRoleLog) << "Cannot create a link - no port assigned for index:" << index;
-        return;
+    const auto type = static_cast<MAV_TYPE>(mavType);
+    if (QGCMAVLink::isRoverBoat(type)) {
+        return QStringLiteral("Rover");
     }
+    if (QGCMAVLink::isSub(type)) {
+        return QStringLiteral("Sub");
+    }
+    if (QGCMAVLink::isMultiRotor(type)) {
+        return QStringLiteral("Copter");
+    }
+    if (QGCMAVLink::isFixedWing(type) || QGCMAVLink::isVTOL(type)) {
+        return QStringLiteral("Plane");
+    }
+    if (type == MAV_TYPE_ANTENNA_TRACKER) {
+        return QStringLiteral("Tracker");
+    }
+    if (QGCMAVLink::vehicleClass(type) == QGCMAVLink::VehicleClassAirship) {
+        return QStringLiteral("Blimp");
+    }
+    return {};
+}
 
-    auto* const udpConfig = new UDPConfiguration(entry->role());
-    // Set autoConnect before the port: UDPConfiguration::setAutoConnect() can overwrite localPort
-    // with the global default as a side effect when the flag changes from false to true. Setting
-    // the desired port afterward guarantees the final value regardless of that behavior.
-    udpConfig->setAutoConnect(true);
-    udpConfig->setLocalPort(static_cast<quint16>(entry->port()));
-
-    LinkManager* const linkManager = LinkManager::instance();
-    SharedLinkConfigurationPtr config = linkManager->addConfiguration(udpConfig);
-    linkManager->saveLinkConfigurationList();
-    linkManager->createConnectedLink(config);
+QString VehicleRoleController::suggestedRole(Vehicle* vehicle) const
+{
+    return vehicle ? roleForMavType(vehicle->vehicleType()) : QString();
 }
 
 bool VehicleRoleController::isNicknameTaken(const QString& name, int exceptSysid) const

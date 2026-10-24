@@ -11,6 +11,8 @@ private slots:
     void init() override;
     void cleanup() override;
     void _availableRolesAreArduPilotVehicleTypes();
+    void _suggestedRoleFollowsVehicleType_data();
+    void _suggestedRoleFollowsVehicleType();
     void _addEntryRejectsUnrecognizedRole();
     void _loadMigratesUnrecognizedSavedRoleToName();
     void _nicknamesMustBeDistinct();

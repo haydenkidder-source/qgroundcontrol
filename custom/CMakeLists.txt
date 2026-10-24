@@ -232,15 +232,13 @@ qt_add_resources(
 )
 
 # ============================================================================
-# Custom Vehicle Roles Page (sysid -> role/nickname mapping)
+# Custom Vehicle Links Page (sysid -> type/nickname mapping and each vehicle's links)
 # ============================================================================
 # Same reasoning as the Exclusion Zone page above: the C++ controller needs to compile into
 # ${CMAKE_PROJECT_NAME} directly (see CUSTOM_SOURCES below) for QML_ELEMENT/QML_SINGLETON to
 # register under the "QGC" module; the QML page is just a resource referenced by URL.
 
-set(VEHICLE_ROLES_QML_FILES ${CMAKE_CURRENT_SOURCE_DIR}/src/VehicleRoles/VehicleRoleSettingsPage.qml
-                            ${CMAKE_CURRENT_SOURCE_DIR}/src/VehicleRoles/VehicleLinksPage.qml
-)
+set(VEHICLE_ROLES_QML_FILES ${CMAKE_CURRENT_SOURCE_DIR}/src/VehicleRoles/VehicleLinksPage.qml)
 qgc_set_qt_resource_alias(${VEHICLE_ROLES_QML_FILES})
 qt_add_resources(
     ${CMAKE_PROJECT_NAME} custom_vehicle_roles_qml
@@ -336,6 +334,8 @@ if(QGC_BUILD_TESTING)
                 ${CMAKE_CURRENT_SOURCE_DIR}/test/COPStressTest.h
                 ${CMAKE_CURRENT_SOURCE_DIR}/test/GuidedActionTargetUITest.cc
                 ${CMAKE_CURRENT_SOURCE_DIR}/test/GuidedActionTargetUITest.h
+                ${CMAKE_CURRENT_SOURCE_DIR}/test/VehicleLinksPageUITest.cc
+                ${CMAKE_CURRENT_SOURCE_DIR}/test/VehicleLinksPageUITest.h
                 ${CMAKE_CURRENT_SOURCE_DIR}/test/VehicleRoleControllerTest.cc
                 ${CMAKE_CURRENT_SOURCE_DIR}/test/VehicleRoleControllerTest.h
                 ${CMAKE_CURRENT_SOURCE_DIR}/test/VehicleRoleLinksTest.cc
@@ -393,6 +393,18 @@ if(QGC_BUILD_TESTING)
         COPVehicleLifecycleTest
         LABELS
         Integration
+        Vehicle
+    )
+    cmake_language(
+        DEFER
+        DIRECTORY
+        "${CMAKE_SOURCE_DIR}"
+        CALL
+        add_qgc_test
+        VehicleLinksPageUITest
+        LABELS
+        Integration
+        NoSanitizer
         Vehicle
     )
     cmake_language(

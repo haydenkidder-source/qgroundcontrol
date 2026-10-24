@@ -6,6 +6,7 @@
 #include <QtQmlIntegration/QtQmlIntegration>
 
 class QmlObjectListModel;
+class Vehicle;
 
 /// \brief A single named link association within a VehicleRoleEntry (e.g. "RFD900x" pointing at
 /// the LinkConfiguration named "Rover RFD900x").
@@ -74,9 +75,9 @@ public:
 
     /// The vehicle's assigned ground-station UDP port, for reference only (see
     /// custom/FIELD_RADIO_SETUP.md) - 0 means unassigned. Setting this does not create, modify or
-    /// look up any actual comm link; the operator still configures the real UDP link separately
-    /// under Settings > Comm Links. Superseded by links() for new work (see VehicleRoleLinkEntry)
-    /// but kept for existing callers that still read/write it.
+    /// look up any actual comm link; the UDP port is a setting of the vehicle's link. Superseded by
+    /// links() (see VehicleRoleLinkEntry): no page edits it any more, but it is still saved and
+    /// loaded so existing files round-trip.
     int port() const { return _port; }
 
     /// This entry's named link associations (e.g. "RFD900x", "Microhard 2450", "WFB-NG"), each
@@ -116,6 +117,7 @@ class VehicleRoleController : public QObject
     QML_ELEMENT
     QML_SINGLETON
     Q_MOC_INCLUDE("QmlObjectListModel.h")
+    Q_MOC_INCLUDE("Vehicle.h")
 
     Q_PROPERTY(QmlObjectListModel* roleEntries READ roleEntries CONSTANT)
     Q_PROPERTY(QStringList availableRoles READ availableRoles CONSTANT)
@@ -145,13 +147,13 @@ public:
     Q_INVOKABLE void setName(int index, const QString& name);
     Q_INVOKABLE void setPort(int index, int port);
 
-    /// One-shot convenience: creates a real, saved, autoconnect-enabled UDP link configuration
-    /// (named after the entry's role) using the entry's assigned port, and connects it now if
-    /// possible. This does not require or check a port; the caller (QML) is expected to only
-    /// offer this action when one is assigned. The created link is an ordinary link afterward -
-    /// nothing here keeps it in sync with this entry if either is edited later. No-op if the
-    /// entry has no port assigned.
-    Q_INVOKABLE void createLinkForEntry(int index);
+    /// The ArduPilot vehicle type that best matches a connected vehicle's own MAV_TYPE, offered as the default when its
+    /// sysid has no entry yet. Empty if vehicle is null or its type is not one availableRoles() can be inferred from;
+    /// the operator picks one then. The operator can always override the suggestion.
+    Q_INVOKABLE QString suggestedRole(Vehicle* vehicle) const;
+
+    /// suggestedRole() for a bare MAV_TYPE value.
+    static QString roleForMavType(int mavType);
 
     /// True if a vehicle other than exceptSysid already has this nickname, ignoring case and
     /// surrounding whitespace. Nicknames identify vehicles to the operator, so each must be
