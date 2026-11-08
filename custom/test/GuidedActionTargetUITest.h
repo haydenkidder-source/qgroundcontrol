@@ -17,6 +17,7 @@ class GuidedActionTargetUITest : public QmlUITestBase
 private slots:
     void cleanup() override;
     void _emergencyStopConfirmationStaysWithItsVehicle();
+    void _cancelledConfirmationCannotBeActivated();
     void _planRemovalConfirmationStaysWithItsVehicle();
     void _roverTakeoverAndReturnToAuto();
     void _roverTakeoverConfirmationStaysWithRover();

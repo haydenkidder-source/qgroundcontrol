@@ -70,6 +70,7 @@
 #include "VehicleLocalPositionSetpointFactGroup.h"
 #include "VehicleObjectAvoidance.h"
 #include "VehicleRPMFactGroup.h"
+#include "VehicleReadiness.h"
 #include "VehicleSetpointFactGroup.h"
 #include "VehicleSigningController.h"
 #include "VehicleSupports.h"
@@ -146,6 +147,9 @@ Vehicle::Vehicle(LinkInterface*             link,
     _autopilotPlugin = _firmwarePlugin->autopilotPlugin(this);
     _autopilotPlugin->setParent(this);
 
+    // Readiness tracks autopilot setup, so it is created after the autopilot plugin
+    _readiness = _firmwarePlugin->createVehicleReadiness(this);
+
     // PreArm Error self-destruct timer
     connect(&_prearmErrorTimer, &QTimer::timeout, this, &Vehicle::_prearmErrorTimeout);
     _prearmErrorTimer.setInterval(_prearmErrorTimeoutMSecs);
@@ -158,6 +162,9 @@ Vehicle::Vehicle(LinkInterface*             link,
     if (!QGC::runningUnitTests() || _vehicleType != MAV_TYPE_GENERIC) {
         _initialConnectStateMachine->start();
     }
+
+    // Evaluated after the connect sequence starts so readiness waits for it instead of treating it as complete
+    _readiness->update();
 
     _firmwarePlugin->initializeVehicle(this);
     for(auto& factName: factNames()) {
@@ -714,7 +721,7 @@ void Vehicle::_mavlinkMessageReceived(LinkInterface* link, mavlink_message_t mes
         case MAVLINK_MSG_ID_AVAILABLE_MODES_MONITOR:
     {
         // Avoid duplicate requests during initial connection setup
-        if (!_initialConnectStateMachine || !_initialConnectStateMachine->active()) {
+        if (!_initialConnectStateMachine || !_initialConnectStateMachine->inProgress()) {
             mavlink_available_modes_monitor_t availableModesMonitor;
             mavlink_msg_available_modes_monitor_decode(&message, &availableModesMonitor);
             _standardModes->availableModesMonitorReceived(availableModesMonitor.seq);
@@ -907,9 +914,13 @@ void Vehicle::_handleHighLatency(mavlink_message_t& message)
         previousFlightMode = flightMode();
     }
     _base_mode = MAV_MODE_FLAG_CUSTOM_MODE_ENABLED;
+    const uint32_t previousEffectiveCustomMode = effectiveCustomMode();
     _custom_mode = _firmwarePlugin->highLatencyCustomModeTo32Bits(highLatency.custom_mode);
     if (previousFlightMode != flightMode()) {
         emit flightModeChanged(flightMode());
+    }
+    if (previousEffectiveCustomMode != effectiveCustomMode()) {
+        emit effectiveCustomModeChanged();
     }
 
     // Assume armed since we don't know
@@ -959,9 +970,13 @@ void Vehicle::_handleHighLatency2(mavlink_message_t& message)
     } else {
         _base_mode = MAV_MODE_FLAG_CUSTOM_MODE_ENABLED;
     }
+    const uint32_t previousEffectiveCustomMode = effectiveCustomMode();
     _custom_mode = _firmwarePlugin->highLatencyCustomModeTo32Bits(highLatency2.custom_mode);
     if (previousFlightMode != flightMode()) {
         emit flightModeChanged(flightMode());
+    }
+    if (previousEffectiveCustomMode != effectiveCustomMode()) {
+        emit effectiveCustomModeChanged();
     }
     // ArduPilot has the arming status (basemode) in the custom0 field of the high latency message.
     if (highLatency2.autopilot == MAV_AUTOPILOT_ARDUPILOTMEGA) {
@@ -1103,6 +1118,14 @@ void Vehicle::_handleSysStatus(mavlink_message_t& message)
         if (newReadyToFly != _readyToFly) {
             _readyToFly = newReadyToFly;
             emit readyToFlyChanged(_readyToFly);
+        }
+    } else if (_readyToFlyAvailable) {
+        // ArduPilot stops enabling the prearm check bit when arming checks are disabled
+        _readyToFlyAvailable = false;
+        emit readyToFlyAvailableChanged(false);
+        if (_readyToFly) {
+            _readyToFly = false;
+            emit readyToFlyChanged(false);
         }
     }
 
@@ -1318,10 +1341,14 @@ void Vehicle::_handleHeartbeat(mavlink_message_t& message)
             // bad modes while unit testing.
             previousFlightMode = flightMode();
         }
+        const uint32_t previousEffectiveCustomMode = effectiveCustomMode();
         _base_mode   = heartbeat.base_mode;
         _custom_mode = heartbeat.custom_mode;
         if (previousFlightMode != flightMode()) {
             emit flightModeChanged(flightMode());
+        }
+        if (previousEffectiveCustomMode != effectiveCustomMode()) {
+            emit effectiveCustomModeChanged();
         }
     }
 }
@@ -1335,12 +1362,18 @@ void Vehicle::_handleCurrentMode(mavlink_message_t& message)
     mavlink_current_mode_t currentMode;
     mavlink_msg_current_mode_decode(&message, &currentMode);
     if (currentMode.intended_custom_mode != 0) { // 0 == unknown/not supplied
+        const uint32_t previousEffectiveCustomMode = effectiveCustomMode();
         _has_custom_mode_user_intention = true;
         QString previousFlightMode = flightMode();
         bool changed = _custom_mode_user_intention != currentMode.intended_custom_mode;
         _custom_mode_user_intention = currentMode.intended_custom_mode;
         if (changed && previousFlightMode != flightMode()) {
             emit flightModeChanged(flightMode());
+        }
+        // CURRENT_MODE usually follows the HEARTBEAT which already changed the displayed mode, so flightModeChanged
+        // does not fire again for the new intended mode
+        if (previousEffectiveCustomMode != effectiveCustomMode()) {
+            emit effectiveCustomModeChanged();
         }
     }
 }
@@ -1658,10 +1691,10 @@ void Vehicle::_updateFlightTime()
 
 void Vehicle::_gotProgressUpdate(float progressValue)
 {
-    if (sender() != _initialConnectStateMachine && _initialConnectStateMachine->active()) {
+    if (sender() != _initialConnectStateMachine && _initialConnectStateMachine->inProgress()) {
         return;
     }
-    if (sender() == _initialConnectStateMachine && !_initialConnectStateMachine->active()) {
+    if (sender() == _initialConnectStateMachine && !_initialConnectStateMachine->inProgress()) {
         progressValue = 0.f;
     }
     _loadProgress = progressValue;
@@ -2875,7 +2908,7 @@ QString Vehicle::_formatMavCommand(MAV_CMD command, float param1)
 
 bool Vehicle::isInitialConnectComplete() const
 {
-    return !_initialConnectStateMachine->active();
+    return !_initialConnectStateMachine->inProgress();
 }
 
 void Vehicle::_initializeCsv()
@@ -3490,6 +3523,11 @@ int Vehicle::unreadCriticalMessageCount() const
     return m_statusTextHandler->unreadCriticalMessageCount();
 }
 
+int Vehicle::unreadWarningMessageCount() const
+{
+    return m_statusTextHandler->unreadWarningMessageCount();
+}
+
 bool Vehicle::hasUnreadMessages() const
 {
     return m_statusTextHandler->hasUnreadMessages();
@@ -3507,6 +3545,8 @@ void Vehicle::_createStatusTextHandler()
     m_statusTextHandler = new StatusTextHandler(this);
     (void) connect(m_statusTextHandler, &StatusTextHandler::unreadCriticalMessageCountChanged, this,
                    &Vehicle::unreadCriticalMessageCountChanged);
+    (void) connect(m_statusTextHandler, &StatusTextHandler::unreadWarningMessageCountChanged, this,
+                   &Vehicle::unreadWarningMessageCountChanged);
     (void) connect(m_statusTextHandler, &StatusTextHandler::hasUnreadMessagesChanged, this,
                    &Vehicle::hasUnreadMessagesChanged);
     (void) connect(m_statusTextHandler, &StatusTextHandler::unreadMessageCountChanged, this,
@@ -3536,7 +3576,7 @@ void Vehicle::_textMessageReceived(MAV_COMPONENT componentid, MAV_SEVERITY sever
     const bool ardupilotPrearm = text.startsWith(QStringLiteral("PreArm"));
     const bool px4Prearm = text.startsWith(QStringLiteral("preflight"), Qt::CaseInsensitive) && (severity >= MAV_SEVERITY::MAV_SEVERITY_CRITICAL);
     if (ardupilotPrearm || px4Prearm) {
-        if (_healthAndArmingChecksSupported(componentid)) {
+        if (healthAndArmingChecksSupported(componentid)) {
             qCDebug(VehicleLog) << "Dropping preflight message (expected as event):" << text;
             return;
         }
@@ -3661,9 +3701,14 @@ void Vehicle::_handleEventMessage(const mavlink_message_t& msg)
     _eventManager->handleEventMessage(msg);
 }
 
-bool Vehicle::_healthAndArmingChecksSupported(uint8_t compid)
+bool Vehicle::healthAndArmingChecksSupported(uint8_t compid) const
 {
     return _eventManager->healthAndArmingChecksSupported(compid);
+}
+
+int Vehicle::healthAndArmingCheckModeGroup(uint32_t customMode) const
+{
+    return _eventManager->modeGroup(MAV_COMP_ID_AUTOPILOT1, customMode);
 }
 
 HealthAndArmingCheckReport* Vehicle::healthAndArmingCheckReport()

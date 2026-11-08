@@ -10,6 +10,7 @@
 #include "APMAutoPilotPlugin.h"
 #include "APMMavlinkStreamRateSettings.h"
 #include "APMParameterMetaData.h"
+#include "APMVehicleReadiness.h"
 #include "AppMessages.h"
 #include "ArduCopterFirmwarePlugin.h"
 #include "ArduPlaneFirmwarePlugin.h"
@@ -1125,6 +1126,11 @@ void APMFirmwarePlugin::startTakeoff(Vehicle *vehicle) const
         QGC::showAppMessage(tr("Unable to start takeoff: Vehicle failed to arm."));
         return;
     }
+}
+
+VehicleReadiness* APMFirmwarePlugin::createVehicleReadiness(Vehicle* vehicle) const
+{
+    return new APMVehicleReadiness(vehicle);
 }
 
 void APMFirmwarePlugin::startMission(Vehicle *vehicle) const

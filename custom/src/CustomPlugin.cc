@@ -87,7 +87,7 @@ void CustomPlugin::paletteOverride(const QString& colorName, QGCPalette::Palette
         colorInfo[QGCPalette::Dark][QGCPalette::ColorGroupDisabled] = QColor("#777c89");
         colorInfo[QGCPalette::Light][QGCPalette::ColorGroupEnabled] = QColor("#212529");
         colorInfo[QGCPalette::Light][QGCPalette::ColorGroupDisabled] = QColor("#9d9d9d");
-    } else if (colorName == QStringLiteral("warningText")) {
+    } else if (colorName == QStringLiteral("errorText")) {
         colorInfo[QGCPalette::Dark][QGCPalette::ColorGroupEnabled] = QColor("#e03131");
         colorInfo[QGCPalette::Dark][QGCPalette::ColorGroupDisabled] = QColor("#e03131");
         colorInfo[QGCPalette::Light][QGCPalette::ColorGroupEnabled] = QColor("#cc0808");

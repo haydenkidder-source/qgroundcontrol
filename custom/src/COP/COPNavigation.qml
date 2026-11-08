@@ -182,7 +182,7 @@ Rectangle {
                     Layout.fillWidth: true
                     visible: dialog.nicknameTaken
                     wrapMode: Text.WordWrap
-                    color: QGroundControl.globalPalette.warningText
+                    color: QGroundControl.globalPalette.errorText
                     text: qsTr("Another vehicle already uses this nickname. Give each vehicle its own.")
                 }
                 QGCLabel { text: qsTr("Role (vehicle type)") }

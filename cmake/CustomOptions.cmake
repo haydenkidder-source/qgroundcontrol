@@ -182,7 +182,7 @@ set(QGC_MAVLINK_GIT_REPO
     CACHE STRING "MAVLink repository URL"
 )
 set(QGC_MAVLINK_GIT_TAG
-    "c409cf690454db6d3e004bd14173bc6c7ff1e0ff"
+    "1c5b39f6709166596341b855d92331c1c0885b5c"
     CACHE STRING "MAVLink repository commit/tag"
 )
 set(QGC_MAVLINK_DIALECT
@@ -386,13 +386,14 @@ else()
 endif()
 option(QT_QML_GENERATE_QMLLS_INI "Generate qmlls.ini for QML language server" ${_qmlls_ini_default})
 unset(_qmlls_ini_default)
-option(QT_QMLLINT_CONTEXT_PROPERTY_DUMP "Emit qmllint context property data (Qt 6.11+; no-op on older)" ON)
+option(QT_QMLLINT_CONTEXT_PROPERTY_DUMP "Emit qmllint context property data" ON)
 option(QT_QML_GENERATE_QMLLINT "Run qmllint at build time" OFF)
 
 set(QGC_QT_DISABLE_DEPRECATED_UP_TO
-    "0x060B00"
+    "0x060C00"
     CACHE STRING "Disable Qt APIs deprecated before this version"
 )
+# 6.12 strict mode defines QT_NO_QPAIR, but QtSensors' public qsensor.h still uses QPair.
 set(QGC_QT_ENABLE_STRICT_MODE_UP_TO
     "0x060B00"
     CACHE STRING "Enable strict Qt API mode up to this version"

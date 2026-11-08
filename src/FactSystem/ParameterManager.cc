@@ -545,8 +545,11 @@ void ParameterManager::_factRawValueUpdated(const QVariant &rawValue)
 
     if (fact->vehicleRebootRequired()) {
         _vehicle->setRebootRequired();
-        QGC::showRebootAppMessage(tr(
-            "Vehicle reboot required for changes to take effect. Use the power indicator in the toolbar to reboot."));
+        if (_rebootMessageSuppressCount == 0) {
+            QGC::showRebootAppMessage(
+                tr("Vehicle reboot required for changes to take effect. "
+                   "Use the main status indicator in the toolbar to reboot."));
+        }
     }
 
     _mavlinkParamSet(fact->componentId(), fact->name(), fact->type(), rawValue);
@@ -776,19 +779,33 @@ int ParameterManager::_actualComponentId(int componentId) const
     return componentId;
 }
 
-void ParameterManager::refreshParameter(int componentId, const QString &paramName)
+void ParameterManager::refreshParameter(int componentId, const QString& paramName, bool notifyFailure)
 {
     componentId = _actualComponentId(componentId);
 
-    qCDebug(ParameterManagerLog) << _logVehiclePrefix(componentId) << "refreshParameter - name:" << paramName << ")";
+    qCDebug(ParameterManagerLog) << _logVehiclePrefix(componentId) << "refreshParameter - name:" << paramName;
 
-    _mavlinkParamRequestRead(componentId, paramName, -1, true /* notifyFailure */);
+    _mavlinkParamRequestRead(componentId, paramName, -1, notifyFailure);
+}
+
+void ParameterManager::suppressRebootMessage()
+{
+    _rebootMessageSuppressCount++;
+}
+
+void ParameterManager::unsuppressRebootMessage()
+{
+    if (_rebootMessageSuppressCount == 0) {
+        qCWarning(ParameterManagerLog) << "unsuppressRebootMessage without matching suppressRebootMessage";
+        return;
+    }
+    _rebootMessageSuppressCount--;
 }
 
 void ParameterManager::refreshParametersPrefix(int componentId, const QString &namePrefix)
 {
     componentId = _actualComponentId(componentId);
-    qCDebug(ParameterManagerLog) << _logVehiclePrefix(componentId) << "refreshParametersPrefix - name:" << namePrefix << ")";
+    qCDebug(ParameterManagerLog) << _logVehiclePrefix(componentId) << "refreshParametersPrefix - name:" << namePrefix;
 
     if (!_mapCompId2FactMap.contains(componentId)) {
         return;
@@ -1612,19 +1629,20 @@ void ParameterManager::_loadOfflineEditingParams()
     QFile paramFile(paramFilename);
     if (!paramFile.open(QFile::ReadOnly)) {
         qCWarning(ParameterManagerLog) << "Unable to open offline editing params file" << paramFilename;
+        return;
     }
 
     QTextStream paramStream(&paramFile);
     while (!paramStream.atEnd()) {
         const QString line = paramStream.readLine();
-        if (line.startsWith("#")) {
+        if (line.trimmed().isEmpty() || line.startsWith("#")) {
             continue;
         }
 
         const QStringList paramData = line.split("\t");
         if (paramData.count() != 5) {
-            qCWarning(ParameterManagerLog) << "Invalid offline parameter row in" << paramFilename;
-            return;
+            qCWarning(ParameterManagerLog) << "Skipping malformed offline editing param line" << line;
+            continue;
         }
 
         const int offlineDefaultComponentId = paramData.at(1).toInt();
@@ -1661,10 +1679,14 @@ void ParameterManager::_loadOfflineEditingParams()
             break;
         }
 
-        Fact *const fact = new Fact(offlineDefaultComponentId, paramName, mavTypeToFactType(paramType), this);
+        CompInfoParam* const compInfoParam = _vehicle->compInfoManager()->compInfoParam(offlineDefaultComponentId);
+        if (!compInfoParam) {
+            qCWarning(ParameterManagerLog) << "No parameter metadata for component" << offlineDefaultComponentId;
+            continue;
+        }
 
-        FactMetaData *const factMetaData = _vehicle->compInfoManager()->compInfoParam(offlineDefaultComponentId)->factMetaDataForName(paramName, fact->type());
-        fact->setMetaData(factMetaData);
+        Fact* const fact = new Fact(offlineDefaultComponentId, paramName, mavTypeToFactType(paramType), this);
+        fact->setMetaData(compInfoParam->factMetaDataForName(paramName, fact->type()));
 
         _mapCompId2FactMap[defaultComponentId][paramName] = fact;
     }

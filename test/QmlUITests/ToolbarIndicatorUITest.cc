@@ -1,5 +1,7 @@
 #include "ToolbarIndicatorUITest.h"
 
+#include <functional>
+
 #include <QtCore/QPointer>
 #include <QtCore/QRegularExpression>
 #include <QtCore/QScopeGuard>
@@ -11,10 +13,12 @@
 
 #include "AppSettings.h"
 #include "Fact.h"
+#include "HealthAndArmingCheckReport.h"
 #include "MavlinkSettings.h"
 #include "MockConfiguration.h"
 #include "MockLink.h"
 #include "MultiVehicleManager.h"
+#include "QGCPalette.h"
 #include "SettingsManager.h"
 #include "Vehicle.h"
 
@@ -34,6 +38,41 @@ QQuickItem* findChecklistButton(QQuickItem* item, const QString& name)
     }
     for (QQuickItem* const child : item->childItems()) {
         if (QQuickItem* const found = findChecklistButton(child, name)) {
+            return found;
+        }
+    }
+    return nullptr;
+}
+
+/// Finds the first enabled PreFlightCheckButton that still needs manual confirmation, whatever the checklist contains.
+QQuickItem* findPendingManualChecklistButton(QQuickItem* item)
+{
+    if (!item || !item->isVisible()) {
+        return nullptr;
+    }
+    if (item->property("manualText").isValid() && !item->property("manualText").toString().isEmpty() &&
+        item->isEnabled() && !item->property("passed").toBool() && !item->property("telemetryFailure").toBool()) {
+        return item;
+    }
+    for (QQuickItem* const child : item->childItems()) {
+        if (QQuickItem* const found = findPendingManualChecklistButton(child)) {
+            return found;
+        }
+    }
+    return nullptr;
+}
+
+/// Finds the visible PreFlightCheckGroup with the given name.
+QQuickItem* findChecklistGroup(QQuickItem* item, const QString& name)
+{
+    if (!item || !item->isVisible()) {
+        return nullptr;
+    }
+    if (item->property("failedCount").isValid() && item->property("name").toString() == name) {
+        return item;
+    }
+    for (QQuickItem* const child : item->childItems()) {
+        if (QQuickItem* const found = findChecklistGroup(child, name)) {
             return found;
         }
     }
@@ -253,6 +292,80 @@ void ToolbarIndicatorUITest::_testEmergencyStopReplacesDisarmInFlight()
         });
 }
 
+void ToolbarIndicatorUITest::_testActionsDisabledWhileVehicleNotReady()
+{
+    if (!apmFirmwareSupported()) {
+        QSKIP("ArduPilot support not registered in this build");
+    }
+
+    runWithMockLink([] { return MockLink::startAPMArduCopterMockLink(); },
+                    [this](QPointer<MockLink> mockLink, Vehicle* vehicle) {
+                        QQuickItem* const statusText =
+                            findVisibleItem(_rootItem, QStringLiteral("mainStatusText"), TestTimeout::mediumMs());
+                        QVERIFY2(statusText, "Main status text not visible");
+                        QQuickItem* const takeoffButton = findVisibleItem(
+                            _rootItem, QStringLiteral("flyToolStrip_takeoffButton"), TestTimeout::mediumMs());
+                        QVERIFY2(takeoffButton, "Takeoff tool strip action not visible");
+
+                        // A failing prearm check disables the actions instead of hiding them
+                        mockLink->setPrearmCheck(true, false);
+                        QVERIFY_TRUE_WAIT(vehicle->readyToFlyAvailable(), TestTimeout::mediumMs());
+                        QTRY_COMPARE_WITH_TIMEOUT(statusText->property("text").toString(), QStringLiteral("Not Ready"),
+                                                  TestTimeout::mediumMs());
+                        QTRY_VERIFY_WITH_TIMEOUT(!takeoffButton->isEnabled(), TestTimeout::mediumMs());
+                        QVERIFY2(takeoffButton->isVisible(), "Takeoff hidden instead of disabled");
+
+                        QQuickItem* const indicator = findVisibleItem(
+                            _rootItem, QStringLiteral("toolbar_mainStatusIndicator"), TestTimeout::mediumMs());
+                        QVERIFY2(indicator, "Main status indicator not visible");
+                        QVERIFY(_clickItemAt(indicator, 0.5, 0.5, QStringLiteral("toolbar_mainStatusIndicator")));
+                        QQuickItem* const armButton =
+                            findVisibleItem(_rootItem, QStringLiteral("mainStatusArmButton"), TestTimeout::mediumMs());
+                        QVERIFY2(armButton, "Arm button not shown in the main status drawer");
+                        QVERIFY2(!armButton->isEnabled(), "Arm enabled while the prearm check fails");
+
+                        mockLink->setPrearmCheck(true, true);
+                        QTRY_COMPARE_WITH_TIMEOUT(statusText->property("text").toString(), QStringLiteral("Ready"),
+                                                  TestTimeout::mediumMs());
+                        QTRY_VERIFY_WITH_TIMEOUT(armButton->isEnabled(), TestTimeout::mediumMs());
+                        QVERIFY(takeoffButton->isEnabled());
+                    });
+}
+
+void ToolbarIndicatorUITest::_testTakeoffLandShareSlot()
+{
+    runWithMockLink(
+        [] { return MockLink::startPX4MockLink(); },
+        [this](QPointer<MockLink> /*mockLink*/, Vehicle* vehicle) {
+            const QString takeoffName = QStringLiteral("flyToolStrip_takeoffButton");
+            const QString landName = QStringLiteral("flyToolStrip_landButton");
+            QQuickItem* const takeoffButton = findVisibleItem(_rootItem, takeoffName, TestTimeout::mediumMs());
+            QVERIFY2(takeoffButton, "Takeoff not shown on the ground");
+            QVERIFY(!findVisibleItem(_rootItem, landName, 0));
+
+            // Armed but still on the ground keeps Takeoff in the slot
+            vehicle->setArmed(true, false /* showError */);
+            QVERIFY_TRUE_WAIT(vehicle->armed(), TestTimeout::mediumMs());
+            QVERIFY2(takeoffButton->isVisible(), "Takeoff replaced while armed on the ground");
+            QVERIFY(takeoffButton->isEnabled());
+            QVERIFY(!findVisibleItem(_rootItem, landName, 0));
+
+            // The airborne transition creates QGCPressure, which warns on hosts without a pressure backend
+            ignoreLogMessage("Utilities.QGCSensors", QtWarningMsg,
+                             QRegularExpression(QStringLiteral("Failed to connect to pressure backend")));
+            ignoreLogMessage("Utilities.QGCSensors", QtWarningMsg,
+                             QRegularExpression(QStringLiteral("Error Initializing Pressure Sensor")));
+            vehicle->sendMavCommand(vehicle->defaultComponentId(), MAV_CMD_NAV_TAKEOFF, false /* showError */, 0.0f,
+                                    0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 10.0f /* altitude */);
+            QVERIFY_TRUE_WAIT(vehicle->underway(), TestTimeout::longMs());
+
+            QQuickItem* const landButton = findVisibleItem(_rootItem, landName, TestTimeout::mediumMs());
+            QVERIFY2(landButton, "Land not shown in the air");
+            QVERIFY(landButton->isEnabled());
+            QVERIFY(!takeoffButton->isVisible());
+        });
+}
+
 void ToolbarIndicatorUITest::_testArmRequiresEnforcedChecklist()
 {
     AppSettings* const appSettings = SettingsManager::instance()->appSettings();
@@ -268,7 +381,7 @@ void ToolbarIndicatorUITest::_testArmRequiresEnforcedChecklist()
     enforceChecklist->setRawValue(true);
 
     runWithMockLink([] { return MockLink::startPX4MockLink(); },
-                    [this, useChecklist](QPointer<MockLink> /*mockLink*/, Vehicle* vehicle) {
+                    [this, useChecklist](QPointer<MockLink> mockLink, Vehicle* vehicle) {
                         QQuickItem* const indicator = findVisibleItem(
                             _rootItem, QStringLiteral("toolbar_mainStatusIndicator"), TestTimeout::mediumMs());
                         QVERIFY2(indicator, "Main status indicator not visible");
@@ -292,10 +405,44 @@ void ToolbarIndicatorUITest::_testArmRequiresEnforcedChecklist()
                         QTRY_COMPARE_WITH_TIMEOUT(statusText->property("text").toString(), QStringLiteral("Not Ready"),
                                                   TestTimeout::mediumMs());
 
+                        QQuickItem* const checklistLabel = findVisibleItem(
+                            _rootItem, QStringLiteral("mainStatusChecklistTabBadge"), TestTimeout::mediumMs());
+                        QVERIFY2(checklistLabel, "Checklist tab label not shown");
+                        QCOMPARE(checklistLabel->property("text").toString(), QStringLiteral("In Progress"));
+
+                        vehicle->clearMessages();
+                        QQuickItem* const toolbarBadge = findVisibleItem(
+                            _rootItem, QStringLiteral("mainStatusSeverityBadge"), TestTimeout::mediumMs());
+                        QVERIFY2(toolbarBadge, "Toolbar severity badge not shown for an incomplete checklist");
+                        QTRY_COMPARE_WITH_TIMEOUT(toolbarBadge->property("severity").toString(),
+                                                  QStringLiteral("warning"), TestTimeout::mediumMs());
+                        QCOMPARE(toolbarBadge->property("text").toString(), QStringLiteral("Pre-Flight"));
+
+                        // The badge names the checklist only while it is the sole warning
+                        mockLink->sendStatusTextMessage(MAV_SEVERITY_WARNING, QStringLiteral("Status text warning"));
+                        QVERIFY_TRUE_WAIT(vehicle->unreadWarningMessageCount() == 1, TestTimeout::mediumMs());
+                        QTRY_COMPARE_WITH_TIMEOUT(toolbarBadge->property("text").toString(), QStringLiteral("Warning"),
+                                                  TestTimeout::mediumMs());
+                        vehicle->clearMessages();
+                        QTRY_COMPARE_WITH_TIMEOUT(toolbarBadge->property("text").toString(),
+                                                  QStringLiteral("Pre-Flight"), TestTimeout::mediumMs());
+
+                        // The checklist is pre-flight, so arming drops its warning
+                        vehicle->setArmed(true, false /* showError */);
+                        QVERIFY_TRUE_WAIT(vehicle->armed(), TestTimeout::mediumMs());
+                        QTRY_VERIFY_WITH_TIMEOUT(!toolbarBadge->isVisible(), TestTimeout::mediumMs());
+                        vehicle->setArmed(false, false /* showError */);
+                        QVERIFY_TRUE_WAIT(!vehicle->armed(), TestTimeout::mediumMs());
+                        QTRY_COMPARE_WITH_TIMEOUT(toolbarBadge->property("severity").toString(),
+                                                  QStringLiteral("warning"), TestTimeout::mediumMs());
+
                         vehicle->setCheckListState(Vehicle::CheckListPassed);
                         QTRY_VERIFY_WITH_TIMEOUT(armButton->isEnabled(), TestTimeout::mediumMs());
                         QTRY_COMPARE_WITH_TIMEOUT(statusText->property("text").toString(), QStringLiteral("Ready"),
                                                   TestTimeout::mediumMs());
+                        QTRY_COMPARE_WITH_TIMEOUT(checklistLabel->property("text").toString(), QStringLiteral("Passed"),
+                                                  TestTimeout::mediumMs());
+                        QTRY_VERIFY_WITH_TIMEOUT(!toolbarBadge->isVisible(), TestTimeout::mediumMs());
 
                         // Recreating the checklist must not leave the previous Passed state behind
                         useChecklist->setRawValue(false);
@@ -457,51 +604,43 @@ void ToolbarIndicatorUITest::_testVehicleMessagesMarkReadAndClear()
             // Messages arriving while the drawer is open are unread
             mockLink->sendStatusTextMessage(MAV_SEVERITY_INFO, QStringLiteral("Status text info"));
             QVERIFY_TRUE_WAIT(vehicle->hasUnreadMessages(), TestTimeout::mediumMs());
-            QQuickItem* const unreadBadge = findVisibleItem(
-                _rootItem, QStringLiteral("mainStatusMessagesTabUnreadBadge"), TestTimeout::mediumMs());
-            QVERIFY2(unreadBadge, "Messages tab unread badge not shown with only non-critical unread messages");
-            QCOMPARE(unreadBadge->property("count").toInt(), 1);
-            QCOMPARE(unreadBadge->property("countText").toString(), QStringLiteral("1"));
-            QVERIFY2(!findVisibleItem(_rootItem, QStringLiteral("mainStatusMessagesTabBadge"), 0),
-                     "Messages tab badge shown without critical messages");
+            QQuickItem* const messagesBadge =
+                findVisibleItem(_rootItem, QStringLiteral("mainStatusMessagesTabBadge"), TestTimeout::mediumMs());
+            QVERIFY2(messagesBadge, "Messages tab badge not shown with unread messages");
+            QCOMPARE(messagesBadge->property("severity").toString(), QStringLiteral("info"));
+            QCOMPARE(messagesBadge->property("text").toString(), QStringLiteral("Info"));
+            QQuickItem* const toolbarBadge =
+                findVisibleItem(_rootItem, QStringLiteral("mainStatusSeverityBadge"), TestTimeout::mediumMs());
+            QVERIFY2(toolbarBadge, "Toolbar severity badge not shown with unread messages");
+            QCOMPARE(toolbarBadge->property("severity").toString(), QStringLiteral("info"));
 
-            // Counts above 9 are capped
-            for (int i = 0; i < 9; i++) {
-                mockLink->sendStatusTextMessage(MAV_SEVERITY_INFO, QStringLiteral("Status text info"));
-            }
-            QVERIFY_TRUE_WAIT(vehicle->unreadMessageCount() == 10, TestTimeout::mediumMs());
-            QTRY_COMPARE_WITH_TIMEOUT(unreadBadge->property("countText").toString(), QStringLiteral("9+"),
-                                      TestTimeout::mediumMs());
             vehicle->markMessagesRead();
             QVERIFY_TRUE_WAIT(!vehicle->hasUnreadMessages(), TestTimeout::mediumMs());
             mockLink->sendStatusTextMessage(MAV_SEVERITY_INFO, QStringLiteral("Status text info"));
             QVERIFY_TRUE_WAIT(vehicle->unreadMessageCount() == 1, TestTimeout::mediumMs());
 
+            // Warnings outrank plain unread messages
+            mockLink->sendStatusTextMessage(MAV_SEVERITY_WARNING, QStringLiteral("Status text warning"));
+            QVERIFY_TRUE_WAIT(vehicle->unreadWarningMessageCount() == 1, TestTimeout::mediumMs());
+            QTRY_COMPARE_WITH_TIMEOUT(messagesBadge->property("severity").toString(), QStringLiteral("warning"),
+                                      TestTimeout::mediumMs());
+            QCOMPARE(messagesBadge->property("text").toString(), QStringLiteral("Warning"));
+            QTRY_COMPARE_WITH_TIMEOUT(toolbarBadge->property("severity").toString(), QStringLiteral("warning"),
+                                      TestTimeout::mediumMs());
+            QCOMPARE(toolbarBadge->property("text").toString(), QStringLiteral("Warning"));
+
+            // Errors outrank warnings
             mockLink->sendStatusTextMessage(MAV_SEVERITY_ERROR, QStringLiteral("Status text error"));
             QVERIFY_TRUE_WAIT(vehicle->unreadCriticalMessageCount() == 1 &&
                                   vehicle->formattedMessages().contains(QStringLiteral("Status text info")),
                               TestTimeout::mediumMs());
-            QCOMPARE(vehicle->formattedMessages().count(QStringLiteral("<b>")), 2);
-            QVERIFY2(findVisibleItem(_rootItem, QStringLiteral("mainStatusMessagesTabBadge"), TestTimeout::mediumMs()),
-                     "Messages tab badge not shown with unread critical messages");
-            QVERIFY2(!findVisibleItem(_rootItem, QStringLiteral("mainStatusMessagesTabUnreadBadge"), 0),
-                     "Messages tab unread badge shown alongside the critical badge");
-
-            QQuickItem* const criticalBadge =
-                findVisibleItem(_rootItem, QStringLiteral("mainStatusMessagesTabBadge"), TestTimeout::mediumMs());
-            QVERIFY(criticalBadge);
-            QCOMPARE(criticalBadge->property("countText").toString(), QStringLiteral("1"));
-            for (int i = 0; i < 9; i++) {
-                mockLink->sendStatusTextMessage(MAV_SEVERITY_ERROR, QStringLiteral("Status text error"));
-            }
-            QVERIFY_TRUE_WAIT(vehicle->unreadCriticalMessageCount() == 10, TestTimeout::mediumMs());
-            QTRY_COMPARE_WITH_TIMEOUT(criticalBadge->property("countText").toString(), QStringLiteral("9+"),
+            QCOMPARE(vehicle->formattedMessages().count(QStringLiteral("<b>")), 3);
+            QTRY_COMPARE_WITH_TIMEOUT(messagesBadge->property("severity").toString(), QStringLiteral("error"),
                                       TestTimeout::mediumMs());
-
-            QQuickItem* const toolbarBadge =
-                findVisibleItem(_rootItem, QStringLiteral("mainStatusCriticalBadge"), TestTimeout::mediumMs());
-            QVERIFY2(toolbarBadge, "Toolbar critical badge not shown");
-            QCOMPARE(toolbarBadge->property("countText").toString(), QStringLiteral("9+"));
+            QCOMPARE(messagesBadge->property("text").toString(), QStringLiteral("Error"));
+            QTRY_COMPARE_WITH_TIMEOUT(toolbarBadge->property("severity").toString(), QStringLiteral("error"),
+                                      TestTimeout::mediumMs());
+            QCOMPARE(toolbarBadge->property("text").toString(), QStringLiteral("Error"));
 
             QQuickItem* const markReadButton = findVisibleItem(_rootItem, markReadName, TestTimeout::mediumMs());
             QVERIFY2(markReadButton, "Mark as Read not shown with unread messages");
@@ -521,6 +660,10 @@ void ToolbarIndicatorUITest::_testVehicleMessagesMarkReadAndClear()
                          [&] { return findVisibleItem(_rootItem, QStringLiteral("mainStatusMessagesTabBadge"), 0) == nullptr; },
                          TestTimeout::mediumMs(), QStringLiteral("Messages tab badge hidden")),
                      "Messages tab badge still shown after marking all read");
+            const QString toolbarBadgeName = QStringLiteral("mainStatusSeverityBadge");
+            QVERIFY2(waitForCondition([&] { return findVisibleItem(_rootItem, toolbarBadgeName, 0) == nullptr; },
+                                      TestTimeout::mediumMs(), QStringLiteral("Toolbar severity badge hidden")),
+                     "Toolbar severity badge still shown after marking all read");
 
             // A new message is unread again
             mockLink->sendStatusTextMessage(MAV_SEVERITY_ERROR, QStringLiteral("Status text error 2"));
@@ -558,13 +701,92 @@ void ToolbarIndicatorUITest::_testMockLinkBootStatusTextShowsNonCriticalIndicato
             QVERIFY2(indicator, "Main status indicator not visible");
             QVERIFY(_clickItemAt(indicator, 0.5, 0.5, QStringLiteral("toolbar_mainStatusIndicator")));
 
-            QQuickItem* const unreadBadge = findVisibleItem(
-                _rootItem, QStringLiteral("mainStatusMessagesTabUnreadBadge"), TestTimeout::mediumMs());
-            QVERIFY2(unreadBadge, "Messages tab unread badge not shown for the MockLink boot status messages");
-            QCOMPARE(unreadBadge->property("count").toInt(), 2);
-            QVERIFY2(!findVisibleItem(_rootItem, QStringLiteral("mainStatusMessagesTabBadge"), 0),
-                     "Messages tab badge shown before any critical message");
+            // The boot Notice outranks the Info message
+            QQuickItem* const messagesBadge =
+                findVisibleItem(_rootItem, QStringLiteral("mainStatusMessagesTabBadge"), TestTimeout::mediumMs());
+            QVERIFY2(messagesBadge, "Messages tab badge not shown for the MockLink boot status messages");
+            QCOMPARE(messagesBadge->property("severity").toString(), QStringLiteral("warning"));
+
+            QQuickItem* const toolbarBadge =
+                findVisibleItem(_rootItem, QStringLiteral("mainStatusSeverityBadge"), TestTimeout::mediumMs());
+            QVERIFY2(toolbarBadge, "Toolbar severity badge not shown for the MockLink boot status messages");
+            QCOMPARE(toolbarBadge->property("severity").toString(), QStringLiteral("warning"));
         });
+}
+
+void ToolbarIndicatorUITest::_testHealthChecksDriveToolbarSeverity()
+{
+    runWithMockLink(
+        [] { return MockLink::startPX4MockLink(); },
+        [this](QPointer<MockLink> /*mockLink*/, Vehicle* vehicle) {
+            vehicle->clearMessages();
+            HealthAndArmingCheckReport* const report = vehicle->healthAndArmingCheckReport();
+            QVERIFY(report);
+            const QString badgeName = QStringLiteral("mainStatusSeverityBadge");
+
+            report->setProblemsForTest({QStringLiteral("warning")});
+            QQuickItem* const toolbarBadge = findVisibleItem(_rootItem, badgeName, TestTimeout::mediumMs());
+            QVERIFY2(toolbarBadge, "Toolbar severity badge not shown for a health warning");
+            QTRY_COMPARE_WITH_TIMEOUT(toolbarBadge->property("severity").toString(), QStringLiteral("warning"),
+                                      TestTimeout::mediumMs());
+
+            const QString indicatorName = QStringLiteral("toolbar_mainStatusIndicator");
+            QQuickItem* const indicator = findVisibleItem(_rootItem, indicatorName, TestTimeout::mediumMs());
+            QVERIFY2(indicator, "Main status indicator not visible");
+            QVERIFY(_clickItemAt(indicator, 0.5, 0.5, indicatorName));
+            const QString tabBadgeName = QStringLiteral("mainStatusOverallStatusTabBadge");
+            QQuickItem* const tabBadge = findVisibleItem(_rootItem, tabBadgeName, TestTimeout::mediumMs());
+            QVERIFY2(tabBadge, "Overall Status tab badge not shown for a health warning");
+            QCOMPARE(tabBadge->property("severity").toString(), QStringLiteral("warning"));
+
+            // Errors outrank warnings
+            report->setProblemsForTest({QStringLiteral("warning"), QStringLiteral("error")});
+            QTRY_COMPARE_WITH_TIMEOUT(toolbarBadge->property("severity").toString(), QStringLiteral("error"),
+                                      TestTimeout::mediumMs());
+            QTRY_COMPARE_WITH_TIMEOUT(tabBadge->property("severity").toString(), QStringLiteral("error"),
+                                      TestTimeout::mediumMs());
+
+            // Acknowledged warnings no longer count toward the warning state
+            report->setProblemsForTest({QStringLiteral("warning")});
+            QTRY_COMPARE_WITH_TIMEOUT(toolbarBadge->property("severity").toString(), QStringLiteral("warning"),
+                                      TestTimeout::mediumMs());
+            const QString ackButtonName = QStringLiteral("healthChecksAcknowledgeAllButton");
+            QQuickItem* const ackButton = findVisibleItem(_rootItem, ackButtonName, TestTimeout::mediumMs());
+            QVERIFY2(ackButton, "Acknowledge All button not shown for a health warning");
+            QVERIFY(_clickItemAt(ackButton, 0.5, 0.5, ackButtonName));
+            QTRY_COMPARE_WITH_TIMEOUT(report->warningCount(), 0, TestTimeout::mediumMs());
+            QVERIFY2(waitForCondition([&] { return findVisibleItem(_rootItem, badgeName, 0) == nullptr; },
+                                      TestTimeout::mediumMs(), QStringLiteral("Toolbar severity badge hidden")),
+                     "Toolbar severity badge still shown after acknowledging the health warning");
+            QVERIFY2(waitForCondition([&] { return findVisibleItem(_rootItem, ackButtonName, 0) == nullptr; },
+                                      TestTimeout::mediumMs(), QStringLiteral("Acknowledge All button hidden")),
+                     "Acknowledge All button still shown with every warning acknowledged");
+
+            report->setProblemsForTest({});
+            QVERIFY2(waitForCondition([&] { return findVisibleItem(_rootItem, badgeName, 0) == nullptr; },
+                                      TestTimeout::mediumMs(), QStringLiteral("Toolbar severity badge hidden")),
+                     "Toolbar severity badge still shown with no health problems");
+            QVERIFY2(waitForCondition([&] { return findVisibleItem(_rootItem, tabBadgeName, 0) == nullptr; },
+                                      TestTimeout::mediumMs(), QStringLiteral("Overall Status tab badge hidden")),
+                     "Overall Status tab badge still shown with no health problems");
+        });
+}
+
+bool ToolbarIndicatorUITest::_startChecklistUI(QPointer<MockLink>& mockLink, Vehicle*& vehicle)
+{
+    startUI();
+    if (QTest::currentTestFailed()) {
+        return false;
+    }
+    mockLink = connectMockLinkAndWaitReady([] { return MockLink::startPX4MockLink(); }, vehicle);
+    return !mockLink.isNull();
+}
+
+void ToolbarIndicatorUITest::_stopChecklistUI(QPointer<MockLink>& mockLink)
+{
+    disconnectMockLink(mockLink);
+    closeUIWindow();
+    destroyUIEngine();
 }
 
 void ToolbarIndicatorUITest::_testChecklistProgressPersistsAcrossDropdownCloseAndReconnect()
@@ -575,43 +797,52 @@ void ToolbarIndicatorUITest::_testChecklistProgressPersistsAcrossDropdownCloseAn
     const auto restoreSetting = qScopeGuard([=] { useChecklist->setRawValue(savedUseChecklist); });
     useChecklist->setRawValue(true);
 
-    startUI();
-    if (QTest::currentTestFailed()) {
-        return;
-    }
-
+    QPointer<MockLink> mockLink;
     Vehicle* vehicle = nullptr;
-    QPointer<MockLink> mockLink =
-        connectMockLinkAndWaitReady([] { return MockLink::startPX4MockLink(); }, vehicle);
-    if (!mockLink) {
+    if (!_startChecklistUI(mockLink, vehicle)) {
         return;
     }
-    const auto cleanup = qScopeGuard([&] {
-        disconnectMockLink(mockLink);
-        closeUIWindow();
-        destroyUIEngine();
-    });
+    auto cleanup = qScopeGuard([&] { _stopChecklistUI(mockLink); });
 
     const QString indicatorName = QStringLiteral("toolbar_mainStatusIndicator");
     const QString drawerName = QStringLiteral("indicatorDrawerLoader");
-    const QString buttonName = QStringLiteral("Hardware");
 
-    const auto openDropdownAndFindButton = [&]() -> QQuickItem* {
+    const auto openDropdownAndFind = [&](const std::function<QQuickItem*()>& find) -> QQuickItem* {
         QQuickItem* const indicator = findVisibleItem(_rootItem, indicatorName, TestTimeout::mediumMs());
         if (!indicator || !_clickItemAt(indicator, 0.5, 0.5, indicatorName)) {
             return nullptr;
         }
+        QQuickItem* const tab =
+            findVisibleItem(_rootItem, QStringLiteral("mainStatusChecklistTab"), TestTimeout::mediumMs());
+        if (!tab || !_clickItemAt(tab, 0.5, 0.5, QStringLiteral("mainStatusChecklistTab"))) {
+            return nullptr;
+        }
         QQuickItem* button = nullptr;
-        (void) waitForCondition([&] { return (button = findChecklistButton(_rootItem, buttonName)) != nullptr; },
-                                TestTimeout::mediumMs(), QStringLiteral("checklist button shown"));
+        // Absence is a valid outcome for the caller, so don't log a timeout warning that strict mode would fail on
+        (void) QTest::qWaitFor([&] { return (button = find()) != nullptr; }, TestTimeout::mediumMs());
         return button;
     };
 
-    // An incomplete checklist opens the dropdown on its checklist tab
-    QQuickItem* button = openDropdownAndFindButton();
-    QVERIFY2(button, "Checklist button not shown");
+    // The dropdown is opened on the checklist tab explicitly rather than relying on the default tab
+    QQuickItem* button = openDropdownAndFind([&] { return findPendingManualChecklistButton(_rootItem); });
+
+    QQuickItem* const checklistBadge =
+        findVisibleItem(_rootItem, QStringLiteral("mainStatusChecklistTabBadge"), TestTimeout::mediumMs());
+    QVERIFY2(checklistBadge, "Checklist tab label not shown");
+
+    // A custom build's checklist may have no manual items, so there is nothing to confirm
+    if (!button) {
+        // After QSKIP, signal waits return at once and cleanup would log strict-mode timeout warnings
+        cleanup.dismiss();
+        _stopChecklistUI(mockLink);
+        QSKIP("Checklist has no manual check item to confirm");
+    }
+    QCOMPARE(checklistBadge->property("text").toString(), QStringLiteral("In Progress"));
     QVERIFY(!button->property("passed").toBool());
-    QVERIFY(_clickItemAt(button, 0.5, 0.5, QStringLiteral("preFlightCheckHardware")));
+    const QString buttonName = button->property("name").toString();
+    const auto findButton = [&] { return findChecklistButton(_rootItem, buttonName); };
+
+    QVERIFY(_clickItemAt(button, 0.5, 0.5, QStringLiteral("preFlightCheckManualItem")));
     QTRY_VERIFY_WITH_TIMEOUT(button->property("passed").toBool(), TestTimeout::mediumMs());
 
     // Progress survives closing and reopening the dropdown
@@ -619,7 +850,7 @@ void ToolbarIndicatorUITest::_testChecklistProgressPersistsAcrossDropdownCloseAn
     QVERIFY2(waitForCondition([&] { return findVisibleItem(_rootItem, drawerName, 0) == nullptr; },
                               TestTimeout::mediumMs(), QStringLiteral("drawer closed")),
              "Drawer did not close on Escape");
-    button = openDropdownAndFindButton();
+    button = openDropdownAndFind(findButton);
     QVERIFY2(button, "Checklist button not shown after reopening the dropdown");
     QVERIFY2(button->property("passed").toBool(), "Checklist progress lost when the dropdown was reopened");
 
@@ -627,7 +858,77 @@ void ToolbarIndicatorUITest::_testChecklistProgressPersistsAcrossDropdownCloseAn
     disconnectMockLink(mockLink);
     mockLink = connectMockLinkAndWaitReady([] { return MockLink::startPX4MockLink(); }, vehicle);
     QVERIFY(mockLink);
-    button = openDropdownAndFindButton();
+    button = openDropdownAndFind(findButton);
     QVERIFY2(button, "Checklist button not shown after reconnecting");
     QVERIFY2(!button->property("passed").toBool(), "Checklist progress carried over to a new vehicle");
+}
+
+void ToolbarIndicatorUITest::_testStockChecklistLocksLaterSections()
+{
+    AppSettings* const appSettings = SettingsManager::instance()->appSettings();
+    Fact* const useChecklist = appSettings->useChecklist();
+    Fact* const audioMuted = appSettings->audioMuted();
+    const QVariant savedUseChecklist = useChecklist->rawValue();
+    const QVariant savedAudioMuted = audioMuted->rawValue();
+    const auto restoreSetting = qScopeGuard([=] {
+        useChecklist->setRawValue(savedUseChecklist);
+        audioMuted->setRawValue(savedAudioMuted);
+    });
+    useChecklist->setRawValue(true);
+    audioMuted->setRawValue(false);
+
+    QPointer<MockLink> mockLink;
+    Vehicle* vehicle = nullptr;
+    if (!_startChecklistUI(mockLink, vehicle)) {
+        return;
+    }
+    auto cleanup = qScopeGuard([&] { _stopChecklistUI(mockLink); });
+
+    const QString indicatorName = QStringLiteral("toolbar_mainStatusIndicator");
+    QQuickItem* const indicator = findVisibleItem(_rootItem, indicatorName, TestTimeout::mediumMs());
+    QVERIFY2(indicator, "Main status indicator not visible");
+    QVERIFY(_clickItemAt(indicator, 0.5, 0.5, indicatorName));
+
+    QQuickItem* const checklistTab =
+        findVisibleItem(_rootItem, QStringLiteral("mainStatusChecklistTab"), TestTimeout::mediumMs());
+    QVERIFY2(checklistTab, "Checklist tab not shown in the main status drawer");
+    QVERIFY(_clickItemAt(checklistTab, 0.5, 0.5, QStringLiteral("mainStatusChecklistTab")));
+    QTRY_VERIFY_WITH_TIMEOUT(checklistTab->property("checked").toBool(), TestTimeout::mediumMs());
+
+    // These sections and items exist only in the stock checklist; a custom build replaces them. Absence skips the
+    // test, so wait without the timeout warning that strict mode would fail on.
+    const QString lockedGroupName = QStringLiteral("Please arm the vehicle here");
+    QQuickItem* lockedButton = nullptr;
+    QQuickItem* lockedGroup = nullptr;
+    QQuickItem* soundButton = nullptr;
+    (void) QTest::qWaitFor(
+        [&] {
+            lockedButton = findChecklistButton(_rootItem, QStringLiteral("Motors"));
+            lockedGroup = findChecklistGroup(_rootItem, lockedGroupName);
+            soundButton = findChecklistButton(_rootItem, QStringLiteral("Sound output"));
+            return lockedButton && lockedGroup && soundButton;
+        },
+        TestTimeout::mediumMs());
+    if (!lockedButton || !lockedGroup || !soundButton) {
+        // After QSKIP, signal waits return at once and cleanup would log strict-mode timeout warnings
+        cleanup.dismiss();
+        _stopChecklistUI(mockLink);
+        QSKIP("Custom pre-flight checklist: stock sections not present");
+    }
+
+    // Later sections are always shown, but locked until every section above them passes
+    QVERIFY2(!lockedButton->isEnabled(), "Later checklist section not locked before the first section passed");
+    QGCPalette disabledPalette;
+    disabledPalette.setColorGroupEnabled(false);
+    auto* const lockedLabel = lockedButton->property("contentItem").value<QQuickItem*>();
+    QVERIFY(lockedLabel);
+    QCOMPARE(lockedLabel->property("color").value<QColor>(), disabledPalette.buttonText());
+
+    // A section is failed when any of its items fails, not just its first unpassed item: Motors stays pending
+    // while muting audio fails Sound output further down the same section
+    QVERIFY(!lockedGroup->property("failed").toBool());
+    audioMuted->setRawValue(true);
+    QTRY_VERIFY_WITH_TIMEOUT(lockedGroup->property("failed").toBool(), TestTimeout::mediumMs());
+    audioMuted->setRawValue(false);
+    QTRY_VERIFY_WITH_TIMEOUT(!lockedGroup->property("failed").toBool(), TestTimeout::mediumMs());
 }

@@ -1,19 +1,21 @@
 #include "PX4AutoPilotPlugin.h"
-#include "PX4AirframeLoader.h"
-#include "AppMessages.h"
-#include "FlightModesComponent.h"
-#include "PX4RadioComponent.h"
-#include "PX4TuningComponent.h"
-#include "PowerComponent.h"
-#include "SafetyComponent.h"
-#include "SensorsComponent.h"
-#include "ParameterManager.h"
-#include "Vehicle.h"
-#include "Actuators.h"
-#include "ActuatorComponent.h"
-#include "QGCLoggingCategory.h"
 
 #include <algorithm>
+
+#include "ActuatorComponent.h"
+#include "Actuators.h"
+#include "AppMessages.h"
+#include "FailureInjectionComponent.h"
+#include "FlightModesComponent.h"
+#include "PX4AirframeLoader.h"
+#include "PX4RadioComponent.h"
+#include "PX4TuningComponent.h"
+#include "ParameterManager.h"
+#include "PowerComponent.h"
+#include "QGCLoggingCategory.h"
+#include "SafetyComponent.h"
+#include "SensorsComponent.h"
+#include "Vehicle.h"
 
 QGC_LOGGING_CATEGORY(PX4AutoPilotPluginLog, "Vehicle.Actuators.PX4AutoPilotPlugin")
 
@@ -23,9 +25,11 @@ PX4AutoPilotPlugin::PX4AutoPilotPlugin(Vehicle* vehicle, QObject* parent)
     , _airframeComponent(nullptr)
     , _radioComponent(nullptr)
     , _esp8266Component(nullptr)
+    , _failureInjectionComponent(nullptr)
     , _flightModesComponent(nullptr)
     , _sensorsComponent(nullptr)
     , _safetyComponent(nullptr)
+    , _serialPortsComponent(nullptr)
     , _powerComponent(nullptr)
     , _motorComponent(nullptr)
     , _actuatorComponent(nullptr)
@@ -113,6 +117,18 @@ const QVariantList& PX4AutoPilotPlugin::vehicleComponents(void)
                 _safetyComponent = new SafetyComponent(_vehicle, this, this);
                 _safetyComponent->setupTriggerSignals();
                 _components.append(QVariant::fromValue(static_cast<VehicleComponent*>(_safetyComponent)));
+
+                if (!PX4SerialPortsComponent::functionFacts(_vehicle->parameterManager()).isEmpty()) {
+                    _serialPortsComponent = new PX4SerialPortsComponent(_vehicle, this, this);
+                    _serialPortsComponent->setupTriggerSignals();
+                    _components.append(QVariant::fromValue(static_cast<VehicleComponent*>(_serialPortsComponent)));
+                }
+
+                if (_vehicle->parameterManager()->parameterExists(ParameterManager::defaultComponentId, "SYS_FAILURE_EN")) {
+                    _failureInjectionComponent = new FailureInjectionComponent(_vehicle, this, this);
+                    _failureInjectionComponent->setupTriggerSignals();
+                    _components.append(QVariant::fromValue(static_cast<VehicleComponent*>(_failureInjectionComponent)));
+                }
 
                 _tuningComponent = new PX4TuningComponent(_vehicle, this, this);
                 _tuningComponent->setupTriggerSignals();

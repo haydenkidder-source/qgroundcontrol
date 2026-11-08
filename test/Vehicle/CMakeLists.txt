@@ -33,6 +33,8 @@ target_sources(
             PX4ExternalFlightModesTest.h
             PX4HasGripperTest.cc
             PX4HasGripperTest.h
+            PX4RepositionTest.cc
+            PX4RepositionTest.h
             RemoteIDManagerTest.cc
             RemoteIDManagerTest.h
             RequestMessageTest.cc
@@ -59,6 +61,8 @@ target_sources(
             VehicleGPSFactGroupTest.h
             VehicleLinkManagerTest.cc
             VehicleLinkManagerTest.h
+            VehicleReadinessTest.cc
+            VehicleReadinessTest.h
 )
 
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
@@ -87,6 +91,7 @@ add_qgc_test(MavCommandQueueReentrancyTest LABELS Integration Vehicle)
 add_qgc_test(MultiVehicleManagerTest LABELS Integration Vehicle)
 add_qgc_test(PX4ExternalFlightModesTest LABELS Unit Vehicle)
 add_qgc_test(PX4HasGripperTest LABELS Integration Vehicle)
+add_qgc_test(PX4RepositionTest LABELS Integration Vehicle)
 add_qgc_test(RemoteIDManagerTest LABELS Integration Vehicle)
 add_qgc_test(RequestMessageTest LABELS Integration Vehicle TIMEOUT ${QGC_TEST_TIMEOUT_EXTENDED})
 add_qgc_test(SendMavCommandWithHandlerTest LABELS Integration Vehicle)
@@ -100,3 +105,6 @@ add_qgc_test(VehicleDistanceSensorFactGroupTest LABELS Integration Vehicle)
 add_qgc_test(VehicleFirmwareUpdateTest LABELS Integration Vehicle)
 add_qgc_test(VehicleGPSFactGroupTest LABELS Unit GPS)
 add_qgc_test(VehicleLinkManagerTest LABELS Integration Vehicle SERIAL)
+add_qgc_test(VehicleReadinessTest LABELS Unit Vehicle)
+add_qgc_test(VehicleReadinessPX4Test LABELS Integration Vehicle)
+add_qgc_test(VehicleReadinessAPMTest LABELS Integration Vehicle)

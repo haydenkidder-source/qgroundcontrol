@@ -36,7 +36,8 @@
         android:allowBackup="true"
         android:fullBackupOnly="false"
         android:icon="@drawable/icon"
-        android:networkSecurityConfig="@xml/network_security_config">
+        android:networkSecurityConfig="@xml/network_security_config"
+        android:enableOnBackInvokedCallback="true">
         <!-- android:theme="@style/AppTheme" -->
 
         <!-- <meta-data android:name="android.app.system_libs_prefix" android:value="/system/lib/" /> -->

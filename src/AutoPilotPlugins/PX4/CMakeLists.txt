@@ -13,6 +13,10 @@ target_sources(${CMAKE_PROJECT_NAME}
         AirframeComponentAirframes.h
         AirframeComponentController.cc
         AirframeComponentController.h
+        FailureInjection.cc
+        FailureInjection.h
+        FailureInjectionComponent.cc
+        FailureInjectionComponent.h
         FlightModesComponent.cc
         FlightModesComponent.h
         PowerComponent.cc
@@ -27,6 +31,12 @@ target_sources(${CMAKE_PROJECT_NAME}
         PX4FlightBehavior.h
         PX4RadioComponent.cc
         PX4RadioComponent.h
+        PX4SerialPortConfig.cc
+        PX4SerialPortConfig.h
+        PX4SerialPortsComponent.cc
+        PX4SerialPortsComponent.h
+        PX4SerialPortsController.cc
+        PX4SerialPortsController.h
         PX4SimpleFlightModesController.cc
         PX4SimpleFlightModesController.h
         PX4TuningComponent.cc
@@ -111,11 +121,14 @@ qt_add_qml_module(AutoPilotPluginsPX4Module
         CalcAmpsPerVoltDialog.qml
         CalcVoltageDividerDialog.qml
         ESCCalibrationDialog.qml
+        FailureInjectionComponent.qml
+        FailureInjectionInstances.js
         FlightModesComponentSummary.qml
         PowerComponentSummary.qml
         PX4FlightBehaviorCopter.qml
         PX4FlightModes.qml
         PX4RadioComponentSummary.qml
+        PX4SerialPortsComponent.qml
         PX4TuningComponent.qml
         PX4TuningComponentCopter.qml
         PX4TuningComponentCopterAll.qml

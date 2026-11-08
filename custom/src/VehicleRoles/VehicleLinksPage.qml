@@ -170,7 +170,7 @@ AnalyzePage {
 
                             QGCLabel {
                                 visible:    setUpNameField.taken
-                                color:      QGroundControl.globalPalette.warningText
+                                color:      QGroundControl.globalPalette.errorText
                                 text:       qsTr("Nickname already used by another vehicle")
                             }
                         }
@@ -251,7 +251,7 @@ AnalyzePage {
                             Layout.fillWidth:   true
                             wrapMode:           Text.WordWrap
                             visible:            entryNameField.taken
-                            color:              QGroundControl.globalPalette.warningText
+                            color:              QGroundControl.globalPalette.errorText
                             text:               qsTr("Nickname already used by another vehicle")
                         }
 
@@ -400,7 +400,7 @@ AnalyzePage {
 
                     QGCLabel {
                         visible:    newNameField.taken
-                        color:      QGroundControl.globalPalette.warningText
+                        color:      QGroundControl.globalPalette.errorText
                         text:       qsTr("Nickname already used by another vehicle")
                     }
                 }
