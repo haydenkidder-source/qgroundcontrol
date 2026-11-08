@@ -43,6 +43,8 @@ target_sources(
             SendMavCommandWithSignallingTest.h
             SetEstimatorOriginTest.cc
             SetEstimatorOriginTest.h
+            SetHomeTest.cc
+            SetHomeTest.h
             StandardModesTest.cc
             StandardModesTest.h
             TrajectoryPointsTest.cc
@@ -53,8 +55,8 @@ target_sources(
             VehicleDistanceSensorFactGroupTest.h
             VehicleFirmwareUpdateTest.cc
             VehicleFirmwareUpdateTest.h
-            VehicleGPSAggregateFactGroupTest.cc
-            VehicleGPSAggregateFactGroupTest.h
+            VehicleGPSFactGroupTest.cc
+            VehicleGPSFactGroupTest.h
             VehicleLinkManagerTest.cc
             VehicleLinkManagerTest.h
 )
@@ -90,10 +92,11 @@ add_qgc_test(RequestMessageTest LABELS Integration Vehicle TIMEOUT ${QGC_TEST_TI
 add_qgc_test(SendMavCommandWithHandlerTest LABELS Integration Vehicle)
 add_qgc_test(SendMavCommandWithSignallingTest LABELS Integration Vehicle)
 add_qgc_test(SetEstimatorOriginTest LABELS Integration Vehicle)
+add_qgc_test(SetHomeTest LABELS Integration Vehicle)
 add_qgc_test(StandardModesTest LABELS Integration Vehicle)
 add_qgc_test(TrajectoryPointsTest LABELS Unit Vehicle)
 add_qgc_test(VehicleAirborneTest LABELS Integration Vehicle)
 add_qgc_test(VehicleDistanceSensorFactGroupTest LABELS Integration Vehicle)
 add_qgc_test(VehicleFirmwareUpdateTest LABELS Integration Vehicle)
-add_qgc_test(VehicleGPSAggregateFactGroupTest LABELS Unit)
+add_qgc_test(VehicleGPSFactGroupTest LABELS Unit GPS)
 add_qgc_test(VehicleLinkManagerTest LABELS Integration Vehicle SERIAL)

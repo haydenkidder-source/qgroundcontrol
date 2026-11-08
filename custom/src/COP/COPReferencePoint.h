@@ -5,7 +5,9 @@
 #include <QtPositioning/QGeoCoordinate>
 #include <QtQmlIntegration/QtQmlIntegration>
 
-#include "GPSCorrectionFrame.h"
+#include "GPSCorrectionSelector.h"
+
+class GPSCorrectionManager;
 
 class COPReferencePoint : public QObject
 {
@@ -18,7 +20,10 @@ class COPReferencePoint : public QObject
     Q_PROPERTY(QString source READ source NOTIFY changed)
 
 public:
-    explicit COPReferencePoint(QObject* parent = nullptr);
+    /// Follows the selected correction stream of @a corrections, or of the GPS manager when null. The reference point
+    /// is dropped once @a expiryMs pass without a valid frame.
+    explicit COPReferencePoint(QObject* parent = nullptr, GPSCorrectionManager* corrections = nullptr,
+                               int expiryMs = 30000);
 
     QGeoCoordinate coordinate() const { return _coordinate; }
 
@@ -38,10 +43,12 @@ signals:
     void changed();
 
 private:
-    void _accept(const GPSCorrectionFrame& frame);
+    void _accept(const QByteArray& frame, const GPSCorrectionStream& stream, quint64 session);
+    void _drop();
     QGeoCoordinate _coordinate;
     QString _source;
-    QString _instance;
+    GPSCorrectionStream _stream;
     quint64 _session = 0;
+    bool _hasStream = false;
     QTimer _expiry;
 };

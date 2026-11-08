@@ -1,6 +1,7 @@
 #include "COPReferencePoint.h"
 
 #include "GPSCorrectionManager.h"
+#include "GPSCorrectionSettings.h"
 #include "GPSManager.h"
 #include "RTCMFramer.h"
 #include <GeographicLib/Geocentric.hpp>
@@ -24,34 +25,48 @@ double ecef(const QByteArray& bytes, int offset)
 }
 }  // namespace
 
-COPReferencePoint::COPReferencePoint(QObject* parent)
+COPReferencePoint::COPReferencePoint(QObject* parent, GPSCorrectionManager* corrections, int expiryMs)
     : QObject(parent)
 {
     _expiry.setSingleShot(true);
-    _expiry.setInterval(30000);
+    _expiry.setInterval(expiryMs);
     connect(&_expiry, &QTimer::timeout, this, [this]() {
         _coordinate = {};
         emit changed();
     });
-    if (auto* corrections = GPSManager::instance()->corrections()) {
-        connect(corrections, &GPSCorrectionManager::correctionRouted, this, &COPReferencePoint::_accept);
+    if (!corrections) {
+        corrections = GPSManager::instance()->corrections();
+    }
+    if (corrections) {
+        connect(corrections, &GPSCorrectionManager::selectedFrameAdmitted, this, &COPReferencePoint::_accept);
+        // A stream that ends, goes stale or loses the selection must not keep showing its reference.
+        connect(corrections, &GPSCorrectionManager::stateChanged, this, [this, corrections]() {
+            if (_hasStream && (corrections->state() != GPSCorrectionManager::State::Fresh ||
+                               corrections->selectedStream() != _stream)) {
+                _drop();
+            }
+        });
+    }
+}
+
+void COPReferencePoint::_drop()
+{
+    _hasStream = false;
+    _expiry.stop();
+    if (_coordinate.isValid()) {
+        _coordinate = {};
+        emit changed();
     }
 }
 
 QGeoCoordinate COPReferencePoint::decode(const QByteArray& frame)
 {
-    if (frame.size() < 25 || static_cast<quint8>(frame[0]) != RTCMFramer::PREAMBLE) {
+    if (frame.size() < 25 || !RTCMFramer::isValidFrame(QByteArrayView(frame))) {
         return {};
     }
     const auto message = bits(frame, 24, 12);
     const int payloadSize = static_cast<int>(bits(frame, 14, 10));
-    if ((message != 1005 && message != 1006) || payloadSize < (message == 1005 ? 19 : 21) ||
-        frame.size() != payloadSize + 6) {
-        return {};
-    }
-    const auto crc = RTCMFramer::crc24q(
-        {reinterpret_cast<const uint8_t*>(frame.constData()), static_cast<size_t>(frame.size() - 3)});
-    if (crc != bits(frame, (frame.size() - 3) * 8, 24)) {
+    if ((message != 1005 && message != 1006) || payloadSize < (message == 1005 ? 19 : 21)) {
         return {};
     }
     // RTCM 1005/1006 carry signed 38-bit antenna-reference ECEF coordinates, in 0.1 mm units.
@@ -68,22 +83,18 @@ QGeoCoordinate COPReferencePoint::decode(const QByteArray& frame)
     return {latitude, longitude, altitude};
 }
 
-void COPReferencePoint::_accept(const GPSCorrectionFrame& frame)
+void COPReferencePoint::_accept(const QByteArray& frame, const GPSCorrectionStream& stream, quint64 session)
 {
-    if (!frame.validated || frame.filtered) {
-        return;
+    if (!_hasStream || _stream != stream || _session != session) {
+        _drop();
+        _hasStream = true;
+        _stream = stream;
+        _session = session;
     }
-    const QString instance = QString::number(static_cast<int>(frame.source)) + QLatin1Char(':') + frame.sourceInstance;
-    if (_instance != instance || _session != frame.session) {
-        _coordinate = {};
-        _instance = instance;
-        _session = frame.session;
-        emit changed();
-    }
-    const auto coordinate = decode(frame.data);
+    const auto coordinate = decode(frame);
     if (coordinate.isValid()) {
         _coordinate = coordinate;
-        _source = frame.source == GPSCorrectionSource::Ntrip ? tr("NTRIP reference") : tr("RTK reference");
+        _source = stream.source == GPSCorrectionSettings::Ntrip ? tr("NTRIP reference") : tr("RTK reference");
         emit changed();
     }
     if (_coordinate.isValid()) {

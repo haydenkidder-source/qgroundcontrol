@@ -173,6 +173,9 @@ to absorb instrumentation overhead. `TIMEOUT <seconds>` on `add_qgc_test()` alwa
 | `Joystick`       | Joystick/controller tests                                                                 |
 | `AnalyzeView`    | Log analysis and geo-tagging tests                                                        |
 | `Terrain`        | Terrain query and tile tests                                                              |
+| `GPS`            | GPS receiver, corrections and NTRIP tests; every test under `test/GPS` carries it         |
+| `Fuzz`           | Fuzzer smoke runs: fixed inputs through a fuzz harness, without libFuzzer                 |
+| `QML`            | QML test runners and QML lint checks                                                      |
 
 ### Wait/Timeout Helpers
 
@@ -200,12 +203,16 @@ emit readable failure messages that include the signal/condition name and the el
 time:
 
 ```cpp
-QVERIFY_SIGNAL_WAIT(spy, TestTimeout::shortMs());          // spy.count() >= 1
+QVERIFY_SIGNAL_WAIT(spy, TestTimeout::shortMs());          // a new emission (see gotcha below)
 QVERIFY_SIGNAL_COUNT_WAIT(spy, 3, TestTimeout::shortMs()); // spy.count() >= 3
 QVERIFY_NO_SIGNAL_WAIT(spy, 250);                          // see gotcha below
 QVERIFY_TRUE_WAIT(condition, TestTimeout::shortMs());      // QTRY_VERIFY wrapper
 QCOMPARE_TRUE_WAIT(actual, expected, TestTimeout::shortMs());
 ```
+
+**Gotcha — `QVERIFY_SIGNAL_WAIT` waits for a new emission.** It calls `QSignalSpy::wait()`,
+so a signal already in the spy doesn't count. Use `QVERIFY_SIGNAL_COUNT_WAIT(spy, n, …)`
+when the signal may already have fired, e.g. when another thread emits it.
 
 **Gotcha — `QVERIFY_NO_SIGNAL_WAIT` always burns the full timeout.** It has to, because
 proving absence requires waiting the entire window. Keep its timeout as tight as
@@ -329,7 +336,7 @@ ctest --output-junit results.xml
 
 Windows x64 and the macOS Release CI leg enable `QGC_BUILD_PORTABLE_TESTS` alongside the normal
 application build (the macOS Debug leg runs the Unit and Integration suites instead, same as
-Linux). The six `Portable.*` CTest entries use small Qt Test executables, with the same test
+Linux). The ten `Portable.*` CTest entries use small Qt Test executables, with the same test
 bodies and production utility libraries as the Linux application tests. They require no
 QGCApplication, vehicles, or QML engine. The portable command-line parser target enables
 its own test hooks; the packaged application keeps its normal build configuration.
@@ -343,6 +350,35 @@ ctest --test-dir build --build-config Debug --output-on-failure -L Portable
 Use `PortableTest` and `QGC_REGISTER_PORTABLE_TEST` for these suites. Full application
 builds use the existing UnitTest harness; standalone executables use Qt Test with warnings
 failing tests. Keep application-dependent fixtures in the full harness.
+
+## GPS protocol golden transcripts
+
+`GPSGoldenTranscriptTest` pins the native GPS receiver protocols on a virtual clock. For each
+scenario it records host-to-receiver bytes, baud changes, configuration evidence, identity and
+decoded events. It also records the events decoded from every file in `test/GPS/Core/Protocols/corpus/`
+and `test/GPS/Core/Protocols/fixtures/` at several chunk sizes. The expected transcripts live in
+`test/GPS/Core/Protocols/golden/`, and `test/GPS/Core/Protocols/Support/GoldenTranscript.h` documents the driver
+seam. The suite also checks that a decoder armed without I/O for a recording replay
+(`GPSProtocolRuntime::armDecodeOnly()`) decodes those files as the configured decoder does.
+[`test/GPS/Core/Protocols/GPSGoldenTranscriptTest.cc`](GPS/Core/Protocols/GPSGoldenTranscriptTest.cc) describes the
+format. A scenario that behaves exactly as another one names it in `sameAs` and has no golden of its own, and a
+scenario records its stream phase only when that differs from every other scenario's of its family.
+
+A mismatch prints a diff hunk. Rewrite the goldens only for a deliberate, justified behaviour
+change, then review the diff. Update mode also removes files no scenario produces:
+
+```bash
+QGC_GPS_GOLDEN_UPDATE=1 ctest --test-dir build -R GPSGoldenTranscriptTest
+```
+
+`test/GPS/Standalone` builds `QGCGPSCore` and `QGCNTRIPHttp` without the application, with the receiver
+qualification runner and the NTRIP decoder smoke test. With Clang, `-DQGC_GPS_LIBFUZZER=ON` adds the protocol and
+NTRIP libFuzzer harnesses and builds both libraries with ASan and UBSan:
+
+```bash
+cmake -S test/GPS/Standalone -B build-gps -DCMAKE_CXX_COMPILER=clang++ -DQGC_GPS_LIBFUZZER=ON
+cmake --build build-gps && ctest --test-dir build-gps
+```
 
 ## MultiSignalSpy
 
@@ -464,3 +500,7 @@ QGC_TEST_VERBOSE=1 ./QGroundControl --unittest:MyTest
    (e.g. "SDL didn't expose a second virtual joystick"), cache the probe result in a
    test-class member so subsequent skipping tests don't each burn a full timeout.
    See `JoystickManagerTest::_multiJoysticksSupported()` for the pattern.
+
+7. **Skipping in `init()`**: a `QSKIP` in `init()` also skips `cleanup()`, and `UnitTest`
+   requires `cleanup()` once its `init()` has run. Skip before calling `UnitTest::init()`, or
+   skip inside the test function.

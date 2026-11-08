@@ -35,7 +35,7 @@ The Flight Status indicator dropdown fills the window and also gives you access 
 - **Force Arm** - Arms the vehicle while bypassing pre-arm checks. Only shown when **Allow Force Arm** is enabled in [Fly View Settings](../settings_view/fly_view.md).
 - **Reboot Vehicle** - Shown at the right when the vehicle needs a reboot (see [Vehicle Reboot Required](#vehicle-reboot-required)).
 - **Firmware update available** - Shown when the vehicle is not running the latest stable firmware (see [Firmware Update Available](#firmware-update-available)).
-- **Vehicle Messages** - The messages sent by the vehicle. Use the trash button to clear them.
+- **Vehicle Messages** - The messages sent by the vehicle. Unread messages are shown in bold. Use **Mark as Read** to mark them all as read, or **Clear** to delete them.
 
 In the cases of warnings or not ready state you can click the indicator to display the dropdown which will show the reason(s) why. The toggle on the right expands each error with additional information and possible solutions.
 
@@ -57,9 +57,9 @@ Small badges can appear at the top right of the Flight Status indicator: a blue 
 
 #### Vehicle Messages
 
-When the vehicle sends critical messages (error severity or worse) a red badge is shown at the top right of the Flight Status indicator. The badge shows the number of critical messages, or `!` if there are more than 9. Opening the dropdown does not clear the badge, only clearing the message list with the trash button does.
+When the vehicle sends critical messages (error severity or worse) a red badge is shown at the top right of the Flight Status indicator. The badge shows the number of unread critical messages, or `!` if there are more than 9. Opening the dropdown does not clear the badge. Press **Mark as Read** in the message list to clear it while keeping the messages, or use **Clear** to delete the messages.
 
-In the dropdown message list, critical messages are shown in red and warnings and notices in orange.
+In the dropdown message list, unread messages are shown in bold and read messages in normal weight. Critical messages are shown in red and warnings and notices in orange. New messages are always unread, even after earlier ones were marked as read.
 
 Critical messages are also shown in a **Vehicle Alert** popup below the toolbar. Up to 5 messages are shown at once, fewer if the window is too short to fit them. If more arrive the popup title changes to **Vehicle Alert - Click to see more**, clicking it opens the Flight Status dropdown. The popup closes automatically after 10 seconds, or when you click it.
 
@@ -79,17 +79,16 @@ A message about the out of date firmware is shown once for each new stable relea
 
 To update the firmware use [Vehicle Configuration > Firmware](../setup_view/firmware.md).
 
-### GPS / RTK GPS <img src="../../../assets/fly/toolbar/gps_indicator.png" alt="GPS / RTK GPS indicator" style="height: 1.15em; vertical-align: text-bottom;" />
+### GPS <img src="../../../assets/fly/toolbar/gps_indicator.png" alt="GPS indicator" style="height: 1.15em; vertical-align: text-bottom;" />
 
-The GPS/RTK GPS indicator shows satellite and GNSS status in the toolbar, and the dropdown provides additional GPS details.
+The GPS indicator shows satellite and GNSS status in the toolbar, and the dropdown provides additional GPS details.
 
-With an active vehicle, the indicator shows vehicle GPS information (for example, satellite count and HDOP), and the expanded page provides access to RTK-related settings.
+While the vehicle reports GPS, the indicator shows its satellite count and HDOP. Otherwise it shows the connected [GNSS receiver](../settings_view/gnss_receiver.md): the satellites it uses and its fix, or the state of a configured base station.
+A vertical _RTK_ label appears while corrections for vehicles are configured or flowing (orange while they are awaited), and _GNSS_ while only a GNSS receiver is connected; the label turns orange when the receiver reports jamming, spoofing or an antenna fault.
 
-When there is no active vehicle but RTK is connected, the indicator switches to RTK status so you can still monitor the correction link.
+When the vehicle reports GPS resilience telemetry (authentication, spoofing, or jamming state), icons next to the indicator show the worse of the vehicle's GPS receivers, and the dropdown lists the state of each receiver that reports it.
 
-### GPS Resilience
-
-The GPS Resilience indicator appears when the vehicle reports GPS resilience telemetry (authentication, spoofing, or jamming state). The dropdown provides summary status and per-GPS details when available.
+The dropdown also shows the GNSS receiver status, the correction stream sent to vehicles, the NTRIP connection with a **Connect** button once a caster is configured, and the ground station position. Expand it for the [GNSS Receiver](../settings_view/gnss_receiver.md#receiver) settings.
 
 ### Battery <img src="../../../assets/fly/toolbar/battery_indicator.png" alt="Battery indicator" style="height: 1.15em; vertical-align: text-bottom;" />
 

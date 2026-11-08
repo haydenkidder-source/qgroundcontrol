@@ -20,6 +20,7 @@ from setup.install_dependencies import (
     _arch,
     _detect_just_version,
     _fedora,
+    _macos,
     _windows,
     detect_platform,
     get_apt_install_command,
@@ -499,6 +500,64 @@ def test_install_just_debian_falls_back_when_apt_version_too_old() -> None:
     mock_dl.assert_called_once()
 
 
+@pytest.mark.parametrize(
+    ("fallback_package", "mirror_succeeds"),
+    [(None, True), ("runtime", True), ("devel", True), ("runtime", False), ("devel", False)],
+)
+def test_install_macos_gstreamer_fallback(
+    fallback_package: str | None, mirror_succeeds: bool
+) -> None:
+    version = "1.28.4"
+    runtime_url, devel_url = _macos.get_gstreamer_macos_urls(version)
+    urls = {"runtime": runtime_url, "devel": devel_url}
+    checksums = {"macos": "a" * 64, "macos_devel": "b" * 64}
+
+    def download(url: str, dest: Path, **kwargs: object) -> bool:
+        if fallback_package is None or dest.name != urls[fallback_package].rsplit("/", 1)[-1]:
+            return True
+        return mirror_succeeds if url.startswith(_macos.MACOS_GSTREAMER_BASE_URL) else False
+
+    with (
+        patch.object(_macos._c, "has_command", return_value=True),
+        patch.object(_macos._c, "is_ci", return_value=True),
+        patch.object(_macos._c, "run_command", return_value=True),
+        patch.object(_macos._c, "get_brew_install_command", return_value=["brew", "install"]),
+        patch.object(_macos._c, "get_config_value", return_value=version),
+        patch.object(
+            _macos._c, "get_gstreamer_checksum", side_effect=lambda _, artifact: checksums[artifact]
+        ),
+        patch.object(_macos.Path, "exists", return_value=False),
+        patch.object(_macos._c, "download_file", side_effect=download) as dl,
+        patch.object(_macos.subprocess, "run", return_value=completed()) as install,
+    ):
+        assert _macos.install_macos() is mirror_succeeds
+
+    for label, primary_url in urls.items():
+        filename = primary_url.rsplit("/", 1)[-1]
+        package_calls = [entry for entry in dl.call_args_list if entry.args[1].name == filename]
+        expected_urls = [primary_url]
+        if label == fallback_package:
+            expected_urls.append(f"{_macos.MACOS_GSTREAMER_BASE_URL}/{filename}")
+        assert [entry.args[0] for entry in package_calls] == expected_urls
+        checksum = checksums["macos" if label == "runtime" else "macos_devel"]
+        assert package_calls[0].kwargs == {
+            "warn_on_failure": True,
+            "expected_sha256": checksum,
+        }
+        if label == fallback_package:
+            assert package_calls[1].kwargs == {"expected_sha256": checksum}
+
+    if mirror_succeeds:
+        assert install.call_count == 2
+        for entry, url in zip(install.call_args_list, urls.values(), strict=True):
+            command = entry.args[0]
+            assert command[:3] == ["sudo", "installer", "-pkg"]
+            assert command[3].endswith(url.rsplit("/", 1)[-1])
+            assert command[4:] == ["-target", "/"]
+    else:
+        install.assert_not_called()
+
+
 def test_install_windows_nsis_dry_run() -> None:
     with (
         patch.object(_windows._c, "download_file", return_value=True) as dl,
@@ -523,7 +582,10 @@ def test_install_windows_gstreamer(monkeypatch, tmp_path: Path) -> None:
     installer = dl.call_args_list[0].args[1]
     assert installer.name == "gstreamer-1.0-msvc-x86_64-1.28.4.exe"
     assert [call.args[0] for call in dl.call_args_list] == [
-        (f"{_windows.WINDOWS_GSTREAMER_BASE_URL}/gstreamer-1.0-msvc-x86_64-1.28.4.exe"),
+        (
+            "https://qgroundcontrol.s3.us-west-2.amazonaws.com/dependencies/gstreamer/windows/"
+            "gstreamer-1.0-msvc-x86_64-1.28.4.exe"
+        ),
         (
             "https://gstreamer.freedesktop.org/data/pkg/windows/1.28.4/msvc/"
             "gstreamer-1.0-msvc-x86_64-1.28.4.exe"

@@ -15,6 +15,7 @@ private slots:
     void _pendingControl();
     void _notificationQueue();
     void _referencePoint();
+    void _referencePointFollowsSelectedStream();
     void _colorAssignedByDiscoveryOrder();
 
 private:

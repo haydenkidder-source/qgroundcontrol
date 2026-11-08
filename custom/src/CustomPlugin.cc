@@ -358,5 +358,5 @@ QUrl CustomPlugin::notificationFooter() const
 bool CustomPlugin::startStandardVideoReceivers() const
 {
     auto* controller = _qmlEngine ? _qmlEngine->singletonInstance<COPController*>("QGC", "COPController") : nullptr;
-    return controller && controller->selectedSysid() != 0;
+    return !controller || controller->selectedSysid() != 0;
 }

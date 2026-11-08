@@ -11,7 +11,6 @@ list(
     APPEND
     CMAKE_MODULE_PATH
     "${CMAKE_SOURCE_DIR}/cmake"
-    "${CMAKE_SOURCE_DIR}/cmake/find-modules"
     "${CMAKE_SOURCE_DIR}/cmake/install"
     "${CMAKE_SOURCE_DIR}/cmake/install/CPack"
     "${CMAKE_SOURCE_DIR}/cmake/modules"
@@ -425,6 +424,8 @@ qt_add_qml_module(
     VERSION 1.0
     RESOURCE_PREFIX /qml
     IMPORTS QtQuick QtQuick.Controls QtQuick.Dialogs QtQuick.Layouts
+    # Application types expose GPS library types registered by the GPS module.
+    DEPENDENCIES QGroundControl.GPS
 )
 
 # ----------------------------------------------------------------------------

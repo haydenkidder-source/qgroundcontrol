@@ -1,83 +1,83 @@
 #include "Vehicle.h"
-#include "Actuators.h"
-#include "BatteryFactGroupListModel.h"
-#include "EscStatusFactGroupListModel.h"
-#include "RadioStatusFactGroup.h"
-#include "TerrainFactGroup.h"
-#include "VehicleClockFactGroup.h"
-#include "VehicleDistanceSensorFactGroup.h"
-#include "VehicleEFIFactGroup.h"
-#include "VehicleEstimatorStatusFactGroup.h"
-#include "VehicleGeneratorFactGroup.h"
-#include "VehicleGPS2FactGroup.h"
-#include "VehicleGPSFactGroup.h"
-#include "VehicleGPSAggregateFactGroup.h"
-#include "VehicleHygrometerFactGroup.h"
-#include "VehicleLocalPositionFactGroup.h"
-#include "VehicleLocalPositionSetpointFactGroup.h"
-#include "VehicleRPMFactGroup.h"
-#include "VehicleSetpointFactGroup.h"
-#include "VehicleTemperatureFactGroup.h"
-#include "VehicleVibrationFactGroup.h"
-#include "VehicleWindFactGroup.h"
-#include "VehicleSupports.h"
+
 #include "ADSBVehicleManager.h"
+#include "APM.h"
+#include "Actuators.h"
+#include "AppMessages.h"
+#include "AppSettings.h"
 #include "AudioOutput.h"
 #include "AutoPilotPlugin.h"
+#include "BatteryFactGroupListModel.h"
 #include "ComponentInformationManager.h"
-#include "MAVLinkEventManager.h"
+#include "EscStatusFactGroupListModel.h"
+#include "FTPManager.h"
 #include "FirmwarePlugin.h"
 #include "FirmwarePluginManager.h"
-#include "FTPManager.h"
+#include "FlyViewSettings.h"
+#include "GPSManager.h"
 #include "GeoFenceManager.h"
+#include "GimbalController.h"
 #include "ImageProtocolManager.h"
 #include "InitialConnectStateMachine.h"
 #include "Joystick.h"
 #include "JoystickManager.h"
 #include "LinkManager.h"
-#include "MavCommandQueue.h"
-#include "MessageIntervalManager.h"
-#include "TerrainQueryCoordinator.h"
+#include "MAVLinkEventManager.h"
 #include "MAVLinkLogManager.h"
 #include "MAVLinkProtocol.h"
+#include "MAVLinkStreamConfig.h"
+#include "MavCommandQueue.h"
+#include "MavlinkSettings.h"
+#include "MessageIntervalManager.h"
 #include "MissionCommandTree.h"
 #include "MissionManager.h"
 #include "MultiVehicleManager.h"
 #include "ParameterManager.h"
 #include "PlanMasterController.h"
 #include "PositionManager.h"
-#include "AppMessages.h"
-#include "QGCMath.h"
 #include "QGCApplication.h"
 #include "QGCCameraManager.h"
 #include "QGCCorePlugin.h"
 #include "QGCImageProvider.h"
 #include "QGCLoggingCategory.h"
+#include "QGCMapCircle.h"
+#include "QGCMath.h"
 #include "QGCQGeoCoordinate.h"
+#include "QGCSensors.h"
+#include "QmlObjectListModel.h"
+#include "RadioStatusFactGroup.h"
 #include "RallyPointManager.h"
 #include "RemoteIDManager.h"
 #include "RequestMessageCoordinator.h"
 #include "SettingsManager.h"
-#include "AppSettings.h"
-#include "FlyViewSettings.h"
 #include "StandardModes.h"
+#include "StatusTextHandler.h"
+#include "SysStatusSensorInfo.h"
+#include "TerrainFactGroup.h"
 #include "TerrainProtocolHandler.h"
 #include "TerrainQuery.h"
+#include "TerrainQueryCoordinator.h"
 #include "TrajectoryPoints.h"
+#include "VehicleClockFactGroup.h"
+#include "VehicleDistanceSensorFactGroup.h"
+#include "VehicleEFIFactGroup.h"
+#include "VehicleEstimatorStatusFactGroup.h"
+#include "VehicleGPSFactGroup.h"
+#include "VehicleGeneratorFactGroup.h"
+#include "VehicleHygrometerFactGroup.h"
 #include "VehicleLinkManager.h"
-#include "MAVLinkStreamConfig.h"
-#include "QGCMapCircle.h"
-#include "QmlObjectListModel.h"
-#include "SysStatusSensorInfo.h"
+#include "VehicleLocalPositionFactGroup.h"
+#include "VehicleLocalPositionSetpointFactGroup.h"
 #include "VehicleObjectAvoidance.h"
+#include "VehicleRPMFactGroup.h"
+#include "VehicleSetpointFactGroup.h"
+#include "VehicleSigningController.h"
+#include "VehicleSupports.h"
+#include "VehicleTemperatureFactGroup.h"
+#include "VehicleVibrationFactGroup.h"
+#include "VehicleWindFactGroup.h"
 #include "VideoManager.h"
 #include "VideoSettings.h"
-#include "QGCSensors.h"
-#include "StatusTextHandler.h"
-#include "VehicleSigningController.h"
-#include "GimbalController.h"
-#include "MavlinkSettings.h"
-#include "APM.h"
 
 #ifdef QT_DEBUG
 #include "MockLink.h"
@@ -239,8 +239,9 @@ void Vehicle::_commonInit(LinkInterface* link)
     connect(this, &Vehicle::vehicleTypeChanged, this, &Vehicle::_updateAirborne);
     connect(this, &Vehicle::vtolInFwdFlightChanged, this, &Vehicle::inFwdFlightChanged);
 
-    connect(QGCPositionManager::instance(), &QGCPositionManager::gcsPositionChanged, this, &Vehicle::_updateDistanceHeadingGCS);
-    connect(QGCPositionManager::instance(), &QGCPositionManager::gcsPositionChanged, this, &Vehicle::_updateHomepoint);
+    PositionManager* const positionManager = GPSManager::instance()->positionManager();
+    connect(positionManager, &PositionManager::gcsPositionChanged, this, &Vehicle::_updateDistanceHeadingGCS);
+    connect(positionManager, &PositionManager::gcsPositionChanged, this, &Vehicle::_updateHomepoint);
 
     _missionManager = new MissionManager(this);
     connect(_missionManager, &MissionManager::error,                    this, &Vehicle::_missionManagerError);
@@ -311,8 +312,7 @@ void Vehicle::_commonInit(LinkInterface* link)
     connect(QGCCorePlugin::instance(), &QGCCorePlugin::showAdvancedUIChanged, this, &Vehicle::flightModesChanged);
 
     _gpsFactGroup                   = new VehicleGPSFactGroup(this);
-    _gps2FactGroup                  = new VehicleGPS2FactGroup(this);
-    _gpsAggregateFactGroup          = new VehicleGPSAggregateFactGroup(this);
+    _gps2FactGroup = new VehicleGPSFactGroup(this, nullptr, VehicleGPSFactGroup::ReceiverIndex::Secondary);
     _windFactGroup                  = new VehicleWindFactGroup(this);
     _vibrationFactGroup             = new VehicleVibrationFactGroup(this);
     _temperatureFactGroup           = new VehicleTemperatureFactGroup(this);
@@ -335,8 +335,6 @@ void Vehicle::_commonInit(LinkInterface* link)
         _terrainProtocolHandler = new TerrainProtocolHandler(this, _terrainFactGroup, this);
     }
 
-    _gpsAggregateFactGroup->bindToGps(_gpsFactGroup, _gps2FactGroup);
-
     _createImageProtocolManager();
     _createStatusTextHandler();
     _createMAVLinkLogManager();
@@ -346,7 +344,6 @@ void Vehicle::_commonInit(LinkInterface* link)
     // _addFactGroup(_vehicleFactGroup,            _vehicleFactGroupName);
     _addFactGroup(_gpsFactGroup,               _gpsFactGroupName);
     _addFactGroup(_gps2FactGroup,              _gps2FactGroupName);
-    _addFactGroup(_gpsAggregateFactGroup,      _gpsAggregateFactGroupName);
     _addFactGroup(_windFactGroup,              _windFactGroupName);
     _addFactGroup(_vibrationFactGroup,         _vibrationFactGroupName);
     _addFactGroup(_temperatureFactGroup,       _temperatureFactGroupName);
@@ -410,9 +407,15 @@ Vehicle::~Vehicle()
     _autopilotPlugin = nullptr;
 }
 
-FactGroup* Vehicle::gpsFactGroup()                  { return _gpsFactGroup; }
-FactGroup* Vehicle::gps2FactGroup()                 { return _gps2FactGroup; }
-FactGroup* Vehicle::gpsAggregateFactGroup()         { return _gpsAggregateFactGroup; }
+VehicleGPSFactGroup* Vehicle::gpsFactGroup()
+{
+    return _gpsFactGroup;
+}
+
+VehicleGPSFactGroup* Vehicle::gps2FactGroup()
+{
+    return _gps2FactGroup;
+}
 FactGroup* Vehicle::windFactGroup()                 { return _windFactGroup; }
 FactGroup* Vehicle::vibrationFactGroup()            { return _vibrationFactGroup; }
 FactGroup* Vehicle::temperatureFactGroup()          { return _temperatureFactGroup; }
@@ -1613,19 +1616,19 @@ void Vehicle::sendMessageMultiple(mavlink_message_t message)
 
 void Vehicle::_missionManagerError(int errorCode, const QString& errorMsg)
 {
-    Q_UNUSED(errorCode);
+    qCWarning(VehicleLog) << "Mission transfer failed - errorCode:" << errorCode << "errorMsg:" << errorMsg;
     QGC::showAppMessage(tr("Mission transfer failed. Error: %1").arg(errorMsg));
 }
 
 void Vehicle::_geoFenceManagerError(int errorCode, const QString& errorMsg)
 {
-    Q_UNUSED(errorCode);
+    qCWarning(VehicleLog) << "GeoFence transfer failed - errorCode:" << errorCode << "errorMsg:" << errorMsg;
     QGC::showAppMessage(tr("GeoFence transfer failed. Error: %1").arg(errorMsg));
 }
 
 void Vehicle::_rallyPointManagerError(int errorCode, const QString& errorMsg)
 {
-    Q_UNUSED(errorCode);
+    qCWarning(VehicleLog) << "Rally Point transfer failed - errorCode:" << errorCode << "errorMsg:" << errorMsg;
     QGC::showAppMessage(tr("Rally Point transfer failed. Error: %1").arg(errorMsg));
 }
 
@@ -2738,7 +2741,7 @@ void Vehicle::_updateMissionItemIndex()
 
 void Vehicle::_updateDistanceHeadingGCS()
 {
-    QGeoCoordinate gcsPosition = QGCPositionManager::instance()->gcsPosition();
+    QGeoCoordinate gcsPosition = GPSManager::instance()->positionManager()->gcsPosition();
     if (coordinate().isValid() && gcsPosition.isValid()) {
         _distanceToGCSFact.setRawValue(coordinate().distanceTo(gcsPosition));
         _headingFromGCSFact.setRawValue(gcsPosition.azimuthTo(coordinate()));
@@ -2753,15 +2756,17 @@ void Vehicle::_updateHomepoint()
     const bool setHomeCmdSupported = firmwarePlugin()->supportedMissionCommands(vehicleClass()).contains(MAV_CMD_DO_SET_HOME);
     const bool updateHomeActivated = SettingsManager::instance()->flyViewSettings()->updateHomePosition()->rawValue().toBool();
     if(setHomeCmdSupported && updateHomeActivated){
-        QGeoCoordinate gcsPosition = QGCPositionManager::instance()->gcsPosition();
+        QGeoCoordinate gcsPosition = GPSManager::instance()->positionManager()->gcsPosition();
         if (coordinate().isValid() && gcsPosition.isValid()) {
-            sendMavCommand(defaultComponentId(),
-                           MAV_CMD_DO_SET_HOME, false,
-                           0,
-                           0, 0, 0,
-                           static_cast<float>(gcsPosition.latitude()) ,
-                           static_cast<float>(gcsPosition.longitude()),
-                           static_cast<float>(gcsPosition.altitude()));
+            if (capabilityBits() & MAV_PROTOCOL_CAPABILITY_COMMAND_INT) {
+                sendMavCommandInt(defaultComponentId(), MAV_CMD_DO_SET_HOME, MAV_FRAME_GLOBAL, false, 0, 0, 0, 0,
+                                  gcsPosition.latitude(), gcsPosition.longitude(),
+                                  static_cast<float>(gcsPosition.altitude()));
+            } else {
+                sendMavCommand(defaultComponentId(), MAV_CMD_DO_SET_HOME, false, 0, 0, 0, 0,
+                               static_cast<float>(gcsPosition.latitude()), static_cast<float>(gcsPosition.longitude()),
+                               static_cast<float>(gcsPosition.altitude()));
+            }
         }
     }
 }
@@ -3475,17 +3480,39 @@ void Vehicle::clearMessages()
     m_statusTextHandler->clearMessages();
 }
 
-int Vehicle::criticalMessageCount() const
+void Vehicle::markMessagesRead()
 {
-    return m_statusTextHandler->criticalMessageCount();
+    m_statusTextHandler->markAllRead();
 }
+
+int Vehicle::unreadCriticalMessageCount() const
+{
+    return m_statusTextHandler->unreadCriticalMessageCount();
+}
+
+bool Vehicle::hasUnreadMessages() const
+{
+    return m_statusTextHandler->hasUnreadMessages();
+}
+
+int Vehicle::unreadMessageCount() const
+{
+    return m_statusTextHandler->unreadMessageCount();
+}
+
 QString Vehicle::formattedMessages() const { return m_statusTextHandler->formattedMessages(); }
 
 void Vehicle::_createStatusTextHandler()
 {
     m_statusTextHandler = new StatusTextHandler(this);
-    (void) connect(m_statusTextHandler, &StatusTextHandler::criticalMessageCountChanged, this,
-                   &Vehicle::criticalMessageCountChanged);
+    (void) connect(m_statusTextHandler, &StatusTextHandler::unreadCriticalMessageCountChanged, this,
+                   &Vehicle::unreadCriticalMessageCountChanged);
+    (void) connect(m_statusTextHandler, &StatusTextHandler::hasUnreadMessagesChanged, this,
+                   &Vehicle::hasUnreadMessagesChanged);
+    (void) connect(m_statusTextHandler, &StatusTextHandler::unreadMessageCountChanged, this,
+                   &Vehicle::unreadMessageCountChanged);
+    (void) connect(m_statusTextHandler, &StatusTextHandler::formattedMessagesChanged, this,
+                   &Vehicle::formattedMessagesChanged);
     (void) connect(m_statusTextHandler, &StatusTextHandler::newFormattedMessage, this, &Vehicle::newFormattedMessage);
     (void) connect(m_statusTextHandler, &StatusTextHandler::textMessageReceived, this, &Vehicle::_textMessageReceived);
     (void) connect(m_statusTextHandler, &StatusTextHandler::newErrorMessage, this, &Vehicle::_errorMessageReceived);

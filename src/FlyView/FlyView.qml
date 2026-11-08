@@ -52,8 +52,8 @@ Item {
     property real   _fullItemZorder:    0
     property real   _pipItemZorder:     QGroundControl.zOrderWidgets
 
-    function dropMainStatusIndicatorTool() {
-        toolbar.dropMainStatusIndicatorTool();
+    function dropMainStatusIndicatorTool(showMessages = false) {
+        toolbar.dropMainStatusIndicatorTool(showMessages);
     }
 
     Item {

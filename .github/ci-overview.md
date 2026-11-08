@@ -200,14 +200,14 @@ Python helpers in `.github/scripts/` invoked by workflows and composite actions.
 | `collect_artifact_sizes.py` | Collect artifact sizes for latest successful platform workflow runs |
 | `collect_build_status.py` | Collect latest platform/pre-commit status for build-results comments |
 | `coverage_comment.py` | Build coverage report comments from Cobertura XML |
-| `cpm_helper.py` | CPM CI helper: dependency fingerprint, source cache configuration |
+| `cpm_helper.py` | CPM CI helper: dependency and GStreamer SDK fingerprints, source cache configuration |
 | `deploy_docs.py` | Deploy built docs to an external GitHub Pages repository |
 | `detect_changes.py` | Detect whether a CI build is needed based on changed files and platform |
 | `docker_helper.py` | Docker build helpers |
 | `download_artifacts.py` | Download build artifacts from completed platform workflow runs |
 | `find_artifact.py` | Find build artifacts by glob pattern in a directory |
 | `generate_build_results_comment.py` | Generate consolidated PR build-results comment |
-| `generate_cpm_sbom.py` | Generate a CycloneDX SBOM from a CMake build directory's CPM package metadata |
+| `generate_cpm_sbom.py` | Generate a CycloneDX SBOM from a CMake build directory's CPM package metadata and bundled GStreamer |
 | `gh_cache_cleanup.py` | List and optionally delete GitHub Actions caches via `gh-actions-cache` |
 | `gh_pr_size_label.py` | Read and prune `size/*` labels on a pull request |
 | `gstreamer_archive.py` | Package GStreamer builds and optionally upload to S3 |
@@ -219,7 +219,6 @@ Python helpers in `.github/scripts/` invoked by workflows and composite actions.
 | `precommit_results.py` | Normalize pre-commit outputs into uploaded CI artifacts |
 | `release_builds.py` | Dispatch and freeze exact release workflow run identities |
 | `report_context.py` | Reject stale PR/default-branch reporting contexts |
-| `resolve_gstreamer_config.py` | Pick the platform-specific GStreamer version from build-config outputs |
 | `size_analysis.py` | Analyze binary size changes |
 | `release_tag_check.py` | Report whether the current tag is a `vX.Y.Z` release tag reachable from a `Stable*` branch |
 | `test_duration_report.py` | Generate test-duration reports and regressions |
@@ -241,8 +240,10 @@ Dependency updates are split between two bots to avoid overlapping PRs:
 - **Dependabot** (`.github/dependabot.yml`) owns action references in `.github/workflows`, grouped
   weekly. Merge with `@dependabot merge`.
 - **Renovate** (`.github/renovate.json`) owns `npm`, Python (pep621/uv), pre-commit, devcontainer,
-  Dockerfile, Gradle Wrapper, and composite-action dependencies. Workflow paths are excluded so
-  the bots do not open overlapping action updates.
+  Dockerfile, Node (`.nvmrc`), Android Gradle, and composite-action dependencies. Workflow paths are
+  excluded so the bots do not open overlapping action updates. Updates arrive as weekly grouped PRs;
+  major updates wait for approval on the Dependency Dashboard issue. `androidx.core` is not updated
+  because newer releases require a compileSdk newer than Qt supports.
 
 ## CI Conventions
 
@@ -302,7 +303,12 @@ during nested composite post-job cleanup; step outputs do not survive that phase
 Compiler and moc caches use rolling write keys, with a distinct suffix per matrix leg.
 moc save keys include the coverage/sanitizer variant while restore prefixes stay shared.
 CPM uses immutable dependency-fingerprint keys; unchanged snapshots are not saved again.
-GStreamer SDK payloads have separate immutable archives and are excluded from CPM archives.
+GStreamer SDKs have separate immutable caches and are excluded from CPM archives.
+Only Windows, Android, and iOS jobs cache them (desktop Linux and macOS use the system
+GStreamer), keyed on the `gstreamer` section of `build-config.json` (`cpm_helper.py
+gstreamer-fingerprint`), `cmake/GStreamer/Download.cmake`, and `cmake/GStreamer/platform/*.cmake`.
+They hold the extracted SDK trees without the downloaded archives: configure uses a tree stamped
+with the pinned checksums as is.
 Custom Debug can fall back to the ordinary platform's CPM sources. Coverage's 3 GB GitHub
 budget is a targeted trial: compare cache hits, LRU evictions, and transfer time on warm runs.
 macOS explicitly passes the installed ccache binary to CMake so Homebrew discovery
@@ -398,7 +404,7 @@ uv run --project tools --group scripts --group test pytest -q tools/tests .githu
   custom-plugin unit/integration suites, excluding stock-UI integration tests. Master
   pushes, merge-queue runs, and manual dispatches also build Release without test hooks
   and verify its AppImage. Debug and Release retain separate compiler caches.
-- Windows x64 and the macOS Release leg run six standalone portable utility executables in their
+- Windows x64 and the macOS Release leg run ten standalone portable utility executables in their
   existing platform build jobs (`QGC_BUILD_PORTABLE_TESTS=ON`). They share test bodies with the full
   Linux harness and do not enable test hooks in the packaged application. The macOS Debug leg
   runs the Unit and Integration suites; only the Release leg packages and uploads the DMG.

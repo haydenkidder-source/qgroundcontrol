@@ -11,13 +11,22 @@ from pathlib import Path
 from . import _common as _c
 from ._packages import get_macos_packages
 
+MACOS_GSTREAMER_BASE_URL = (
+    "https://qgroundcontrol.s3.us-west-2.amazonaws.com/dependencies/gstreamer/macos"
+)
+
 
 def get_gstreamer_macos_urls(version: str) -> tuple[str, str]:
     """Get GStreamer download URLs for macOS."""
-    base_url = f"https://gstreamer.freedesktop.org/data/pkg/osx/{version}"
-    runtime = f"{base_url}/gstreamer-1.0-{version}-universal.pkg"
-    devel = f"{base_url}/gstreamer-1.0-devel-{version}-universal.pkg"
-    return runtime, devel
+    return _c.package_url("macos", version), _c.package_url("macos_devel", version)
+
+
+def _download_gstreamer_package(url: str, dest: Path, expected_sha256: str) -> bool:
+    if _c.download_file(url, dest, warn_on_failure=True, expected_sha256=expected_sha256):
+        return True
+    mirror_url = f"{MACOS_GSTREAMER_BASE_URL}/{dest.name}"
+    _c.log_warn(f"Retrying GStreamer package from S3 mirror: {mirror_url}")
+    return _c.download_file(mirror_url, dest, expected_sha256=expected_sha256)
 
 
 def install_macos(dry_run: bool = False) -> bool:
@@ -86,7 +95,7 @@ def install_macos(dry_run: bool = False) -> bool:
                 with ThreadPoolExecutor(max_workers=2) as executor:
                     futures = {
                         executor.submit(
-                            _c.download_file,
+                            _download_gstreamer_package,
                             url,
                             pkg_path,
                             expected_sha256=expected_sha256,

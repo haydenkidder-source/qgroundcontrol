@@ -556,6 +556,7 @@ void COPStressUITest::_overlayDataTracksUploadsAndSkipsNonRoutePoints()
     // and when that happens is timing dependent and unrelated to what COP shows, so tolerate the message if it occurs.
     ignoreLogMessage("API.QGCApplication.AppMessage", QtDebugMsg,
                      QRegularExpression(QStringLiteral("Mission transfer failed")));
+    ignoreLogMessage("Vehicle.Vehicle", QtWarningMsg, QRegularExpression(QStringLiteral("Mission transfer failed")));
     // A manager ignores a write while one of its own transfers, such as the vehicle's initial plan read, is still
     // running, so start only once all three are idle.
     QVERIFY(waitForCondition(
@@ -625,6 +626,7 @@ void COPStressUITest::_overlayBoundariesUseDistinctDashPatterns()
     // See _overlayDataTracksUploadsAndSkipsNonRoutePoints: the fly view's re-read after an upload may fail on the mock.
     ignoreLogMessage("API.QGCApplication.AppMessage", QtDebugMsg,
                      QRegularExpression(QStringLiteral("Mission transfer failed")));
+    ignoreLogMessage("Vehicle.Vehicle", QtWarningMsg, QRegularExpression(QStringLiteral("Mission transfer failed")));
     QVERIFY(waitForCondition([vehicle] { return !vehicle->geoFenceManager()->inProgress(); }, TestTimeout::longMs(),
                              QStringLiteral("initial fence transfer finished")));
 
@@ -799,6 +801,7 @@ void COPStressUITest::_flyViewPlansSurviveSwitchingAndDisconnect()
     // is timing dependent and unrelated to what is being checked here.
     ignoreLogMessage("API.QGCApplication.AppMessage", QtDebugMsg,
                      QRegularExpression(QStringLiteral("Mission transfer failed")));
+    ignoreLogMessage("Vehicle.Vehicle", QtWarningMsg, QRegularExpression(QStringLiteral("Mission transfer failed")));
     for (Vehicle* vehicle : vehicles) {
         // A manager ignores a write while one of its own transfers is running.
         QVERIFY(waitForCondition([vehicle] { return !vehicle->missionManager()->inProgress(); }, TestTimeout::longMs(),

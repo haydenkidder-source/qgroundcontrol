@@ -1,12 +1,16 @@
 #include "COPControllerTest.h"
 
 #include <QtCore/QSettings>
+#include <QtTest/QSignalSpy>
 
 #include "AppSettings.h"
 #include "COPController.h"
 #include "COPReferencePoint.h"
+#include "Checksums.h"
+#include "GPSCorrectionManager.h"
+#include "GPSCorrectionSettings.h"
 #include "LinkManager.h"
-#include "RTCMFramer.h"
+#include "ManualScheduler.h"
 #include "SettingsManager.h"
 #include "VehicleLinkManager.h"
 
@@ -139,7 +143,9 @@ void COPControllerTest::_notificationQueue()
     QCOMPARE(controller.droppedMessages(), quint64(0));
 }
 
-void COPControllerTest::_referencePoint()
+namespace {
+/// A valid RTCM 1005 frame whose antenna reference ECEF X is @a ecefX in 0.1 mm units.
+QByteArray rtcm1005Frame(qint64 ecefX)
 {
     QByteArray frame(25, '\0');
     const auto setBits = [&frame](int offset, int count, quint64 value) {
@@ -152,10 +158,17 @@ void COPControllerTest::_referencePoint()
     frame[0] = static_cast<char>(0xd3);
     setBits(14, 10, 19);
     setBits(24, 12, 1005);
-    // WGS84 equator, longitude 180 degrees; exercises signed ECEF extraction.
-    setBits(58, 38, static_cast<quint64>(-63781370000LL));
-    const auto crc = RTCMFramer::crc24q({reinterpret_cast<const uint8_t*>(frame.constData()), 22});
+    setBits(58, 38, static_cast<quint64>(ecefX));
+    const auto crc = QGC::crc24q({reinterpret_cast<const uint8_t*>(frame.constData()), 22});
     setBits(176, 24, crc);
+    return frame;
+}
+}  // namespace
+
+void COPControllerTest::_referencePoint()
+{
+    // WGS84 equator, longitude 180 degrees; exercises signed ECEF extraction.
+    QByteArray frame = rtcm1005Frame(-63781370000LL);
     const auto coordinate = COPReferencePoint::decode(frame);
     QVERIFY(coordinate.isValid());
     QVERIFY(qAbs(coordinate.latitude()) < 0.000001);
@@ -164,6 +177,58 @@ void COPControllerTest::_referencePoint()
     frame[10] = static_cast<char>(frame[10] ^ 1);
     QVERIFY(!COPReferencePoint::decode(frame).isValid());
     QVERIFY(!COPReferencePoint::decode(frame.first(10)).isValid());
+}
+
+void COPControllerTest::_referencePointFollowsSelectedStream()
+{
+    ManualScheduler scheduler;
+    GPSCorrectionManager corrections(nullptr, &scheduler);
+    COPReferencePoint reference(nullptr, &corrections, 500);
+    QSignalSpy admitted(&corrections, &GPSCorrectionManager::selectedFrameAdmitted);
+    const QByteArray west = rtcm1005Frame(-63781370000LL);
+    const QByteArray east = rtcm1005Frame(63781370000LL);
+    const auto advance = [&scheduler]() { return scheduler.advanceBy(std::chrono::seconds(1)); };
+
+    // A valid frame of the selected stream sets the reference point
+    auto ntrip = corrections.openSource(GPSCorrectionSettings::Ntrip, QStringLiteral("caster"));
+    QVERIFY(advance());
+    ntrip->submit(west, scheduler.nowMs());
+    QCOMPARE(admitted.count(), 1);
+    QCOMPARE(admitted.constFirst().at(2).toULongLong(), quint64(1));
+    QVERIFY(reference.valid());
+    QVERIFY(qAbs(qAbs(reference.longitude()) - 180) < 0.000001);
+    QCOMPARE(reference.source(), QStringLiteral("NTRIP reference"));
+
+    // A source that is not selected is never admitted and cannot move it
+    auto udp = corrections.openSource(GPSCorrectionSettings::Udp, QStringLiteral("radio"));
+    QVERIFY(advance());
+    udp->submit(east, scheduler.nowMs());
+    QCOMPARE(admitted.count(), 1);
+    QVERIFY(qAbs(qAbs(reference.longitude()) - 180) < 0.000001);
+    udp.reset();
+    QVERIFY(advance());
+    QVERIFY(reference.valid());
+
+    // The selected source ending drops the reference without waiting for another frame
+    ntrip.reset();
+    QVERIFY(advance());
+    QVERIFY(!reference.valid());
+
+    // A restarted source is a new session: a corrupt frame cannot set a reference, a valid one does
+    ntrip = corrections.openSource(GPSCorrectionSettings::Ntrip, QStringLiteral("caster"));
+    QVERIFY(advance());
+    QByteArray corrupt = east;
+    corrupt[10] = static_cast<char>(corrupt[10] ^ 1);
+    ntrip->submit(corrupt, scheduler.nowMs());
+    QVERIFY(!reference.valid());
+    ntrip->submit(east, scheduler.nowMs());
+    QCOMPARE(admitted.count(), 3);
+    QCOMPARE(admitted.constLast().at(2).toULongLong(), quint64(2));
+    QVERIFY(reference.valid());
+    QVERIFY(qAbs(reference.longitude()) < 0.000001);
+
+    // Without further valid frames it expires
+    QTRY_VERIFY_WITH_TIMEOUT(!reference.valid(), TestTimeout::mediumMs());
 }
 
 UT_REGISTER_TEST(COPControllerTest, TestLabel::Unit)
