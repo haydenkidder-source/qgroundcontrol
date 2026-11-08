@@ -306,6 +306,17 @@ public:
     ///     false: Do not send first item to vehicle, sequence numbers must be adjusted
     virtual bool sendHomePositionToVehicle() const { return false; }
 
+    enum class MissionUploadRecoveryPolicy
+    {
+        NoRecovery,
+        ResendLastItem,
+        RestartUpload,
+    };
+
+    /// Recovery after all items were sent but the final MISSION_ACK timed out.
+    /// Only non-empty uploads can be recovered. Completion confirms transfer, not stored contents.
+    virtual MissionUploadRecoveryPolicy missionUploadRecoveryPolicy(MAV_MISSION_TYPE missionType) const;
+
     /// List of supported mission commands. Empty list for all commands supported.
     virtual QList<MAV_CMD> supportedMissionCommands(QGCMAVLinkTypes::VehicleClass_t /*vehicleClass*/) const { return QList<MAV_CMD>(); }
 

@@ -69,28 +69,51 @@ bool MockLinkMissionItemHandler::handleMavlinkMessage(const mavlink_message_t &m
 {
     switch (msg.msgid) {
     case MAVLINK_MSG_ID_MISSION_REQUEST_LIST:
-        _handleMissionRequestList(msg);
-        break;
     case MAVLINK_MSG_ID_MISSION_REQUEST_INT:
-        _handleMissionRequest(msg);
-        break;
     case MAVLINK_MSG_ID_MISSION_ITEM_INT:
-        _handleMissionItem(msg);
-        break;
     case MAVLINK_MSG_ID_MISSION_COUNT:
-        _handleMissionCount(msg);
-        break;
     case MAVLINK_MSG_ID_MISSION_ACK:
-        // Acks are received back for each MISSION_ITEM message
-        break;
     case MAVLINK_MSG_ID_MISSION_SET_CURRENT:
-        // Sets the currently active mission item
-        break;
     case MAVLINK_MSG_ID_MISSION_CLEAR_ALL:
-        _handleMissionClearAll(msg);
         break;
     default:
         return false;
+    }
+
+    const auto* entry = mavlink_get_msg_entry(msg.msgid);
+    if (mavlink_msg_get_target_sysid(&msg, entry) != _mockLink->vehicleId()) {
+        qCWarning(MockLinkMissionItemHandlerLog) << "Ignoring mission message for another system";
+        return true;
+    }
+    const auto targetComponent = mavlink_msg_get_target_compid(&msg, entry);
+    if (targetComponent != MAV_COMP_ID_ALL && targetComponent != MAV_COMP_ID_AUTOPILOT1) {
+        return true;
+    }
+
+    switch (msg.msgid) {
+        case MAVLINK_MSG_ID_MISSION_REQUEST_LIST:
+            _handleMissionRequestList(msg);
+            break;
+        case MAVLINK_MSG_ID_MISSION_REQUEST_INT:
+            _handleMissionRequest(msg);
+            break;
+        case MAVLINK_MSG_ID_MISSION_ITEM_INT:
+            _handleMissionItem(msg);
+            break;
+        case MAVLINK_MSG_ID_MISSION_COUNT:
+            _handleMissionCount(msg);
+            break;
+        case MAVLINK_MSG_ID_MISSION_ACK:
+            // Acks are received back for each MISSION_ITEM message
+            break;
+        case MAVLINK_MSG_ID_MISSION_SET_CURRENT:
+            // Sets the currently active mission item
+            break;
+        case MAVLINK_MSG_ID_MISSION_CLEAR_ALL:
+            _handleMissionClearAll(msg);
+            break;
+        default:
+            return false;
     }
 
     return true;
@@ -100,11 +123,6 @@ void MockLinkMissionItemHandler::_handleMissionClearAll(const mavlink_message_t 
 {
     mavlink_mission_clear_all_t clearAll{};
     mavlink_msg_mission_clear_all_decode(&msg, &clearAll);
-
-    if (mavlink_msg_get_target_sysid(&msg, mavlink_get_msg_entry(msg.msgid)) != _mockLink->vehicleId()) {
-        qCWarning(MockLinkMissionItemHandlerLog) << "Ignoring mission message for another system";
-        return;
-    }
 
     _requestType = static_cast<MAV_MISSION_TYPE>(clearAll.mission_type);
     qCDebug(MockLinkMissionItemHandlerLog) << "_handleMissionClearAll" << _requestType;
@@ -155,10 +173,6 @@ void MockLinkMissionItemHandler::_handleMissionRequestList(const mavlink_message
 
     _failReadRequestListFirstResponse = true;
 
-    if (mavlink_msg_get_target_sysid(&msg, mavlink_get_msg_entry(msg.msgid)) != _mockLink->vehicleId()) {
-        qCWarning(MockLinkMissionItemHandlerLog) << "Ignoring mission message for another system";
-        return;
-    }
     _requestListCounts[static_cast<MAV_MISSION_TYPE>(request.mission_type)]++;
 
     _requestType = static_cast<MAV_MISSION_TYPE>(request.mission_type);
@@ -206,11 +220,6 @@ void MockLinkMissionItemHandler::_handleMissionRequest(const mavlink_message_t &
     mavlink_mission_request_int_t request{};
     mavlink_msg_mission_request_int_decode(&msg, &request);
 
-    if (mavlink_msg_get_target_sysid(&msg, mavlink_get_msg_entry(msg.msgid)) != _mockLink->vehicleId()) {
-        qCWarning(MockLinkMissionItemHandlerLog) << "Ignoring mission message for another system";
-        return;
-    }
-
     if ((_failureMode == FailReadRequest0NoResponse) && (request.seq == 0)) {
         qCDebug(MockLinkMissionItemHandlerLog) << "_handleMissionRequest not responding due to failure mode FailReadRequest0NoResponse";
         return;
@@ -226,6 +235,8 @@ void MockLinkMissionItemHandler::_handleMissionRequest(const mavlink_message_t &
         qCDebug(MockLinkMissionItemHandlerLog) << "_handleMissionRequest not responding due to failure mode FailReadRequest1FirstResponse";
         return;
     }
+
+    _requestType = static_cast<MAV_MISSION_TYPE>(request.mission_type);
 
     // FIXME: Track whether all items are requested, or requested in sequence
 
@@ -292,10 +303,6 @@ void MockLinkMissionItemHandler::_handleMissionCount(const mavlink_message_t &ms
 {
     mavlink_mission_count_t missionCount{};
     mavlink_msg_mission_count_decode(&msg, &missionCount);
-    if (mavlink_msg_get_target_sysid(&msg, mavlink_get_msg_entry(msg.msgid)) != _mockLink->vehicleId()) {
-        qCWarning(MockLinkMissionItemHandlerLog) << "Ignoring mission message for another system";
-        return;
-    }
 
     _requestType = (MAV_MISSION_TYPE)missionCount.mission_type;
     // count is a uint16_t on the wire, so it can never be negative here.
@@ -313,10 +320,24 @@ void MockLinkMissionItemHandler::_handleMissionCount(const mavlink_message_t &ms
     case MAV_MISSION_TYPE_RALLY:
         _rallyItems.clear();
         break;
+    default:
+        _sendAck(MAV_MISSION_UNSUPPORTED);
+        return;
+    }
+
+    if (_failureMode == FailWriteFinalAckDuplicateAccepted || _failureMode == FailWriteFinalAckErrorOnResend) {
+        _failWriteFinalAckFirstResponse = true;
+    }
+
+    if (_failureMode == FailWriteRestartEarlyAck && !_failWriteRequest1FirstResponse) {
+        _sendAck(MAV_MISSION_ACCEPTED);
+        return;
     }
 
     if (_writeSequenceCount == 0) {
-        _sendAck(MAV_MISSION_ACCEPTED);
+        if (_failureMode != FailWriteFinalAckNoResponse) {
+            _sendAck(_failureMode == FailWriteFinalAckErrorAck ? MAV_MISSION_ERROR : MAV_MISSION_ACCEPTED);
+        }
         return;
     }
 
@@ -345,7 +366,9 @@ void MockLinkMissionItemHandler::_requestNextMissionItem(int sequenceNumber)
         return;
     }
 
-    if ((_failureMode == FailWriteRequest1FirstResponse) && (sequenceNumber == 1) && _failWriteRequest1FirstResponse) {
+    if ((_failureMode == FailWriteRequest1FirstResponse || _failureMode == FailWriteRequest1ThenFinalAckNoResponse ||
+         _failureMode == FailWriteRestartEarlyAck) &&
+        (sequenceNumber == 1) && _failWriteRequest1FirstResponse) {
         _failWriteRequest1FirstResponse = false;
         qCDebug(MockLinkMissionItemHandlerLog)
             << "_requestNextMissionItem not responding due to failure mode FailWriteRequest1FirstResponse";
@@ -418,6 +441,30 @@ void MockLinkMissionItemHandler::_handleMissionItem(const mavlink_message_t &msg
     const MAV_MISSION_TYPE missionType = static_cast<MAV_MISSION_TYPE>(missionItemInt.mission_type);
     const uint16_t seq = missionItemInt.seq;
 
+    if (missionType != MAV_MISSION_TYPE_MISSION && missionType != MAV_MISSION_TYPE_FENCE &&
+        missionType != MAV_MISSION_TYPE_RALLY) {
+        _requestType = missionType;
+        _sendAck(MAV_MISSION_UNSUPPORTED);
+        return;
+    }
+    if (missionType != _requestType) {
+        return;
+    }
+    if (_writeSequenceIndex >= _writeSequenceCount) {
+        // Duplicate acceptance is independent of accepting a fresh MISSION_COUNT restart.
+        if (_failureMode == FailWriteFinalAckNoResponse || _failureMode == FailWriteRequest1ThenFinalAckNoResponse) {
+            return;
+        }
+        const bool acceptDuplicate = _failureMode == FailWriteFinalAckDuplicateAccepted && _writeSequenceCount > 0 &&
+                                     seq == _writeSequenceCount - 1;
+        _sendAck(acceptDuplicate ? MAV_MISSION_ACCEPTED : MAV_MISSION_ERROR);
+        return;
+    }
+    if (seq != _writeSequenceIndex) {
+        _sendAck(MAV_MISSION_ERROR);
+        return;
+    }
+
     switch (missionType) {
     case MAV_MISSION_TYPE_MISSION:
         _missionItems[seq] = missionItemInt;
@@ -446,21 +493,15 @@ void MockLinkMissionItemHandler::_handleMissionItem(const mavlink_message_t &msg
         return;
     }
 
-    if (_failureMode != FailWriteFinalAckNoResponse) {
-        if ((_failureMode == FailWriteFinalAckFirstResponse) && _failWriteFinalAckFirstResponse) {
-            _failWriteFinalAckFirstResponse = false;
-            qCDebug(MockLinkMissionItemHandlerLog)
-                << "_handleMissionItem not sending final ack due to failure mode FailWriteFinalAckFirstResponse";
-            return;
-        }
+    if ((_failureMode == FailWriteFinalAckFirstResponse || _failureMode == FailWriteFinalAckDuplicateAccepted ||
+         _failureMode == FailWriteFinalAckErrorOnResend) &&
+        _failWriteFinalAckFirstResponse) {
+        _failWriteFinalAckFirstResponse = false;
+        return;
+    }
 
-        MAV_MISSION_RESULT ack = MAV_MISSION_ACCEPTED;
-
-        if (_failureMode == FailWriteFinalAckErrorAck) {
-            ack = MAV_MISSION_ERROR;
-        }
-
-        _sendAck(ack);
+    if (_failureMode != FailWriteFinalAckNoResponse && _failureMode != FailWriteRequest1ThenFinalAckNoResponse) {
+        _sendAck(_failureMode == FailWriteFinalAckErrorAck ? MAV_MISSION_ERROR : MAV_MISSION_ACCEPTED);
     }
 }
 
@@ -488,6 +529,8 @@ void MockLinkMissionItemHandler::setFailureMode(FailureMode_t failureMode, MAV_M
 {
     _failureMode = failureMode;
     _failureAckResult = failureAckResult;
+    _failWriteRequest1FirstResponse = true;
+    _failWriteFinalAckFirstResponse = true;
 }
 
 void MockLinkMissionItemHandler::shutdown()

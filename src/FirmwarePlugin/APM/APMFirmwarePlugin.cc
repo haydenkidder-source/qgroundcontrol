@@ -634,6 +634,20 @@ QList<MAV_CMD> APMFirmwarePlugin::supportedMissionCommands(QGCMAVLink::VehicleCl
     return supportedCommands;
 }
 
+FirmwarePlugin::MissionUploadRecoveryPolicy APMFirmwarePlugin::missionUploadRecoveryPolicy(
+    MAV_MISSION_TYPE missionType) const
+{
+    // ArduPilot may reject a duplicate final item after completing an upload.
+    switch (missionType) {
+        case MAV_MISSION_TYPE_MISSION:
+        case MAV_MISSION_TYPE_FENCE:
+        case MAV_MISSION_TYPE_RALLY:
+            return MissionUploadRecoveryPolicy::RestartUpload;
+        default:
+            return MissionUploadRecoveryPolicy::NoRecovery;
+    }
+}
+
 QString APMFirmwarePlugin::missionCommandOverrides(QGCMAVLink::VehicleClass_t vehicleClass) const
 {
     switch (vehicleClass) {

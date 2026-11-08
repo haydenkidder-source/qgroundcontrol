@@ -11,7 +11,7 @@ import QGroundControl.Controls
 Rectangle {
     id: root
     implicitHeight: layout.implicitHeight
-    color: QGroundControl.globalPalette.windowShade
+    color: QGroundControl.globalPalette.windowCard
 
     property var hostWindow
     readonly property var selected: COPController.selected
@@ -54,6 +54,7 @@ Rectangle {
                     QGCButton {
                         text: qsTr("COP")
                         highlighted: COPController.selectedSysid === 0
+                        highlightColor: QGroundControl.globalPalette.accent
                         onClicked: root.select(0)
                     }
                     Repeater {
@@ -82,7 +83,7 @@ Rectangle {
                                 // of whether it also happens to be COP-selected right now - which
                                 // vehicle you're flying is the safety-relevant state to always show.
                                 highlightColor: isActiveVehicle ? QGroundControl.globalPalette.colorGreen
-                                                                 : QGroundControl.globalPalette.buttonHighlight
+                                                                 : QGroundControl.globalPalette.accent
                                 onClicked: root.select(vehicleTab.object.sysid)
                             }
                             QGCButton {

@@ -1,8 +1,13 @@
 #pragma once
 
-#include <QtCore/QPointer>
 #include <functional>
+#include <memory>
 #include <optional>
+
+#include <QtCore/QHash>
+#include <QtCore/QPointer>
+#include <QtCore/QUrl>
+#include <QtQml/QQmlAbstractUrlInterceptor>
 
 #include "UnitTest.h"
 
@@ -45,6 +50,7 @@ protected slots:
     {
         _verifyFileDialogTestHookConsumed();
         stopUI();
+        _qmlUrlOverrides.clear();
         UnitTest::cleanup();
     }
 
@@ -59,6 +65,10 @@ protected:
     /// retained-state page can cover the stock Fly View and absorb the clicks these tests send it,
     /// so the default is to run without one. Tests that exercise the overlay itself return true.
     virtual bool usesPluginFlyViewOverlay() const { return false; }
+
+    /// Makes the next startUI() load \a replacement wherever the UI loads \a original, so a test can stand in
+    /// for a QML file which custom builds override. Overrides are cleared after each test.
+    void overrideQmlFile(const QUrl& original, const QUrl& replacement);
 
     /// Close the QML window and wait for it to settle.
     void closeUIWindow();
@@ -217,6 +227,9 @@ protected:
     int _pageDelay = 0;  ///< ms to pause between page switches when onscreen
 
 private:
+    QHash<QUrl, QUrl> _qmlUrlOverrides;
+    std::unique_ptr<QQmlAbstractUrlInterceptor> _qmlUrlInterceptor;
+
     /// Shared implementation for the verify* helpers: find the visible item,
     /// guard against the property not existing (an invalid QVariant silently
     /// converts to false/"" which would make false/empty expectations pass

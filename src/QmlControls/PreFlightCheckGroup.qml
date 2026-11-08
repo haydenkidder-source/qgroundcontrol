@@ -28,7 +28,11 @@ Column  {
     Layout.preferredWidth:  0
     Layout.minimumWidth:    0
 
-    onPassedChanged: parent.groupPassedChanged()
+    onPassedChanged: {
+        if (parent && typeof parent.groupPassedChanged === "function") {
+            parent.groupPassedChanged()
+        }
+    }
 
     Component.onCompleted: {
         var moveList = []
@@ -53,7 +57,7 @@ Column  {
         anchors.right:  parent.right
         checkable:      false
         text:           name + (passed ? qsTr(" (passed)") : (enabled ? "" : qsTr(" (locked)")))
-        color:          !enabled ? groupPalette.text :
+        color:          !enabled ? groupPalette.textPrimary :
                             (failed ? groupPalette.errorText : (passed ? groupPalette.successText : groupPalette.warningText))
     }
 

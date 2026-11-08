@@ -37,6 +37,11 @@ public:
     ///     Signals sendComplete when done
     void writeMissionItems(const QList<MissionItem*>& missionItems);
 
+    /// True when the current/last upload restarted a fence or rally transfer. Callers must loadFromVehicle,
+    /// handle read errors and compare the downloaded contents before presenting verified installation.
+    /// This flag persists through readback and resets only for a new upload. False is not proof of storage.
+    bool uploadRequiresReadback() const { return _uploadRequiresReadback; }
+
     /// Removes all mission items from vehicle
     ///     Signals removeAllComplete when done
     void removeAll(void);
@@ -60,6 +65,7 @@ public:
     // When actively retrying to request mission items, use a shorter timeout instead.
     static constexpr int _retryTimeoutMilliseconds = 250;
     static constexpr int _maxRetryCount = 5;
+    static constexpr int _maxUploadRestartCount = 5;
 
     /// Ack timeout used in unit tests (much shorter for faster tests)
     static constexpr int kTestAckTimeoutMs = 50;
@@ -72,6 +78,7 @@ signals:
     void lastCurrentIndexChanged    (int lastCurrentIndex);
     void progressPctChanged         (double progressPercentPct);
     void removeAllComplete          (bool error);
+    /// error == false means transfer completed; it does not verify vehicle storage. See uploadRequiresReadback().
     void sendComplete               (bool error);
     void resumeMissionReady         (void);
     void resumeMissionUploadFail    (void);
@@ -105,6 +112,7 @@ protected:
     void _handleMissionRequest(const mavlink_message_t& message);
     void _handleMissionAck(const mavlink_message_t& message);
     void _requestNextMissionItem(void);
+    void _sendMissionItem(int seq);
     void _clearMissionItems(void);
     void _sendError(ErrorCode_t errorCode, const QString& errorMsg);
     QString _ackTypeToString(AckType_t ackType);
@@ -129,6 +137,9 @@ protected:
     QTimer*             _ackTimeoutTimer =      nullptr;
     AckType_t           _expectedAck;
     int                 _retryCount;
+    int _uploadRestartCount = 0;      ///< Shared by missing-request and final-ACK recovery
+    bool _uploadRequestSeen = false;  ///< The vehicle requested an item since the last MISSION_COUNT was sent
+    bool _uploadRequiresReadback = false;
 
     TransactionType_t   _transactionInProgress;
     bool                _resumeMission;

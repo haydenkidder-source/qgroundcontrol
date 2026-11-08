@@ -95,6 +95,14 @@ bool FirmwarePlugin::setFlightMode(const QString &flightMode, uint8_t *base_mode
     return false;
 }
 
+FirmwarePlugin::MissionUploadRecoveryPolicy FirmwarePlugin::missionUploadRecoveryPolicy(
+    MAV_MISSION_TYPE missionType) const
+{
+    // A duplicate fence/rally item can be ACKed even if storing the original plan failed.
+    return missionType == MAV_MISSION_TYPE_MISSION ? MissionUploadRecoveryPolicy::ResendLastItem
+                                                   : MissionUploadRecoveryPolicy::NoRecovery;
+}
+
 QString FirmwarePlugin::missionCommandOverrides(QGCMAVLink::VehicleClass_t vehicleClass) const
 {
     switch (vehicleClass) {

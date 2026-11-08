@@ -29,8 +29,10 @@ PX4AutoPilotPlugin::PX4AutoPilotPlugin(Vehicle* vehicle, QObject* parent)
     , _flightModesComponent(nullptr)
     , _sensorsComponent(nullptr)
     , _safetyComponent(nullptr)
+    , _failsafesComponent(nullptr)
     , _serialPortsComponent(nullptr)
     , _powerComponent(nullptr)
+    , _batteryComponent(nullptr)
     , _motorComponent(nullptr)
     , _actuatorComponent(nullptr)
     , _tuningComponent(nullptr)
@@ -81,6 +83,13 @@ const QVariantList& PX4AutoPilotPlugin::vehicleComponents(void)
                 _powerComponent->setupTriggerSignals();
                 _components.append(QVariant::fromValue(static_cast<VehicleComponent*>(_powerComponent)));
 
+                if (_vehicle->parameterManager()->parameterExists(ParameterManager::defaultComponentId,
+                                                                  "BAT1_SOURCE")) {
+                    _batteryComponent = new PX4BatteryComponent(_vehicle, this, this);
+                    _batteryComponent->setupTriggerSignals();
+                    _components.append(QVariant::fromValue(static_cast<VehicleComponent*>(_batteryComponent)));
+                }
+
                 if (_vehicle->actuators()) {
                     _vehicle->actuators()->init(); // At this point params are loaded, so we can init the actuators
                 }
@@ -117,6 +126,10 @@ const QVariantList& PX4AutoPilotPlugin::vehicleComponents(void)
                 _safetyComponent = new SafetyComponent(_vehicle, this, this);
                 _safetyComponent->setupTriggerSignals();
                 _components.append(QVariant::fromValue(static_cast<VehicleComponent*>(_safetyComponent)));
+
+                _failsafesComponent = new PX4FailsafesComponent(_vehicle, this, this);
+                _failsafesComponent->setupTriggerSignals();
+                _components.append(QVariant::fromValue(static_cast<VehicleComponent*>(_failsafesComponent)));
 
                 if (!PX4SerialPortsComponent::functionFacts(_vehicle->parameterManager()).isEmpty()) {
                     _serialPortsComponent = new PX4SerialPortsComponent(_vehicle, this, this);
