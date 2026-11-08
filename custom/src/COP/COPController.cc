@@ -77,7 +77,7 @@ QString COPVehicle::label() const
     const QString role = _roles ? _roles->roleForSysid(_sysid) : QString();
     const QString name = _roles ? _roles->nameForSysid(_sysid) : QString();
     const QString base = role.isEmpty() ? tr("Vehicle %1").arg(_sysid) : role;
-    return name.isEmpty() ? base : tr("%1 · %2").arg(base, name);
+    return name.isEmpty() ? base : tr("%1 - %2").arg(base, name);
 }
 
 bool COPVehicle::connected() const

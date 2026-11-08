@@ -40,11 +40,11 @@ void COPControllerTest::_rolesAndOrder()
     controller.initialize(&roles);
     controller.selectVehicle(202);
     QVERIFY(controller.selected());
-    QCOMPARE(controller.selected()->label(), QStringLiteral("Rover · North"));
+    QCOMPARE(controller.selected()->label(), QStringLiteral("Rover - North"));
     const auto order = settings.value(QStringLiteral("COP/VehicleOrder")).toList();
     QVERIFY(order.indexOf(202) < order.indexOf(201));
     roles.addEntry(202, QStringLiteral("Plane"), QStringLiteral("South"), 0);
-    QCOMPARE(controller.selected()->label(), QStringLiteral("Plane · South"));
+    QCOMPARE(controller.selected()->label(), QStringLiteral("Plane - South"));
     const int count = controller.vehicles()->count();
     controller.initialize(&roles);
     QCOMPARE(controller.vehicles()->count(), count);
