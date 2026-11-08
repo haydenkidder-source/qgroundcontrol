@@ -157,7 +157,7 @@ void GuidedActionTargetUITest::_emergencyStopConfirmationStaysWithItsVehicle()
     int firstArmDisarmResults = 0;
     int secondArmDisarmResults = 0;
     const auto countArmDisarm = [](int& count) {
-        return [&count](int, int, int command, int, int) {
+        return [&count](quint32, int, int command, int, int) {
             if (command == MAV_CMD_COMPONENT_ARM_DISARM) {
                 ++count;
             }
@@ -232,7 +232,7 @@ void GuidedActionTargetUITest::_cancelledConfirmationCannotBeActivated()
 
     int armDisarmResults = 0;
     const QMetaObject::Connection resultConnection =
-        connect(vehicle, &Vehicle::mavCommandResult, this, [&armDisarmResults](int, int, int command, int, int) {
+        connect(vehicle, &Vehicle::mavCommandResult, this, [&armDisarmResults](quint32, int, int command, int, int) {
             if (command == MAV_CMD_COMPONENT_ARM_DISARM) {
                 ++armDisarmResults;
             }

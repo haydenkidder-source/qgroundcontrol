@@ -17,7 +17,7 @@ class COPVehicle : public QObject
     Q_OBJECT
     QML_ELEMENT
     QML_UNCREATABLE("Owned by COPController")
-    Q_PROPERTY(int sysid READ sysid CONSTANT)
+    Q_PROPERTY(quint32 sysid READ sysid CONSTANT)
     Q_PROPERTY(QString label READ label NOTIFY labelChanged)
     Q_PROPERTY(QString videoUri READ videoUri WRITE setVideoUri NOTIFY videoUriChanged)
     Q_PROPERTY(Vehicle* vehicle READ vehicle NOTIFY stateChanged)
@@ -34,9 +34,9 @@ class COPVehicle : public QObject
     Q_PROPERTY(QVariantList rallyPoints READ rallyPoints NOTIFY planDataChanged)
 
 public:
-    COPVehicle(int sysid, VehicleRoleController* roles, QObject* parent);
+    COPVehicle(quint32 sysid, VehicleRoleController* roles, QObject* parent);
 
-    int sysid() const { return _sysid; }
+    quint32 sysid() const { return _sysid; }
 
     QString label() const;
 
@@ -99,7 +99,7 @@ private:
     /// property read, since geofence circles in particular are only readable by copying each
     /// QGCFenceCircle (its radius accessor isn't const - see fenceCircles() in the .cc).
     void _refreshPlanData();
-    int _sysid;
+    quint32 _sysid;
     QPointer<VehicleRoleController> _roles;
     QPointer<Vehicle> _vehicle;
     QGeoCoordinate _coordinate;
@@ -120,8 +120,8 @@ class COPController : public QObject
     QML_ELEMENT
     QML_SINGLETON
     Q_PROPERTY(QmlObjectListModel* vehicles READ vehicles CONSTANT)
-    Q_PROPERTY(int selectedSysid READ selectedSysid NOTIFY selectionChanged)
-    Q_PROPERTY(int pendingSysid READ pendingSysid NOTIFY selectionChanged)
+    Q_PROPERTY(quint32 selectedSysid READ selectedSysid NOTIFY selectionChanged)
+    Q_PROPERTY(quint32 pendingSysid READ pendingSysid NOTIFY selectionChanged)
     Q_PROPERTY(COPVehicle* selected READ selected NOTIFY selectionChanged)
     Q_PROPERTY(QVariantList messages READ messages NOTIFY messagesChanged)
     Q_PROPERTY(quint64 droppedMessages READ droppedMessages NOTIFY messagesChanged)
@@ -132,9 +132,9 @@ public:
 
     QmlObjectListModel* vehicles() { return &_vehicles; }
 
-    int selectedSysid() const { return _selectedSysid; }
+    quint32 selectedSysid() const { return _selectedSysid; }
 
-    int pendingSysid() const { return _pendingSysid; }
+    quint32 pendingSysid() const { return _pendingSysid; }
 
     COPVehicle* selected() const;
 
@@ -145,7 +145,7 @@ public:
     bool unacknowledged() const { return _unacknowledged; }
 
     Q_INVOKABLE void initialize(VehicleRoleController* roles);
-    Q_INVOKABLE void selectVehicle(int sysid);
+    Q_INVOKABLE void selectVehicle(quint32 sysid);
     Q_INVOKABLE void assumeControl();
     Q_INVOKABLE void cancelControl();
     Q_INVOKABLE void notify(const QString& message);
@@ -156,8 +156,8 @@ signals:
     void messagesChanged();
 
 private:
-    COPVehicle* _find(int sysid) const;
-    COPVehicle* _remember(int sysid);
+    COPVehicle* _find(quint32 sysid) const;
+    COPVehicle* _remember(quint32 sysid);
     void _vehicleAdded(Vehicle* vehicle);
     void _vehicleRemoved(Vehicle* vehicle);
     void _syncRoles();
@@ -172,8 +172,8 @@ private:
     QVariantList _messages;
     int _unacknowledgedCount = 0;
     quint64 _droppedMessages = 0;
-    int _selectedSysid = 0;
-    int _pendingSysid = 0;
+    quint32 _selectedSysid = 0;
+    quint32 _pendingSysid = 0;
     bool _initialized = false;
     bool _unacknowledged = false;
 };

@@ -2,12 +2,16 @@
 
 #include <QtCore/QDir>
 #include <QtCore/QFile>
+#include <QtCore/QJsonArray>
+#include <QtCore/QJsonDocument>
+#include <QtCore/QJsonObject>
 #include <QtCore/QRegularExpression>
 
 #include "AppSettings.h"
 #include "QmlObjectListModel.h"
 #include "SettingsManager.h"
 #include "VehicleRoleController.h"
+#include "VehicleSystemIdTestData.h"
 
 void VehicleRoleControllerTest::init()
 {
@@ -26,6 +30,86 @@ void VehicleRoleControllerTest::cleanup()
 {
     SettingsManager::instance()->appSettings()->savePath()->setRawValue(_savePath);
     UnitTest::cleanup();
+}
+
+void VehicleRoleControllerTest::_systemIdRoundTrip_data()
+{
+    VehicleSystemIdTestData::addValidRows();
+}
+
+void VehicleRoleControllerTest::_systemIdRoundTrip()
+{
+    QFETCH(quint32, sysid);
+    const quint32 otherSysid = sysid == 1 ? 257 : 1;
+    {
+        VehicleRoleController controller;
+        controller.addEntry(sysid, QStringLiteral("Rover"), QStringLiteral("North"), 14550);
+        controller.addEntry(otherSysid, QStringLiteral("Plane"), QStringLiteral("South"), 14551);
+        QCOMPARE(controller.roleEntries()->count(), 2);
+        QVERIFY(!controller.isNicknameTaken(QStringLiteral("North"), sysid));
+        QVERIFY(controller.isNicknameTaken(QStringLiteral("North"), otherSysid));
+        controller.addEntry(sysid, QStringLiteral("Copter"), QStringLiteral("North"), 14552);
+        QCOMPARE(controller.roleEntries()->count(), 2);
+    }
+
+    QFile file(SettingsManager::instance()->appSettings()->settingsSavePath() + QStringLiteral("/VehicleRoles.json"));
+    QVERIFY(file.open(QIODevice::ReadOnly));
+    const QByteArray saved = file.readAll();
+    const QJsonDocument doc = QJsonDocument::fromJson(saved);
+    QVERIFY(doc.isArray());
+    QCOMPARE(doc.array().count(), 2);
+    const QJsonValue savedId = doc.array().first().toObject().value(QStringLiteral("sysid"));
+    QVERIFY(savedId.isDouble());
+    QCOMPARE(savedId.toDouble(), double(sysid));
+    QVERIFY(saved.contains(QByteArray("\"sysid\": ") + QByteArray::number(sysid)));
+
+    VehicleRoleController reloaded;
+    QCOMPARE(reloaded.roleEntries()->count(), 2);
+    QCOMPARE(reloaded.roleEntries()->value<VehicleRoleEntry*>(0)->sysid(), sysid);
+    QCOMPARE(reloaded.roleForSysid(sysid), QStringLiteral("Copter"));
+    QCOMPARE(reloaded.nameForSysid(sysid), QStringLiteral("North"));
+    QCOMPARE(reloaded.portForSysid(sysid), 14552);
+    QCOMPARE(reloaded.roleForSysid(otherSysid), QStringLiteral("Plane"));
+    QCOMPARE(reloaded.nameForSysid(otherSysid), QStringLiteral("South"));
+    QCOMPARE(reloaded.portForSysid(otherSysid), 14551);
+
+    expectLogMessage("Custom.VehicleRoles", QtWarningMsg,
+                     QRegularExpression(QStringLiteral("^Ignoring invalid entry")));
+    reloaded.addEntry(0, QStringLiteral("Rover"), QString(), 0);
+    verifyExpectedLogMessage();
+    QCOMPARE(reloaded.roleEntries()->count(), 2);
+}
+
+void VehicleRoleControllerTest::_invalidSavedSystemId_data()
+{
+    QTest::addColumn<QByteArray>("jsonId");
+    QTest::newRow("zero") << QByteArray("0");
+    QTest::newRow("negative") << QByteArray("-1");
+    QTest::newRow("fraction") << QByteArray("1.5");
+    QTest::newRow("overflow") << QByteArray("4294967296");
+    QTest::newRow("fraction-above-max") << QByteArray("4294967295.5");
+    QTest::newRow("text") << QByteArray("\"invalid\"");
+    QTest::newRow("numeric-string") << QByteArray("\"255\"");
+    QTest::newRow("null") << QByteArray("null");
+    QTest::newRow("boolean") << QByteArray("true");
+}
+
+void VehicleRoleControllerTest::_invalidSavedSystemId()
+{
+    QFETCH(QByteArray, jsonId);
+    QFile file(SettingsManager::instance()->appSettings()->settingsSavePath() + QStringLiteral("/VehicleRoles.json"));
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    file.write("[{\"sysid\": " + jsonId +
+               ", \"role\": \"Rover\"},"
+               "{\"sysid\": 257, \"role\": \"Plane\"}]");
+    file.close();
+    expectLogMessage("Custom.VehicleRoles", QtWarningMsg,
+                     QRegularExpression(QStringLiteral("^Skipping invalid saved entry - sysid:")));
+    VehicleRoleController controller;
+    verifyExpectedLogMessage();
+    QCOMPARE(controller.roleEntries()->count(), 1);
+    QCOMPARE(controller.roleEntries()->value<VehicleRoleEntry*>(0)->sysid(), quint32(257));
+    QCOMPARE(controller.roleForSysid(257), QStringLiteral("Plane"));
 }
 
 void VehicleRoleControllerTest::_availableRolesAreArduPilotVehicleTypes()

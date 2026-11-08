@@ -15,7 +15,11 @@ private slots:
     void init() override;
     void cleanup() override;
     void _emptyPageSaysWhatToDo();
+    void _vehicleAddedByHandGetsACard_data();
     void _vehicleAddedByHandGetsACard();
+    void _invalidSysidField_data();
+    void _invalidSysidField();
+    void _connectedVehicleIsOfferedForOneClickSetup_data();
     void _connectedVehicleIsOfferedForOneClickSetup();
     void _nicknameAlreadyInUseBlocksAdd();
     void _linksBelongToTheirVehicle();

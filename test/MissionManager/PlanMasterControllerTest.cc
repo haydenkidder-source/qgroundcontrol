@@ -564,7 +564,7 @@ void PlanMasterControllerTest::_testRemoveAllFromVehicleCompletedOnSuccess()
 
     QCOMPARE(completedSpy.count(), 1);
     QCOMPARE(completedSpy.first().at(0).toBool(), false);
-    QCOMPARE(completedSpy.first().at(1).toInt(), _vehicle->id());
+    QCOMPARE(completedSpy.first().at(1).toUInt(), _vehicle->id());
 }
 
 void PlanMasterControllerTest::_testRemoveAllFromVehicleCompletedOnFailure()
@@ -592,7 +592,7 @@ void PlanMasterControllerTest::_testRemoveAllFromVehicleCompletedOnFailure()
 
     QCOMPARE(completedSpy.count(), 1);
     QCOMPARE(completedSpy.first().at(0).toBool(), true);  // One failed element makes the whole aggregate an error
-    QCOMPARE(completedSpy.first().at(1).toInt(), _vehicle->id());
+    QCOMPARE(completedSpy.first().at(1).toUInt(), _vehicle->id());
 }
 
 void PlanMasterControllerTest::_testRemoveAllFromVehicleCompletedOnVehicleDisconnect()
@@ -603,7 +603,7 @@ void PlanMasterControllerTest::_testRemoveAllFromVehicleCompletedOnVehicleDiscon
 
     _masterController->removeAllFromVehicle();
     QVERIFY(completedSpy.isEmpty());
-    const int vehicleId = _vehicle->id();
+    const quint32 vehicleId = _vehicle->id();
 
     // The vehicle disconnects before mission/geoFence/rallyPoint ever report removeAllComplete.
     // The pending request can never complete, so it must be reported as an error rather than left hanging.
@@ -611,7 +611,7 @@ void PlanMasterControllerTest::_testRemoveAllFromVehicleCompletedOnVehicleDiscon
 
     QCOMPARE(completedSpy.count(), 1);
     QCOMPARE(completedSpy.first().at(0).toBool(), true);
-    QCOMPARE(completedSpy.first().at(1).toInt(), vehicleId);
+    QCOMPARE(completedSpy.first().at(1).toUInt(), vehicleId);
 
     // A stray completion arriving after the reset (e.g. a delayed signal from the old vehicle)
     // must not crash or re-emit the aggregate signal.
@@ -628,7 +628,7 @@ Vehicle* PlanMasterControllerTest::_connectExtraVehicle()
         return nullptr;
     }
     _extraLinks.append(link);
-    const int vehicleId = link->vehicleId();
+    const quint32 vehicleId = link->vehicleId();
     const bool connected = UnitTest::waitForCondition(
         [manager, vehicleId] {
             const Vehicle* const vehicle = manager->getVehicleById(vehicleId);
@@ -703,7 +703,7 @@ void PlanMasterControllerTest::_testRemoveAllFromVehicleFollowsRequestedVehicle(
     QVERIFY_NO_SIGNAL_WAIT(completedSpy, 100);  // Short on purpose: only guards against a duplicate emission
     QCOMPARE(completedSpy.count(), 1);
     QCOMPARE(completedSpy.first().at(0).toBool(), false);
-    QCOMPARE(completedSpy.first().at(1).toInt(), _vehicle->id());
+    QCOMPARE(completedSpy.first().at(1).toUInt(), _vehicle->id());
 }
 
 void PlanMasterControllerTest::_testRemoveAllFromVehicleSupersededOnOtherVehicle()
@@ -726,13 +726,13 @@ void PlanMasterControllerTest::_testRemoveAllFromVehicleSupersededOnOtherVehicle
     _masterController->removeAllFromVehicle();
     QCOMPARE(completedSpy.count(), 1);
     QCOMPARE(completedSpy.at(0).at(0).toBool(), true);
-    QCOMPARE(completedSpy.at(0).at(1).toInt(), _vehicle->id());
+    QCOMPARE(completedSpy.at(0).at(1).toUInt(), _vehicle->id());
 
     QVERIFY_TRUE_WAIT(completedSpy.count() >= 2, TestTimeout::mediumMs());
     QVERIFY_NO_SIGNAL_WAIT(completedSpy, 100);  // Short on purpose: the first vehicle's late acks must be ignored
     QCOMPARE(completedSpy.count(), 2);
     QCOMPARE(completedSpy.at(1).at(0).toBool(), false);
-    QCOMPARE(completedSpy.at(1).at(1).toInt(), otherVehicle->id());
+    QCOMPARE(completedSpy.at(1).at(1).toUInt(), otherVehicle->id());
 }
 
 void PlanMasterControllerTest::_testRemoveAllFromVehicleUnderFleetChurn()
@@ -768,7 +768,7 @@ void PlanMasterControllerTest::_testRemoveAllFromVehicleUnderFleetChurn()
                  qPrintable(context));
 
         completedSpy.clear();
-        const int targetId = target->id();
+        const quint32 targetId = target->id();
         _masterController->removeAllFromVehicle();
 
         Vehicle* bystander = nullptr;
@@ -809,7 +809,7 @@ void PlanMasterControllerTest::_testRemoveAllFromVehicleUnderFleetChurn()
         QVERIFY2(completedSpy.count() == 1, qPrintable(context));
         // The requested vehicle stayed connected throughout, so its confirmed removal must be reported as a success
         QVERIFY2(!completedSpy.first().at(0).toBool(), qPrintable(context));
-        QVERIFY2(completedSpy.first().at(1).toInt() == targetId, qPrintable(context));
+        QVERIFY2(completedSpy.first().at(1).toUInt() == targetId, qPrintable(context));
     }
 }
 

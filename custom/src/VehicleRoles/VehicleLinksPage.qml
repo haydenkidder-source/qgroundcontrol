@@ -367,9 +367,18 @@ AnalyzePage {
                     QGCTextField {
                         id:                     newSysidField
                         objectName:             "newVehicleSysid"
-                        Layout.preferredWidth:  ScreenTools.defaultFontPixelWidth * 8
+                        Layout.preferredWidth:  ScreenTools.defaultFontPixelWidth * 12
                         placeholderText:        qsTr("sysid")
-                        validator:              IntValidator { bottom: 1; top: 255 }
+                        validator: DoubleValidator {
+                            bottom: 1
+                            top: 4294967295
+                            decimals: 0
+                            notation: DoubleValidator.StandardNotation
+                            locale: "C"
+                        }
+                        readonly property real sysid: Number(text)
+                        readonly property bool validSysid: acceptableInput && Number.isInteger(sysid)
+                                                          && sysid >= 1 && sysid <= 4294967295
                     }
 
                     QGCComboBox {
@@ -381,7 +390,8 @@ AnalyzePage {
                     QGCTextField {
                         id:                     newNameField
                         objectName:             "newVehicleNickname"
-                        readonly property bool taken: _controller.isNicknameTaken(text, parseInt(newSysidField.text) || 0)
+                        readonly property bool taken: _controller.isNicknameTaken(
+                                                          text, newSysidField.validSysid ? newSysidField.sysid : 0)
                         Layout.preferredWidth:  ScreenTools.defaultFontPixelWidth * 20
                         placeholderText:        qsTr("Nickname (optional)")
                     }
@@ -389,9 +399,9 @@ AnalyzePage {
                     QGCButton {
                         objectName: "newVehicleAdd"
                         text:       qsTr("Add Vehicle")
-                        enabled:    newSysidField.acceptableInput && !newNameField.taken
+                        enabled:    newSysidField.validSysid && !newNameField.taken
                         onClicked: {
-                            _controller.addEntry(parseInt(newSysidField.text), newRoleCombo.currentText,
+                            _controller.addEntry(newSysidField.sysid, newRoleCombo.currentText,
                                                  newNameField.text, 0)
                             newSysidField.text = ""
                             newNameField.text = ""

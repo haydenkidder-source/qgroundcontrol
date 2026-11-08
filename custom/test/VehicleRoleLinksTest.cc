@@ -11,6 +11,7 @@
 #include "QmlObjectListModel.h"
 #include "SettingsManager.h"
 #include "VehicleRoleController.h"
+#include "VehicleSystemIdTestData.h"
 
 void VehicleRoleLinksTest::init()
 {
@@ -31,24 +32,30 @@ void VehicleRoleLinksTest::cleanup()
     CommsTest::cleanup();
 }
 
+void VehicleRoleLinksTest::_addRemoveAndPersistLinks_data()
+{
+    VehicleSystemIdTestData::addValidRows();
+}
+
 void VehicleRoleLinksTest::_addRemoveAndPersistLinks()
 {
+    QFETCH(quint32, sysid);
     VehicleRoleController controller;
-    controller.addEntry(210, QStringLiteral("Rover"), QStringLiteral("North"), 0);
+    controller.addEntry(sysid, QStringLiteral("Rover"), QStringLiteral("North"), 0);
 
-    QVERIFY(controller.linksForSysid(210));
-    QCOMPARE(controller.linksForSysid(210)->count(), 0);
+    QVERIFY(controller.linksForSysid(sysid));
+    QCOMPARE(controller.linksForSysid(sysid)->count(), 0);
     QVERIFY(!controller.linksForSysid(999));  // no entry for this sysid
 
     expectLogMessage("Custom.VehicleRoles", QtWarningMsg, QRegularExpression(QStringLiteral("Ignoring invalid link")));
     QCOMPARE(controller.addLink(0, QString(), QString()), -1);
     verifyExpectedLogMessage();
-    QCOMPARE(controller.linksForSysid(210)->count(), 0);
+    QCOMPARE(controller.linksForSysid(sysid)->count(), 0);
 
     QCOMPARE(controller.addLink(0, QStringLiteral("RFD900x"), QString()), 0);
     QCOMPARE(controller.addLink(0, QStringLiteral("Microhard 2450"), QStringLiteral("Rover Microhard")), 1);
 
-    QmlObjectListModel* links = controller.linksForSysid(210);
+    QmlObjectListModel* links = controller.linksForSysid(sysid);
     QCOMPARE(links->count(), 2);
     auto* rfd900x = qobject_cast<VehicleRoleLinkEntry*>(links->get(0));
     QCOMPARE(rfd900x->label(), QStringLiteral("RFD900x"));
@@ -64,7 +71,7 @@ void VehicleRoleLinksTest::_addRemoveAndPersistLinks()
 
     // A fresh controller reading the same (redirected) settings path round-trips what was saved.
     VehicleRoleController reloaded;
-    QmlObjectListModel* reloadedLinks = reloaded.linksForSysid(210);
+    QmlObjectListModel* reloadedLinks = reloaded.linksForSysid(sysid);
     QVERIFY(reloadedLinks);
     QCOMPARE(reloadedLinks->count(), 1);
     auto* reloadedLink = qobject_cast<VehicleRoleLinkEntry*>(reloadedLinks->get(0));

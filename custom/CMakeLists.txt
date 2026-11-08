@@ -326,7 +326,8 @@ if(QGC_BUILD_TESTING)
     )
     target_sources(
         ${CMAKE_PROJECT_NAME}
-        PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/test/AppLogViewerUITest.cc
+        PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/test/VehicleSystemIdTestData.h
+                ${CMAKE_CURRENT_SOURCE_DIR}/test/AppLogViewerUITest.cc
                 ${CMAKE_CURRENT_SOURCE_DIR}/test/AppLogViewerUITest.h
                 ${CMAKE_CURRENT_SOURCE_DIR}/test/COPControllerTest.cc
                 ${CMAKE_CURRENT_SOURCE_DIR}/test/COPControllerTest.h

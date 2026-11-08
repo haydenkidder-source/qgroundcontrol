@@ -1,17 +1,24 @@
 #include "VehicleLinksPageUITest.h"
 
+#include <memory>
+
 #include <QtCore/QDir>
+#include <QtCore/QSettings>
 #include <QtQml/QQmlApplicationEngine>
 #include <QtQuick/QQuickItem>
 #include <QtQuick/QQuickWindow>
 #include <QtTest/QTest>
 
 #include "AppSettings.h"
+#include "COPController.h"
+#include "LinkManager.h"
 #include "MockLink.h"
+#include "MultiVehicleManager.h"
 #include "QmlObjectListModel.h"
 #include "SettingsManager.h"
 #include "Vehicle.h"
 #include "VehicleRoleController.h"
+#include "VehicleSystemIdTestData.h"
 
 UT_REGISTER_TEST(VehicleLinksPageUITest, TestLabel::Integration, TestLabel::Vehicle)
 
@@ -19,6 +26,7 @@ void VehicleLinksPageUITest::init()
 {
     UnitTest::init();
     QVERIFY(_directory.isValid());
+    QSettings().remove(QStringLiteral("COP"));
     // Vehicles and links persist under savePath; every test starts from an empty directory, before the UI loads them
     QDir saveDirectory(_directory.path());
     QVERIFY(saveDirectory.removeRecursively());
@@ -70,8 +78,14 @@ void VehicleLinksPageUITest::_emptyPageSaysWhatToDo()
     QVERIFY(!toSetUp->isVisible());
 }
 
+void VehicleLinksPageUITest::_vehicleAddedByHandGetsACard_data()
+{
+    VehicleSystemIdTestData::addValidRows();
+}
+
 void VehicleLinksPageUITest::_vehicleAddedByHandGetsACard()
 {
+    QFETCH(quint32, sysid);
     startUI();
     QVERIFY(!QTest::currentTestFailed());
     VehicleRoleController* const roles = _roles();
@@ -86,16 +100,17 @@ void VehicleLinksPageUITest::_vehicleAddedByHandGetsACard()
 
     // Not addable until it has a valid system ID
     QVERIFY(!addButton->isEnabled());
-    QVERIFY(sysidField->setProperty("text", QStringLiteral("211")));
+    QVERIFY(sysidField->setProperty("text", QString::number(sysid)));
     QVERIFY(roleCombo->setProperty("currentIndex", roles->availableRoles().indexOf(QStringLiteral("Rover"))));
     QVERIFY(nicknameField->setProperty("text", QStringLiteral("Scout")));
     QTRY_VERIFY_WITH_TIMEOUT(addButton->isEnabled(), TestTimeout::shortMs());
     QVERIFY(clickButton(QStringLiteral("newVehicleAdd")));
 
-    QTRY_COMPARE_WITH_TIMEOUT(roles->roleForSysid(211), QStringLiteral("Rover"), TestTimeout::mediumMs());
-    QCOMPARE(roles->nameForSysid(211), QStringLiteral("Scout"));
-    QVERIFY(findVisibleItem(_rootItem, QStringLiteral("vehicleCard_211"), TestTimeout::mediumMs()));
-    QCOMPARE(_requireItem(QStringLiteral("vehicleNickname_211"))->property("text").toString(), QStringLiteral("Scout"));
+    QTRY_COMPARE_WITH_TIMEOUT(roles->roleForSysid(sysid), QStringLiteral("Rover"), TestTimeout::mediumMs());
+    QCOMPARE(roles->nameForSysid(sysid), QStringLiteral("Scout"));
+    QVERIFY(findVisibleItem(_rootItem, QStringLiteral("vehicleCard_%1").arg(sysid), TestTimeout::mediumMs()));
+    QCOMPARE(_requireItem(QStringLiteral("vehicleNickname_%1").arg(sysid))->property("text").toString(),
+             QStringLiteral("Scout"));
     QQuickItem* const hint = _requireItem(QStringLiteral("noVehiclesSetUpHint"));
     QVERIFY(hint);
     QTRY_VERIFY_WITH_TIMEOUT(!hint->isVisible(), TestTimeout::shortMs());
@@ -104,16 +119,81 @@ void VehicleLinksPageUITest::_vehicleAddedByHandGetsACard()
     QCOMPARE(nicknameField->property("text").toString(), QString());
 }
 
+void VehicleLinksPageUITest::_invalidSysidField_data()
+{
+    QTest::addColumn<QString>("text");
+    QTest::newRow("empty") << QString();
+    QTest::newRow("zero") << QStringLiteral("0");
+    QTest::newRow("negative") << QStringLiteral("-1");
+    QTest::newRow("fraction") << QStringLiteral("1.5");
+    QTest::newRow("overflow") << QStringLiteral("4294967296");
+    QTest::newRow("text") << QStringLiteral("invalid");
+    QTest::newRow("text-suffix") << QStringLiteral("255abc");
+    QTest::newRow("exponent") << QStringLiteral("1e2");
+    QTest::newRow("group-separator") << QStringLiteral("1,257");
+}
+
+void VehicleLinksPageUITest::_invalidSysidField()
+{
+    QFETCH(QString, text);
+    startUI();
+    QVERIFY(!QTest::currentTestFailed());
+    QVERIFY(_openPage());
+    QQuickItem* const sysidField = _requireItem(QStringLiteral("newVehicleSysid"));
+    QQuickItem* const addButton = _requireItem(QStringLiteral("newVehicleAdd"));
+    QVERIFY(sysidField && addButton);
+    // Start from an enabled button to catch a stale binding when the next input is invalid.
+    QVERIFY(sysidField->setProperty("text", QStringLiteral("255")));
+    QTRY_VERIFY_WITH_TIMEOUT(addButton->isEnabled(), TestTimeout::shortMs());
+    QVERIFY(sysidField->setProperty("text", text));
+    QTRY_VERIFY_WITH_TIMEOUT(!addButton->isEnabled(), TestTimeout::shortMs());
+    QVERIFY(!sysidField->property("validSysid").toBool());
+    VehicleRoleController* const roles = _roles();
+    QVERIFY(roles);
+    QCOMPARE(roles->roleEntries()->count(), 0);
+}
+
+void VehicleLinksPageUITest::_connectedVehicleIsOfferedForOneClickSetup_data()
+{
+    QTest::addColumn<quint32>("requestedSysid");
+    QTest::newRow("legacy") << quint32(128);
+    QTest::newRow("wide") << quint32(4294967295U);
+}
+
 void VehicleLinksPageUITest::_connectedVehicleIsOfferedForOneClickSetup()
 {
+    QFETCH(quint32, requestedSysid);
+    auto configuration = std::make_shared<MockConfiguration>(QStringLiteral("Vehicle Links setup"));
+    configuration->setDynamic(true);
+    configuration->setFirmwareType(MAV_AUTOPILOT_ARDUPILOTMEGA);
+    configuration->setVehicleType(MAV_TYPE_QUADROTOR);
+    configuration->setSystemId(requestedSysid);
     runWithMockLink(
-        [] { return MockLink::startAPMArduCopterMockLink(); },
-        [this](QPointer<MockLink> /*mockLink*/, Vehicle* vehicle) {
+        [configuration]() -> MockLink* {
+            SharedLinkConfigurationPtr sharedConfiguration = configuration;
+            if (!LinkManager::instance()->createConnectedLink(sharedConfiguration)) {
+                return nullptr;
+            }
+            return qobject_cast<MockLink*>(configuration->link());
+        },
+        [this, requestedSysid](QPointer<MockLink> /*mockLink*/, Vehicle* vehicle) {
             VehicleRoleController* const roles = _roles();
             QVERIFY(roles);
+            QVERIFY(vehicle);
+            const quint32 sysid = vehicle->id();
+            QCOMPARE(sysid, requestedSysid);
+            QCOMPARE(MultiVehicleManager::instance()->getVehicleById(sysid), vehicle);
+            auto* cop = _engine->singletonInstance<COPController*>("QGC", "COPController");
+            QVERIFY(cop);
+            cop->initialize(roles);
+            cop->selectVehicle(0);
+            QVERIFY(clickButton(QStringLiteral("copVehicleTab_%1").arg(sysid)));
+            QTRY_COMPARE_WITH_TIMEOUT(cop->selectedSysid(), sysid, TestTimeout::shortMs());
+            QVERIFY(cop->selected());
+            QCOMPARE(cop->selected()->sysid(), sysid);
+            QCOMPARE(cop->selected()->vehicle(), vehicle);
+            QVERIFY(cop->selected()->connected());
             QVERIFY(_openPage());
-
-            const int sysid = static_cast<int>(vehicle->id());
             QVERIFY(findVisibleItem(_rootItem, QStringLiteral("setUpRow_%1").arg(sysid), TestTimeout::mediumMs()));
             // The type comes from the vehicle itself
             QQuickItem* const roleCombo = _requireItem(QStringLiteral("setUpRole_%1").arg(sysid));
@@ -166,28 +246,28 @@ void VehicleLinksPageUITest::_linksBelongToTheirVehicle()
     QVERIFY(!QTest::currentTestFailed());
     VehicleRoleController* const roles = _roles();
     QVERIFY(roles);
-    roles->addEntry(211, QStringLiteral("Rover"), QStringLiteral("Scout"), 0);
-    roles->addEntry(212, QStringLiteral("Plane"), QStringLiteral("Sentinel"), 0);
+    roles->addEntry(1, QStringLiteral("Rover"), QStringLiteral("Scout"), 0);
+    roles->addEntry(257, QStringLiteral("Plane"), QStringLiteral("Sentinel"), 0);
     QVERIFY(_openPage());
-    QVERIFY(findVisibleItem(_rootItem, QStringLiteral("vehicleCard_211"), TestTimeout::mediumMs()));
-    QVERIFY(findVisibleItem(_rootItem, QStringLiteral("vehicleCard_212"), TestTimeout::mediumMs()));
+    QVERIFY(findVisibleItem(_rootItem, QStringLiteral("vehicleCard_1"), TestTimeout::mediumMs()));
+    QVERIFY(findVisibleItem(_rootItem, QStringLiteral("vehicleCard_257"), TestTimeout::mediumMs()));
 
-    QQuickItem* const linkName = _requireItem(QStringLiteral("vehicleNewLinkName_212"));
+    QQuickItem* const linkName = _requireItem(QStringLiteral("vehicleNewLinkName_257"));
     QVERIFY(linkName);
     QVERIFY(linkName->setProperty("text", QStringLiteral("Microhard")));
-    QVERIFY(clickButton(QStringLiteral("vehicleAddLink_212")));
-    QTRY_COMPARE_WITH_TIMEOUT(roles->linksForSysid(212)->count(), 1, TestTimeout::mediumMs());
-    QCOMPARE(roles->linksForSysid(211)->count(), 0);
+    QVERIFY(clickButton(QStringLiteral("vehicleAddLink_257")));
+    QTRY_COMPARE_WITH_TIMEOUT(roles->linksForSysid(257)->count(), 1, TestTimeout::mediumMs());
+    QCOMPARE(roles->linksForSysid(1)->count(), 0);
     QCOMPARE(linkName->property("text").toString(), QString());
 
-    QVERIFY(clickButton(QStringLiteral("vehicleRemoveLink_212_0")));
-    QTRY_COMPARE_WITH_TIMEOUT(roles->linksForSysid(212)->count(), 0, TestTimeout::mediumMs());
+    QVERIFY(clickButton(QStringLiteral("vehicleRemoveLink_257_0")));
+    QTRY_COMPARE_WITH_TIMEOUT(roles->linksForSysid(257)->count(), 0, TestTimeout::mediumMs());
 
     // Removing a vehicle takes its card with it and leaves the other alone
-    QVERIFY(clickButton(QStringLiteral("vehicleRemove_212")));
-    QTRY_VERIFY_WITH_TIMEOUT(roles->roleForSysid(212).isEmpty(), TestTimeout::mediumMs());
-    QTRY_VERIFY_WITH_TIMEOUT(findVisibleItem(_rootItem, QStringLiteral("vehicleCard_212"), 0) == nullptr,
+    QVERIFY(clickButton(QStringLiteral("vehicleRemove_257")));
+    QTRY_VERIFY_WITH_TIMEOUT(roles->roleForSysid(257).isEmpty(), TestTimeout::mediumMs());
+    QTRY_VERIFY_WITH_TIMEOUT(findVisibleItem(_rootItem, QStringLiteral("vehicleCard_257"), 0) == nullptr,
                              TestTimeout::mediumMs());
-    QCOMPARE(roles->roleForSysid(211), QStringLiteral("Rover"));
-    QVERIFY(findVisibleItem(_rootItem, QStringLiteral("vehicleCard_211"), TestTimeout::mediumMs()));
+    QCOMPARE(roles->roleForSysid(1), QStringLiteral("Rover"));
+    QVERIFY(findVisibleItem(_rootItem, QStringLiteral("vehicleCard_1"), TestTimeout::mediumMs()));
 }

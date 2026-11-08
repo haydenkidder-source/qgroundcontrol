@@ -173,7 +173,7 @@ COPController* COPStressUITest::_controller() const
     return _engine ? _engine->singletonInstance<COPController*>("QGC", "COPController") : nullptr;
 }
 
-COPVehicle* COPStressUITest::_entryFor(int sysid) const
+COPVehicle* COPStressUITest::_entryFor(quint32 sysid) const
 {
     auto* controller = _controller();
     if (!controller) {
@@ -189,7 +189,7 @@ COPVehicle* COPStressUITest::_entryFor(int sysid) const
     return nullptr;
 }
 
-bool COPStressUITest::_selectTab(int sysid)
+bool COPStressUITest::_selectTab(quint32 sysid)
 {
     auto* entry = _entryFor(sysid);
     const QString text = sysid == 0 ? QStringLiteral("COP") : entry ? entry->label() : QString();
@@ -231,9 +231,9 @@ void COPStressUITest::_threeVehicleChurn()
     // Keep the next ID unconsumed, following COPVehicleLifecycleTest's same-ID reconnect precedent.
     QPointer<MockLink> stallion = _start(MAV_TYPE_FIXED_WING, false);
     QVERIFY(rover && hex && stallion);
-    const int roverId = rover->vehicleId();
-    const int hexId = hex->vehicleId();
-    const int stallionId = stallion->vehicleId();
+    const quint32 roverId = rover->vehicleId();
+    const quint32 hexId = hex->vehicleId();
+    const quint32 stallionId = stallion->vehicleId();
     QVERIFY(roverId != hexId && hexId != stallionId && roverId != stallionId);
     auto* roles = _engine->singletonInstance<VehicleRoleController*>("QGC", "VehicleRoleController");
     QVERIFY(roles);
@@ -245,12 +245,12 @@ void COPStressUITest::_threeVehicleChurn()
     switching.setInterval(1);
     int selection = 0;
     connect(&switching, &QTimer::timeout, this, [&] {
-        const int ids[] = {0, roverId, hexId, stallionId};
+        const quint32 ids[] = {0, roverId, hexId, stallionId};
         controller->selectVehicle(ids[selection++ % 4]);
     });
     switching.start();
     QTRY_COMPARE_WITH_TIMEOUT(manager->vehicles()->count(), 3, TestTimeout::longMs());
-    for (int id : {roverId, hexId, stallionId}) {
+    for (quint32 id : {roverId, hexId, stallionId}) {
         QTRY_VERIFY_WITH_TIMEOUT(_entryFor(id) && _entryFor(id)->vehicle(), TestTimeout::longMs());
         QTRY_VERIFY_WITH_TIMEOUT(_entryFor(id)->vehicle()->isInitialConnectComplete(), TestTimeout::longMs());
         QTRY_VERIFY_WITH_TIMEOUT(_entryFor(id)->coordinate().isValid(), TestTimeout::longMs());
@@ -311,14 +311,14 @@ void COPStressUITest::_threeVehicleChurn()
 
     auto* extra = _start(MAV_TYPE_GROUND_ROVER);
     QVERIFY(extra);
-    const int extraId = extra->vehicleId();
+    const quint32 extraId = extra->vehicleId();
     QTRY_COMPARE_WITH_TIMEOUT(manager->vehicles()->count(), 4, TestTimeout::longMs());
     QVERIFY(_entryFor(extraId));
     QCOMPARE(_entryFor(extraId)->label(), QStringLiteral("Vehicle %1").arg(extraId));
     const int tabCount = controller->vehicles()->count();
     for (const auto& link : {hex, QPointer<MockLink>(extra), rover, stallion}) {
         QVERIFY(link);
-        const int id = link->vehicleId();
+        const quint32 id = link->vehicleId();
         QPointer<Vehicle> oldVehicle = _entryFor(id)->vehicle();
         switching.start();
         link->disconnect();
@@ -447,7 +447,7 @@ void COPStressUITest::_activeHighlightRequiresActiveVehicle()
     QVERIFY(roles);
 
     // A remembered-but-disconnected vehicle with no active vehicle at all - startup, or after every link drops
-    constexpr int rememberedSysid = 127;  // Below MockLink's first sysid (128), so no connecting vehicle claims it
+    constexpr quint32 rememberedSysid = 127;  // Below MockLink's first sysid (128), so no connecting vehicle claims it
     roles->addEntry(rememberedSysid, QStringLiteral("Plane"), QStringLiteral("Remembered"), 0);
     auto* remembered = _entryFor(rememberedSysid);
     QVERIFY(remembered);
@@ -490,7 +490,7 @@ void COPStressUITest::_overlayDataTracksUploadsAndSkipsNonRoutePoints()
     LinkManager::instance()->setConnectionsAllowed();
     QPointer<MockLink> rover = _start(MAV_TYPE_GROUND_ROVER);
     QVERIFY(rover);
-    const int id = rover->vehicleId();
+    const quint32 id = rover->vehicleId();
     QTRY_VERIFY_WITH_TIMEOUT(_entryFor(id) && _entryFor(id)->vehicle(), TestTimeout::longMs());
     COPVehicle* entry = _entryFor(id);
     Vehicle* vehicle = entry->vehicle();
@@ -616,7 +616,7 @@ void COPStressUITest::_overlayBoundariesUseDistinctDashPatterns()
     LinkManager::instance()->setConnectionsAllowed();
     QPointer<MockLink> rover = _start(MAV_TYPE_GROUND_ROVER);
     QVERIFY(rover);
-    const int id = rover->vehicleId();
+    const quint32 id = rover->vehicleId();
     QTRY_VERIFY_WITH_TIMEOUT(_entryFor(id) && _entryFor(id)->vehicle(), TestTimeout::longMs());
     COPVehicle* entry = _entryFor(id);
     Vehicle* vehicle = entry->vehicle();

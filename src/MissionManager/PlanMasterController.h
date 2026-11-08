@@ -136,7 +136,7 @@ signals:
     void userSelectedManualCreationChanged();
     /// Emitted once every plan element removeAllFromVehicle() requested from vehicleId has completed, even if another
     /// vehicle has since become active
-    void removeAllFromVehicleCompleted(bool error, int vehicleId);
+    void removeAllFromVehicleCompleted(bool error, quint32 vehicleId);
 
 private slots:
     void _activeVehicleChanged(Vehicle* activeVehicle);
@@ -204,7 +204,7 @@ private:
     bool _userSelectedManualCreation = false;
     int _removeAllFromVehiclePendingCount = 0;  ///< Count of supported plan elements still removing from the vehicle
     bool _removeAllFromVehicleError = false;    ///< Aggregate error state for the in-progress removeAllFromVehicle
-    int _removeAllFromVehicleId = 0;            ///< Vehicle the in-progress removeAllFromVehicle was issued to
+    quint32 _removeAllFromVehicleId = 0;        ///< Vehicle the in-progress removeAllFromVehicle was issued to
     QList<QMetaObject::Connection> _removeAllFromVehicleConnections;
     /// Context for _removeAllFromVehicleConnections: they must outlive _activeVehicleChanged()'s disconnects from the
     /// outgoing manager vehicle, since the request stays bound to the vehicle it was issued to. Declared last so it is

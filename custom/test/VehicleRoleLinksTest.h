@@ -17,6 +17,7 @@ private slots:
     void init() override;
     void cleanup() override;
 
+    void _addRemoveAndPersistLinks_data();
     void _addRemoveAndPersistLinks();
     void _oldFormatFileLoadsWithoutLinks();
     void _isLinkConfigConnectedTracksLiveLink();

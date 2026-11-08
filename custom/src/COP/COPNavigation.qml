@@ -18,7 +18,7 @@ Rectangle {
     readonly property var activeVehicle: QGroundControl.multiVehicleManager.activeVehicle
     readonly property bool controlling: selected && selected.connected && selected.vehicle === activeVehicle
 
-    function select(sysid: int) {
+    function select(sysid: real) {
         if (hostWindow && hostWindow.allowViewSwitch()) {
             COPController.selectVehicle(sysid)
             hostWindow.showFlyView()
@@ -71,6 +71,7 @@ Rectangle {
                                 color: vehicleTab.object.color
                             }
                             QGCButton {
+                                objectName: "copVehicleTab_" + vehicleTab.object.sysid
                                 // Null-guarded: a remembered-but-disconnected entry's vehicle is null, which would
                                 // otherwise equal a null activeVehicle and mark every such tab as controlled.
                                 readonly property bool isActiveVehicle: root.activeVehicle !== null
@@ -161,7 +162,7 @@ Rectangle {
 
         QGCPopupDialog {
             id: dialog
-            required property int sysid
+            required property real sysid
             property string suggestedRole: ""
             title: qsTr("Vehicle %1 — name and role").arg(sysid)
             buttons: Dialog.Save | Dialog.Cancel
