@@ -319,7 +319,7 @@ jobs:
           suite: linux-${{ matrix.mode }}
           # Instrumented integration tests run slower; at one per CPU MissionControllerTest exceeds its timeout.
           integration-parallel: ${{ matrix.mode == 'coverage' && '2' || 'auto' }}
-          exclude-labels: ${{ matrix.mode == 'sanitizers' && 'Flaky|Network|NoSanitizer' || 'Flaky|Network' }}
+          exclude-labels: ${{ matrix.mode == 'sanitizers' && 'Flaky|Network|NoSanitizer|StockUI' || 'Flaky|Network|StockUI' }}
           upload-codecov: ${{ vars.CODECOV_TEST_ANALYTICS == 'true' }}
 
       # coverage_report.py fails when the tests produced no .gcda files.

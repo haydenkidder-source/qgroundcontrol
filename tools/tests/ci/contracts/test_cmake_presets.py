@@ -496,7 +496,7 @@ def test_ci_validation_jobs_take_cmake_settings_from_presets() -> None:
     tests = next(step for step in steps if step.get("uses") == "./.github/actions/test-phase")
     assert not [name for name in tests.get("env", {}) if name.endswith("SAN_OPTIONS")]
     sanitizer_exclusions = _load_preset_graph()["test"]["Linux-sanitizers"]["filter"]["exclude"]
-    assert f"'{sanitizer_exclusions['label']}'" in tests["with"]["exclude-labels"]
+    assert f"'{sanitizer_exclusions['label']}|StockUI'" in tests["with"]["exclude-labels"]
 
     ios = load_workflow("ios.yml")
     job = ios["jobs"]["build"]

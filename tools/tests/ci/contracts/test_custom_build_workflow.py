@@ -44,6 +44,31 @@ def test_release_legs_package_the_real_custom_overlay():
     assert get_step(steps, "Attest and Upload")["with"]["package-name"] == "${{ matrix.package }}"
 
 
+@pytest.mark.parametrize(
+    ("workflow", "job", "step", "exclusions"),
+    [
+        (
+            "linux.yml",
+            "debug-validation",
+            "Run and report tests",
+            "${{ matrix.mode == 'sanitizers' && 'Flaky|Network|NoSanitizer|StockUI' "
+            "|| 'Flaky|Network|StockUI' }}",
+        ),
+        ("macos.yml", "build", "Run and report tests", "Flaky|Network|StockUI"),
+        ("windows.yml", "gstreamer-tests", "Run GStreamer tests", "Flaky|Network|StockUI"),
+        (
+            "analysis.yml",
+            "analyze",
+            "Run Sanitizer Tests",
+            "Flaky|Network|NoSanitizer|StockUI",
+        ),
+    ],
+)
+def test_custom_app_suites_exclude_stock_ui(workflow, job, step, exclusions):
+    steps = load_workflow(workflow)["jobs"][job]["steps"]
+    assert get_step(steps, step)["with"]["exclude-labels"] == exclusions
+
+
 @pytest.mark.parametrize("platform", PLATFORMS)
 def test_custom_only_changes_build_every_platform(platform):
     assert has_relevant_changes(["custom/src/CustomPlugin.cc"], platform)

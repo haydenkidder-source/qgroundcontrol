@@ -112,6 +112,7 @@ jobs:
         uses: ./.github/actions/test-phase
         with:
           suite: macos
+          exclude-labels: 'Flaky|Network|StockUI'
 
       - name: Verify dev build executable
         uses: ./.github/actions/verify-executable

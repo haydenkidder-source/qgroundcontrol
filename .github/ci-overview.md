@@ -528,6 +528,10 @@ when a PR closes, and on demand; the script reads each trigger's settings from t
   report lines, slowest tests; failed tests also become error annotations) and do not suppress the
   other suite. There are no blanket until-pass retries, and empty test selections fail. See
   [`actions/README.md`](actions/README.md#action-notes).
+- This fork auto-detects the `custom/` overlay in desktop and analysis builds. Unit and Integration
+  workflow steps exclude `Flaky|Network|StockUI` (also `NoSanitizer` for sanitizer runs): `StockUI`
+  requires the stock UI, which the overlay replaces. Portable test runs retain their existing filters;
+  the manual `Network|Flaky` run below retains its empty exclusion filter.
 - Unit tests run one CTest process per CPU, including coverage (GCC merges `.gcda` counters under
   file locks). Integration tests use two processes by default and for coverage, where instrumented
   tests otherwise hit their timeouts; Linux sanitizers use one per CPU.
@@ -550,8 +554,10 @@ when a PR closes, and on demand; the script reads each trigger's settings from t
   `CMakeCache.txt` and compares exact covered/total counts, not gcovr's rounded percentages. Manual
   Linux coverage dispatches also run the normally excluded `Network|Flaky` tests serially against
   the same build after the coverage report; they have separate reports and still fail the job.
-- Reproduce either Linux lane with `cmake --workflow --preset Linux-sanitizers` or
-  `--preset Linux-coverage` (`just coverage` uses `Linux-coverage`).
+- To reproduce either Linux lane with the custom app, configure and build `Linux-sanitizers` or
+  `Linux-coverage`, then run `ctest --preset <preset> -L Unit -LE 'Flaky|Network|StockUI'` and repeat
+  with `-L Integration` (`--parallel 2` for coverage). Add `|NoSanitizer` to the exclusion regex for
+  sanitizer runs; the shared presets themselves retain their stock-build defaults.
 - **Portable tests**: Windows x64 and the macOS Release leg build and run ten standalone portable
   utility executables (`QGC_BUILD_PORTABLE_TESTS=ON`, CTest label `Portable`). They share test
   bodies with the full harness and do not enable test hooks in the packaged application. There is
