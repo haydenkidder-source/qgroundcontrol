@@ -3,6 +3,8 @@
 #include <QtCore/QDateTime>
 #include <QtCore/QDir>
 #include <QtCore/QFile>
+#include <QtCore/QJsonDocument>
+#include <QtCore/QJsonObject>
 #include <QtCore/QRandomGenerator>
 #include <QtCore/QRegularExpression>
 #include <QtCore/QTemporaryDir>
@@ -12,19 +14,23 @@
 #include "GeoFenceController.h"
 #include "MissionController.h"
 #include "MissionManager.h"
+#include "MockLink.h"
 #include "MultiSignalSpy.h"
 #include "MultiVehicleManager.h"
 #include "PlanMasterController.h"
 #include "QGCMapCircle.h"
 #include "QGCMapPolygon.h"
+#include "QGroundControlQmlGlobal.h"
 #include "QmlObjectListModel.h"
 #include "RallyPoint.h"
 #include "RallyPointController.h"
+#include "RallyPointManager.h"
 #include "SettingsManager.h"
 #include "SimpleMissionItem.h"
 #include "SurveyPlanCreator.h"
 #include "TakeoffMissionItem.h"
 #include "Vehicle.h"
+#include "VisualMissionItem.h"
 
 void PlanMasterControllerTest::init()
 {
@@ -149,9 +155,10 @@ void PlanMasterControllerTest::_testTakeoffTextFileLoad()
 void PlanMasterControllerTest::_testActiveVehicleChanged()
 {
     // The test emits missionManager->error() twice to verify signal propagation.
-    // Each emission triggers a showAppMessage debug log via PlanMasterController.
+    // Each emission triggers a showAppMessage debug log via PlanMasterController and a Vehicle warning.
     ignoreLogMessage("API.QGCApplication.AppMessage", QtDebugMsg,
                      QRegularExpression("Mission transfer failed"));
+    ignoreLogMessage("Vehicle.Vehicle", QtWarningMsg, QRegularExpression("Mission transfer failed"));
     // There was a defect where the PlanMasterController would, upon a new active vehicle,
     // overzelously disconnect all subscribers interested in the outgoing active vechicle.
     Vehicle* outgoingManagerVehicle = _masterController->managerVehicle();
@@ -207,18 +214,15 @@ void PlanMasterControllerTest::_testDirtyFlagsMatrix_data()
     };
 
     const QList<ScenarioExpectation> scenarioExpectations = {
-        { UploadPreservesSaveDirtyFalse,      "upload completion keeps save false",  DirtyStateUnchanged, DirtyStateFalse },
-        { UploadPreservesSaveDirtyTrue,       "upload completion keeps save true",   DirtyStateUnchanged, DirtyStateFalse },
-        { UploadFalseOnPlanClear,             "upload false on clear",               DirtyStateFalse,     DirtyStateFalse },
-        { UploadTrueWhenSaveTrue,             "upload true when save true",          DirtyStateTrue,      DirtyStateTrue },
-        { UploadTrueOnNewPlanLoad,            "upload true on new plan load",        DirtyStateFalse,     DirtyStateTrue },
-        { SaveToFilePreservesUploadDirtyTrue, "saveToFile keeps upload true",        DirtyStateFalse,     DirtyStateUnchanged },
-        { SaveToFilePreservesUploadDirtyFalse,"saveToFile keeps upload false",       DirtyStateFalse,     DirtyStateUnchanged },
-        { SaveFalseOnSuccessfulLoad,          "save false on successful load",       DirtyStateFalse,     DirtyStateTrue },
-        { ClearSaveDirtyPreservesUploadTrue,  "clear save dirty keeps upload true",  DirtyStateFalse,     DirtyStateUnchanged },
-        { ClearSaveDirtyPreservesUploadFalse, "clear save dirty keeps upload false", DirtyStateFalse,     DirtyStateUnchanged },
-        { DownloadWithItemsNotDirtyForSave,   "download with items stays clean",     DirtyStateFalse,     DirtyStateFalse },
-        { DownloadEmptyNotDirtyForSave,       "download empty keeps save clean",     DirtyStateFalse,     DirtyStateFalse },
+        {UploadPreservesSaveDirty, "upload completion keeps save dirty", DirtyStateUnchanged, DirtyStateFalse},
+        {UploadFalseOnPlanClear, "upload false on clear", DirtyStateFalse, DirtyStateFalse},
+        {UploadTrueWhenSaveTrue, "upload true when save true", DirtyStateTrue, DirtyStateTrue},
+        {UploadTrueOnNewPlanLoad, "upload true on new plan load", DirtyStateFalse, DirtyStateTrue},
+        {SaveToFilePreservesUploadDirty, "saveToFile keeps upload dirty", DirtyStateFalse, DirtyStateUnchanged},
+        {SaveFalseOnSuccessfulLoad, "save false on successful load", DirtyStateFalse, DirtyStateTrue},
+        {ClearSaveDirtyPreservesUpload, "clear save dirty keeps upload", DirtyStateFalse, DirtyStateUnchanged},
+        {DownloadWithItemsNotDirtyForSave, "download with items stays clean", DirtyStateFalse, DirtyStateFalse},
+        {DownloadEmptyNotDirtyForSave, "download empty keeps save clean", DirtyStateFalse, DirtyStateFalse},
     };
 
     const QList<DirtyState> initialStates = {
@@ -291,58 +295,44 @@ void PlanMasterControllerTest::_testDirtyFlagsMatrix()
     QSignalSpy dirtyForUploadChangedSpy(_masterController, &PlanMasterController::dirtyForUploadChanged);
 
     switch (scenario) {
-    case UploadPreservesSaveDirtyFalse: {
-        _masterController->_sendSequence = PlanMasterController::SyncSequence::RallyPoints;
-        _masterController->_sendRallyPointsComplete();
-        break;
-    }
-    case UploadPreservesSaveDirtyTrue: {
-        _masterController->_sendSequence = PlanMasterController::SyncSequence::RallyPoints;
-        _masterController->_sendRallyPointsComplete();
-        break;
-    }
-    case UploadFalseOnPlanClear:
-        _masterController->removeAll();
-        break;
-    case UploadTrueWhenSaveTrue:
-        _masterController->_setDirtyForSave(true);
-        break;
-    case UploadTrueOnNewPlanLoad:
-        _masterController->loadFromFile(":/unittest/MissionPlanner.waypoints");
-        break;
-    case SaveToFilePreservesUploadDirtyTrue: {
-        const QString saveFile = QDir::temp().filePath(QStringLiteral("qgc_planmaster_test_%1.plan").arg(QDateTime::currentMSecsSinceEpoch()));
-        QVERIFY(_masterController->saveToFile(saveFile));
-        QFile::remove(saveFile);
-        break;
-    }
-    case SaveToFilePreservesUploadDirtyFalse: {
-        const QString saveFile = QDir::temp().filePath(QStringLiteral("qgc_planmaster_test_%1.plan").arg(QDateTime::currentMSecsSinceEpoch()));
-        QVERIFY(_masterController->saveToFile(saveFile));
-        QFile::remove(saveFile);
-        break;
-    }
-    case SaveFalseOnSuccessfulLoad:
-        _masterController->loadFromFile(":/unittest/MissionPlanner.waypoints");
-        break;
-    case ClearSaveDirtyPreservesUploadTrue:
-        _masterController->_setDirtyForSave(false);
-        break;
-    case ClearSaveDirtyPreservesUploadFalse:
-        _masterController->_setDirtyForSave(false);
-        break;
-    case DownloadWithItemsNotDirtyForSave: {
-        QVERIFY(_masterController->containsItems());
-        _masterController->_loadSequence = PlanMasterController::SyncSequence::RallyPoints;
-        _masterController->_loadRallyPointsComplete();
-        break;
-    }
-    case DownloadEmptyNotDirtyForSave: {
-        QVERIFY(!_masterController->containsItems());
-        _masterController->_loadSequence = PlanMasterController::SyncSequence::RallyPoints;
-        _masterController->_loadRallyPointsComplete();
-        break;
-    }
+        case UploadPreservesSaveDirty:
+            _masterController->_sendSequence = PlanMasterController::SyncSequence::RallyPoints;
+            _masterController->_sendRallyPointsComplete();
+            break;
+        case UploadFalseOnPlanClear:
+            _masterController->removeAll();
+            break;
+        case UploadTrueWhenSaveTrue:
+            _masterController->_setDirtyForSave(true);
+            break;
+        case UploadTrueOnNewPlanLoad:
+            _masterController->loadFromFile(":/unittest/MissionPlanner.waypoints");
+            break;
+        case SaveToFilePreservesUploadDirty: {
+            const QString saveFile = QDir::temp().filePath(
+                QStringLiteral("qgc_planmaster_test_%1.plan").arg(QDateTime::currentMSecsSinceEpoch()));
+            QVERIFY(_masterController->saveToFile(saveFile));
+            QFile::remove(saveFile);
+            break;
+        }
+        case SaveFalseOnSuccessfulLoad:
+            _masterController->loadFromFile(":/unittest/MissionPlanner.waypoints");
+            break;
+        case ClearSaveDirtyPreservesUpload:
+            _masterController->_setDirtyForSave(false);
+            break;
+        case DownloadWithItemsNotDirtyForSave: {
+            QVERIFY(_masterController->containsItems());
+            _masterController->_loadSequence = PlanMasterController::SyncSequence::RallyPoints;
+            _masterController->_loadRallyPointsComplete();
+            break;
+        }
+        case DownloadEmptyNotDirtyForSave: {
+            QVERIFY(!_masterController->containsItems());
+            _masterController->_loadSequence = PlanMasterController::SyncSequence::RallyPoints;
+            _masterController->_loadRallyPointsComplete();
+            break;
+        }
     }
 
     const auto resolveExpected = [](int expectedState, bool unchangedValue) -> bool {
@@ -563,7 +553,7 @@ void PlanMasterControllerTest::_testRemoveAllFromVehicleCompletedOnSuccess()
 
     QCOMPARE(completedSpy.count(), 1);
     QCOMPARE(completedSpy.first().at(0).toBool(), false);
-    QCOMPARE(completedSpy.first().at(1).toInt(), _vehicle->id());
+    QCOMPARE(completedSpy.first().at(1).toUInt(), _vehicle->id());
 }
 
 void PlanMasterControllerTest::_testRemoveAllFromVehicleCompletedOnFailure()
@@ -591,7 +581,7 @@ void PlanMasterControllerTest::_testRemoveAllFromVehicleCompletedOnFailure()
 
     QCOMPARE(completedSpy.count(), 1);
     QCOMPARE(completedSpy.first().at(0).toBool(), true);  // One failed element makes the whole aggregate an error
-    QCOMPARE(completedSpy.first().at(1).toInt(), _vehicle->id());
+    QCOMPARE(completedSpy.first().at(1).toUInt(), _vehicle->id());
 }
 
 void PlanMasterControllerTest::_testRemoveAllFromVehicleCompletedOnVehicleDisconnect()
@@ -602,7 +592,7 @@ void PlanMasterControllerTest::_testRemoveAllFromVehicleCompletedOnVehicleDiscon
 
     _masterController->removeAllFromVehicle();
     QVERIFY(completedSpy.isEmpty());
-    const int vehicleId = _vehicle->id();
+    const quint32 vehicleId = _vehicle->id();
 
     // The vehicle disconnects before mission/geoFence/rallyPoint ever report removeAllComplete.
     // The pending request can never complete, so it must be reported as an error rather than left hanging.
@@ -610,7 +600,7 @@ void PlanMasterControllerTest::_testRemoveAllFromVehicleCompletedOnVehicleDiscon
 
     QCOMPARE(completedSpy.count(), 1);
     QCOMPARE(completedSpy.first().at(0).toBool(), true);
-    QCOMPARE(completedSpy.first().at(1).toInt(), vehicleId);
+    QCOMPARE(completedSpy.first().at(1).toUInt(), vehicleId);
 
     // A stray completion arriving after the reset (e.g. a delayed signal from the old vehicle)
     // must not crash or re-emit the aggregate signal.
@@ -627,7 +617,7 @@ Vehicle* PlanMasterControllerTest::_connectExtraVehicle()
         return nullptr;
     }
     _extraLinks.append(link);
-    const int vehicleId = link->vehicleId();
+    const quint32 vehicleId = link->vehicleId();
     const bool connected = UnitTest::waitForCondition(
         [manager, vehicleId] {
             const Vehicle* const vehicle = manager->getVehicleById(vehicleId);
@@ -702,7 +692,7 @@ void PlanMasterControllerTest::_testRemoveAllFromVehicleFollowsRequestedVehicle(
     QVERIFY_NO_SIGNAL_WAIT(completedSpy, 100);  // Short on purpose: only guards against a duplicate emission
     QCOMPARE(completedSpy.count(), 1);
     QCOMPARE(completedSpy.first().at(0).toBool(), false);
-    QCOMPARE(completedSpy.first().at(1).toInt(), _vehicle->id());
+    QCOMPARE(completedSpy.first().at(1).toUInt(), _vehicle->id());
 }
 
 void PlanMasterControllerTest::_testRemoveAllFromVehicleSupersededOnOtherVehicle()
@@ -725,13 +715,13 @@ void PlanMasterControllerTest::_testRemoveAllFromVehicleSupersededOnOtherVehicle
     _masterController->removeAllFromVehicle();
     QCOMPARE(completedSpy.count(), 1);
     QCOMPARE(completedSpy.at(0).at(0).toBool(), true);
-    QCOMPARE(completedSpy.at(0).at(1).toInt(), _vehicle->id());
+    QCOMPARE(completedSpy.at(0).at(1).toUInt(), _vehicle->id());
 
     QVERIFY_TRUE_WAIT(completedSpy.count() >= 2, TestTimeout::mediumMs());
     QVERIFY_NO_SIGNAL_WAIT(completedSpy, 100);  // Short on purpose: the first vehicle's late acks must be ignored
     QCOMPARE(completedSpy.count(), 2);
     QCOMPARE(completedSpy.at(1).at(0).toBool(), false);
-    QCOMPARE(completedSpy.at(1).at(1).toInt(), otherVehicle->id());
+    QCOMPARE(completedSpy.at(1).at(1).toUInt(), otherVehicle->id());
 }
 
 void PlanMasterControllerTest::_testRemoveAllFromVehicleUnderFleetChurn()
@@ -767,7 +757,7 @@ void PlanMasterControllerTest::_testRemoveAllFromVehicleUnderFleetChurn()
                  qPrintable(context));
 
         completedSpy.clear();
-        const int targetId = target->id();
+        const quint32 targetId = target->id();
         _masterController->removeAllFromVehicle();
 
         Vehicle* bystander = nullptr;
@@ -808,7 +798,7 @@ void PlanMasterControllerTest::_testRemoveAllFromVehicleUnderFleetChurn()
         QVERIFY2(completedSpy.count() == 1, qPrintable(context));
         // The requested vehicle stayed connected throughout, so its confirmed removal must be reported as a success
         QVERIFY2(!completedSpy.first().at(0).toBool(), qPrintable(context));
-        QVERIFY2(completedSpy.first().at(1).toInt() == targetId, qPrintable(context));
+        QVERIFY2(completedSpy.first().at(1).toUInt() == targetId, qPrintable(context));
     }
 }
 
@@ -1034,10 +1024,7 @@ void PlanMasterControllerTest::_testEditMarksDirtyForSave()
         // The rally point editor writes these Facts directly
         RallyPoint* const rallyPoint = rallyPointController->points()->value<RallyPoint*>(0);
         QVERIFY(rallyPoint);
-        const QVariantList textFieldFacts = rallyPoint->property("textFieldFacts").toList();
-        QCOMPARE(textFieldFacts.count(), 3);
-        Fact* const altitudeFact = textFieldFacts[2].value<Fact*>();
-        QVERIFY(altitudeFact);
+        Fact* const altitudeFact = rallyPoint->altitude();
         altitudeFact->setRawValue(altitudeFact->rawValue().toDouble() + 10);
     } else {
         RallyPoint* const rallyPoint = rallyPointController->points()->value<RallyPoint*>(0);
@@ -1046,6 +1033,173 @@ void PlanMasterControllerTest::_testEditMarksDirtyForSave()
     }
 
     QVERIFY(_masterController->dirtyForSave());
+}
+
+void PlanMasterControllerTest::_testRallyPointFileFrames_data()
+{
+    QTest::addColumn<QByteArray>("json");
+    QTest::addColumn<bool>("expectLoaded");
+    QTest::addColumn<QList<int>>("expectedFrames");
+
+    const int relative = QGroundControlQmlGlobal::AltitudeFrameRelative;
+    const int absolute = QGroundControlQmlGlobal::AltitudeFrameAbsolute;
+    const int terrain = QGroundControlQmlGlobal::AltitudeFrameTerrain;
+
+    // Frames are stored as MAV_FRAME numbers: 0 global (AMSL), 3 global relative alt, 10 global terrain alt
+    QTest::newRow("version 3 keeps each frame") << QByteArray(R"({"version":3,"points":[
+               {"coordinate":[47.1,8.1,10],"frame":3},
+               {"coordinate":[47.2,8.2,500],"frame":0},
+               {"coordinate":[47.3,8.3,20],"frame":10}]})")
+                                                << true << QList<int>{relative, absolute, terrain};
+    QTest::newRow("version 2 has no frames so it is relative")
+        << QByteArray(R"({"version":2,"points":[[47.1,8.1,10],[47.2,8.2,20]]})") << true
+        << QList<int>{relative, relative};
+    QTest::newRow("version 3 unsupported frame")
+        << QByteArray(R"({"version":3,"points":[{"coordinate":[47.1,8.1,10],"frame":1}]})") << false << QList<int>{};
+    QTest::newRow("version 3 missing frame")
+        << QByteArray(R"({"version":3,"points":[{"coordinate":[47.1,8.1,10]}]})") << false << QList<int>{};
+    QTest::newRow("version 3 point is not an object")
+        << QByteArray(R"({"version":3,"points":[[47.1,8.1,10]]})") << false << QList<int>{};
+    QTest::newRow("newer version") << QByteArray(R"({"version":4,"points":[]})") << false << QList<int>{};
+}
+
+void PlanMasterControllerTest::_testRallyPointFileFrames()
+{
+    QFETCH(QByteArray, json);
+    QFETCH(bool, expectLoaded);
+    QFETCH(QList<int>, expectedFrames);
+
+    RallyPointController* const rallyPointController = _masterController->rallyPointController();
+    QString errorString;
+
+    QCOMPARE(rallyPointController->load(QJsonDocument::fromJson(json).object(), errorString), expectLoaded);
+    QCOMPARE(errorString.isEmpty(), expectLoaded);
+    if (!expectLoaded) {
+        return;
+    }
+
+    QCOMPARE(rallyPointController->points()->count(), expectedFrames.count());
+    for (int i = 0; i < expectedFrames.count(); i++) {
+        const RallyPoint* const rallyPoint = rallyPointController->points()->value<RallyPoint*>(i);
+        QVERIFY(rallyPoint);
+        QCOMPARE(int(rallyPoint->altitudeFrame()), expectedFrames[i]);
+    }
+}
+
+void PlanMasterControllerTest::_testRallyPointFramesSurviveSave()
+{
+    RallyPointController* const rallyPointController = _masterController->rallyPointController();
+    rallyPointController->points()->append(new RallyPoint(
+        QGeoCoordinate(47.1, 8.1, 10), QGroundControlQmlGlobal::AltitudeFrameRelative, rallyPointController));
+    rallyPointController->points()->append(new RallyPoint(
+        QGeoCoordinate(47.2, 8.2, 500), QGroundControlQmlGlobal::AltitudeFrameAbsolute, rallyPointController));
+
+    QJsonObject json;
+    rallyPointController->save(json);
+    QString errorString;
+    QVERIFY2(rallyPointController->load(json, errorString), qPrintable(errorString));
+
+    QCOMPARE(rallyPointController->points()->count(), 2);
+    const RallyPoint* const relativePoint = rallyPointController->points()->value<RallyPoint*>(0);
+    const RallyPoint* const absolutePoint = rallyPointController->points()->value<RallyPoint*>(1);
+    QCOMPARE(int(relativePoint->altitudeFrame()), int(QGroundControlQmlGlobal::AltitudeFrameRelative));
+    QCOMPARE(relativePoint->coordinate().altitude(), 10.0);
+    QCOMPARE(int(absolutePoint->altitudeFrame()), int(QGroundControlQmlGlobal::AltitudeFrameAbsolute));
+    QCOMPARE(absolutePoint->coordinate().altitude(), 500.0);
+}
+
+void PlanMasterControllerTest::_testRallyPointDefaultAltitude_data()
+{
+    QTest::addColumn<int>("firmwareType");
+    QTest::addColumn<double>("expectedFirstAltitude");
+    QTest::addColumn<double>("expectedAltitude");
+    QTest::addColumn<int>("expectedFrame");
+
+    const double missionAltitude =
+        SettingsManager::instance()->appSettings()->defaultMissionItemAltitude()->rawValue().toDouble();
+
+    // ArduPilot altitudes are flight altitudes: the first point uses the default mission altitude and the next
+    // point starts from the previous one
+    QTest::newRow("ArduPilot first point uses the default mission altitude, then copies the previous")
+        << int(MAV_AUTOPILOT_ARDUPILOTMEGA) << missionAltitude << 77.0
+        << int(QGroundControlQmlGlobal::AltitudeFrameAbsolute);
+    // PX4 altitudes are ground heights that differ per point, so the previous value must not be reused
+    QTest::newRow("PX4 starts every point from the default")
+        << int(MAV_AUTOPILOT_PX4) << RallyPoint::getDefaultFactAltitude() << RallyPoint::getDefaultFactAltitude()
+        << int(QGroundControlQmlGlobal::AltitudeFrameRelative);
+}
+
+void PlanMasterControllerTest::_testRallyPointDefaultAltitude()
+{
+    QFETCH(int, firmwareType);
+    QFETCH(double, expectedFirstAltitude);
+    QFETCH(double, expectedAltitude);
+    QFETCH(int, expectedFrame);
+
+    PlanMasterController* const masterController =
+        new PlanMasterController(static_cast<MAV_AUTOPILOT>(firmwareType), MAV_TYPE_QUADROTOR, this);
+    RallyPointController* const rallyPointController = masterController->rallyPointController();
+    const QGeoCoordinate coordinate(47.3977, 8.5456);
+
+    rallyPointController->addPoint(coordinate);
+    RallyPoint* const firstPoint = rallyPointController->points()->value<RallyPoint*>(0);
+    QVERIFY(firstPoint);
+    QCOMPARE(firstPoint->coordinate().altitude(), expectedFirstAltitude);
+    firstPoint->setAltitudeFrame(QGroundControlQmlGlobal::AltitudeFrameAbsolute);
+    firstPoint->setCoordinate(QGeoCoordinate(coordinate.latitude(), coordinate.longitude(), 77.0));
+
+    rallyPointController->addPoint(coordinate.atDistanceAndAzimuth(100, 0));
+
+    const RallyPoint* const secondPoint = rallyPointController->points()->value<RallyPoint*>(1);
+    QVERIFY(secondPoint);
+    QCOMPARE(secondPoint->coordinate().altitude(), expectedAltitude);
+    QCOMPARE(int(secondPoint->altitudeFrame()), expectedFrame);
+
+    delete masterController;
+}
+
+void PlanMasterControllerTest::_testRallyPointFramesSurviveVehicleRoundTrip()
+{
+    _connectMockLink(MAV_AUTOPILOT_PX4);
+    QTRY_VERIFY_WITH_TIMEOUT(_vehicle->initialPlanRequestComplete(), 10000);
+
+    RallyPointManager* const rallyPointManager = _vehicle->rallyPointManager();
+    QSignalSpy sendSpy(rallyPointManager, &RallyPointManager::sendComplete);
+    QSignalSpy loadSpy(rallyPointManager, &RallyPointManager::loadComplete);
+
+    const QList<RallyPointData> sentPoints = {
+        {QGeoCoordinate(47.1, 8.1, 10), MAV_FRAME_GLOBAL_RELATIVE_ALT},
+        {QGeoCoordinate(47.2, 8.2, 500), MAV_FRAME_GLOBAL},
+    };
+    rallyPointManager->sendToVehicle(sentPoints);
+    QTRY_COMPARE_WITH_TIMEOUT(sendSpy.count(), 1, 10000);
+    QVERIFY(!sendSpy.first().at(0).toBool());
+
+    loadSpy.clear();
+    rallyPointManager->loadFromVehicle();
+    QTRY_VERIFY_WITH_TIMEOUT(!loadSpy.isEmpty(), 10000);
+
+    const QList<RallyPointData> loadedPoints = rallyPointManager->points();
+    QCOMPARE(loadedPoints.count(), sentPoints.count());
+    for (int i = 0; i < sentPoints.count(); i++) {
+        QCOMPARE(loadedPoints[i].coordinate.altitude(), sentPoints[i].coordinate.altitude());
+        QCOMPARE(int(loadedPoints[i].frame), int(sentPoints[i].frame));
+    }
+}
+
+void PlanMasterControllerTest::_testPendingRallyTerrainBlocksSaveAndUpload()
+{
+    RallyPointController* const rallyPointController = _masterController->rallyPointController();
+    QCOMPARE(_masterController->readyForSaveState(), int(VisualMissionItem::ReadyForSave));
+
+    rallyPointController->addPoint(QGeoCoordinate(47.3977, 8.5456));
+    RallyPoint* const rallyPoint = rallyPointController->points()->value<RallyPoint*>(0);
+    QVERIFY(rallyPoint);
+    rallyPoint->useTerrainAltitude();
+    QCOMPARE(_masterController->readyForSaveState(), int(VisualMissionItem::NotReadyForSaveTerrain));
+
+    rallyPoint->altitude()->setRawValue(50.0);
+    QCOMPARE(_masterController->readyForSaveState(), int(VisualMissionItem::ReadyForSave));
 }
 
 #include "UnitTest.h"

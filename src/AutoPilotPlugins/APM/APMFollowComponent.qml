@@ -234,7 +234,8 @@ SetupPage {
                 visible:            _showMainSetup
 
                 QGCGroupBox {
-                    title:            qsTr("Follow Me Settings")
+                    Layout.fillWidth: false
+                    heading:          qsTr("Follow Me Settings")
 
                     GridLayout {
                         columns:        2
@@ -331,7 +332,7 @@ SetupPage {
                         anchors.bottom:             parent.bottom
                         anchors.horizontalCenter:   parent.horizontalCenter
                         width:                      3
-                        color:                      qgcPal.windowShade
+                        color:                      qgcPal.windowCard
                     }
 
                     Rectangle {
@@ -339,7 +340,7 @@ SetupPage {
                         anchors.right:          parent.right
                         anchors.verticalCenter: parent.verticalCenter
                         height:                 3
-                        color:                  qgcPal.windowShade
+                        color:                  qgcPal.windowCard
                     }
 
                     QGCLabel {
@@ -399,7 +400,7 @@ SetupPage {
                             y:          vehicleIcon.height
                             height:     (parent.height / 2) - (vehicleIcon.height + (gcsIcon.height / 2))
                             width:      2
-                            color:      qgcPal.text
+                            color:      qgcPal.textPrimary
                             opacity:    0.4
 
                             Rectangle {
@@ -407,7 +408,7 @@ SetupPage {
                                 anchors.horizontalCenter:   parent.horizontalCenter
                                 width:                      ScreenTools.defaultFontPixelWidth * 2
                                 height:                     2
-                                color:                      qgcPal.text
+                                color:                      qgcPal.textPrimary
                             }
 
                             Rectangle {
@@ -415,7 +416,7 @@ SetupPage {
                                 anchors.horizontalCenter:   parent.horizontalCenter
                                 width:                      ScreenTools.defaultFontPixelWidth * 2
                                 height:                     2
-                                color:                      qgcPal.text
+                                color:                      qgcPal.textPrimary
                             }
                         }
 
@@ -477,7 +478,7 @@ SetupPage {
                             anchors.bottom:             parent.bottom
                             anchors.horizontalCenter:   parent.horizontalCenter
                             width:                      2
-                            color:                      qgcPal.text
+                            color:                      qgcPal.textPrimary
                             opacity:                    0.4
 
                             Rectangle {
@@ -485,7 +486,7 @@ SetupPage {
                                 anchors.horizontalCenter:   parent.horizontalCenter
                                 width:                      ScreenTools.defaultFontPixelWidth * 2
                                 height:                     2
-                                color:                      qgcPal.text
+                                color:                      qgcPal.textPrimary
                             }
 
                             Rectangle {
@@ -493,7 +494,7 @@ SetupPage {
                                 anchors.horizontalCenter:   parent.horizontalCenter
                                 width:                      ScreenTools.defaultFontPixelWidth * 2
                                 height:                     2
-                                color:                      qgcPal.text
+                                color:                      qgcPal.textPrimary
                             }
                         }
 

@@ -14,14 +14,18 @@ public:
     QString description(void) const final;
     QString iconResource(void) const final;
     QUrl setupSource(void) const final;
-    QUrl summaryQmlSource(void) const final;
+
+    QUrl summaryQmlSource(void) const final { return QUrl(); }
+
+    QList<VehicleSummaryItem> summaryItems() const final;
+    QStringList summaryChangedTriggerList() const final;
+    void setupTriggerSignals() final;
     bool requiresSetup() const final { return false; }
     bool setupComplete() const final { return true; }
     QStringList setupCompleteChangedTriggerList() const final { return QStringList(); }
-    QStringList sectionIds() const final;
-    QString sectionDisplayName(const QString& sectionId) const final;
 
 private:
-    const QString   _name;
-    QVariantList    _summaryItems;
+    QString _modeName(const QString& paramName) const;
+
+    const QString _name;
 };

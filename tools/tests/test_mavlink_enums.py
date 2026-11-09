@@ -72,6 +72,24 @@ def test_qml_declares_enums_before_registering_them(dialect_dir):
         assert qml_header.index("QML_NAMED_ELEMENT(MAVLinkEnums)") < qml_header.index(expected)
 
 
+@pytest.mark.parametrize(
+    ("last_value", "underlying_type"),
+    [
+        ("4294967295", ""),
+        ("4294967296", " : quint64"),
+        ("0x100000000", " : quint64"),
+    ],
+)
+def test_qml_header_gives_enums_beyond_32_bits_a_64_bit_type(last_value, underlying_type):
+    body = f"{{\n   WIDE_FLAG_LOW=1,\n   WIDE_FLAG_HIGH={last_value},\n}}"
+
+    qml_header = mavlink_enums.build_qml_header({"WIDE_FLAGS": body, "NARROW": "{\n   A=1,\n}"})
+
+    assert f"enum WIDE_FLAGS{underlying_type}\n" in qml_header
+    assert "enum NARROW\n" in qml_header
+    assert "#include <QtCore/QtTypes>" in qml_header
+
+
 def test_first_dialect_wins_in_both_headers(dialect_dir, capsys):
     dialects = mavlink_enums.find_dialects(dialect_dir)
     enums_header, enum_bodies = mavlink_enums.build_enums_header(dialects)
@@ -100,6 +118,29 @@ def test_unterminated_enum_is_rejected(tmp_path):
 
     with pytest.raises(SystemExit, match=r"'TEST_STATE'.*'broken'"):
         mavlink_enums.build_enums_header(mavlink_enums.find_dialects(tmp_path))
+
+
+@pytest.mark.parametrize(
+    "values,base",
+    [
+        ("LOW=-2147483648, HIGH=2147483647,", ""),
+        ("LOW=0, HIGH=4294967295,", ""),
+        ("LOW=-1, HIGH=2147483648,", " : qint64"),
+        ("LOW=0, HIGH=4294967296,", " : quint64"),
+        ("LOW=0, HIGH=0x8000000000,", " : quint64"),
+        ("LOW=-2147483649, HIGH=1,", " : qint64"),
+        ("LOW=-1, HIGH=4294967296,", " : qint64"),
+        ("LOW=0, /* example HIGH=4294967296, */ HIGH=1,", ""),
+        ("LOW=0, HIGH=4294967296", " : quint64"),
+        ("LOW=-1, HIGH=4294967296", " : qint64"),
+    ],
+)
+def test_qml_wide_enums_have_explicit_underlying_type(values, base):
+    body = "{\n" + values + "\n}"
+    header = mavlink_enums.build_qml_header({"TEST_WIDE": body})
+    # Implicit enum bases work with GCC/Clang but truncate the wide values on MSVC.
+    assert f"enum TEST_WIDE{base}\n" in header
+    assert textwrap.indent(body, "    ") in header
 
 
 @pytest.mark.parametrize("explicit_qml_paths", [False, True])

@@ -8,13 +8,14 @@ entry point for normal builds.
 
 | Path | Purpose |
 | --- | --- |
+| `*.cmake` | Build options (`CustomOptions.cmake`), shared helpers (`Helpers.cmake`), and test registration (`QGCTest.cmake`) |
+| `*.in` | Templates configured into the build directory: `CTestCustom.cmake.in` (Valgrind memcheck) and `ccache-launcher.cmd.in` (Windows ccache launcher) |
 | `GStreamer/` | GStreamer discovery, download, validation, installation, and pure-CMake tests |
 | `install/` | Runtime deployment and package assembly |
 | `modules/` | Reusable project modules and dependency helpers |
 | `platform/` | Android, Apple, Linux, and Windows configuration |
 | `presets/` | Platform configure, build, test, package, and workflow presets |
 | `tests/` | Configure-time contracts for shared CMake helpers |
-| `find-modules/` | CMake find modules for optional dependencies |
 
 ## Conventions
 
@@ -30,6 +31,8 @@ entry point for normal builds.
 - In GStreamer modules with repeated basenames, include the intended file by absolute path.
 - When changing an existing file, format only the edited region. Whole-file formatting is reserved
   for new files or an explicit formatting task.
+- The lint hooks run cmakelang 0.6.13, which predates `return(PROPAGATE)` and `file(ARCHIVE_EXTRACT)`. Silence its
+  findings on those with a `# cmake-lint: disable=` line in the function; no other comment is needed.
 
 `cmake/modules/CPM.cmake` is vendored. Do not modify or reformat it as part of project CMake
 maintenance; the pre-commit CMake hooks intentionally exclude it.
@@ -39,24 +42,68 @@ of waiting for all linked libraries. Add new build-time header generators to tha
 target when moc can consume them. Custom builds retain forwarded dependencies because their
 additional generators are not known to the standard build.
 
+`QGC_USE_MOCCACHE` (default `ON`) routes AUTOMOC through a generated `<build>/moccache-launcher`, which runs
+`tools/moccache_launcher.py` to import [`tools/moccache/`](../tools/README.md#moccache) with cached bytecode.
+It needs Python 3.10 or newer (`QGC_MOCCACHE_PYTHON`) and, on Windows, CMake 3.29; otherwise configure falls back
+to plain moc. Configure rewrites the launcher only when its content changes, because AUTOMOC re-runs moc for every
+target whose launcher is newer than its output.
+
+`QGC_USE_LLD_LINK` (default `OFF`) links MSVC builds with `lld-link` through `CMAKE_LINKER_TYPE` (CMake 3.29+). It
+applies only without IPO (single-config Debug or RelWithDebInfo): lld-link cannot link the `/GL` objects of Release
+and multi-config builds, which keep `link.exe`. CMake must find `lld-link` when it first detects the compiler (next to
+`cl.exe` or on `PATH`: install LLVM, or add `VC\Tools\Llvm\x64\bin` from Visual Studio's "C++ Clang tools"), or take
+it from `-DCMAKE_LINKER_LLD=<path>` on a fresh configure; otherwise configure keeps `link.exe`.
+
 Run the CMake lint hooks on the files you change:
 
 ```bash
-pre-commit run cmake-format --files path/to/file.cmake
-pre-commit run cmake-lint --files path/to/file.cmake
+prek run cmake-format --files path/to/file.cmake
+prek run cmake-lint --files path/to/file.cmake
 ```
+
+The manual-stage `gersemi` hook trials [gersemi](https://github.com/BlankSpruce/gersemi) as a cmakelang
+replacement: `prek run gersemi --hook-stage manual --files path/to/file.cmake` prints the diff it would apply
+(configured by [`tools/configs/gersemirc.yaml`](../tools/configs/gersemirc.yaml)) without rewriting the file.
+cmake-format and cmake-lint remain the enforced checks.
 
 ## Tests
 
-After configuring a build with tests enabled, run the shared-module and finder tests with:
+After configuring a build with tests enabled, run the shared-module (`tests/`) and GStreamer (`GStreamer/tests/`,
+also labelled `GStreamer`) script and fixture tests with:
 
 ```bash
 ctest --test-dir build --output-on-failure -L CMake
-ctest --test-dir build --output-on-failure -L FindModule
 ```
 
 Use `just configure`, `just build`, and the relevant CTest labels for the final validation described
 in the root [AGENTS.md](../AGENTS.md).
+
+`QGCTest.cmake` provides `add_qgc_test()` (see [test/README.md](../test/README.md#register-in-cmakeliststxt)), the
+`check*` convenience targets, and these cache options:
+
+| Option | Default | Purpose |
+| --- | --- | --- |
+| `QGC_TEST_TIMEOUT_UNIT`, `_INTEGRATION`, `_SLOW`, `_DEFAULT` | 60, 120, 180, 90 | Per-label CTest timeouts in seconds; sanitizer builds raise them |
+| `QGC_TEST_PARALLEL_LEVEL` | Logical cores | Parallelism of the `check*` targets |
+| `QGC_TEST_FLAKY_REPEAT` | 3 | `check-flaky` repeat count |
+| `QGC_TEST_ONSCREEN` | `OFF` | Run tests on the native display instead of offscreen |
+| `QGC_TEST_DETECT_LEAKS` | `OFF` | Let ASan run LSan leak detection, which needs `ptrace` permission |
+
+Sanitizer builds set each enabled sanitizer's `*SAN_OPTIONS` (with `halt_on_error=1`) on every CTest test, so
+findings fail the test; the values replace any set in the calling environment.
+
+## GStreamer
+
+`GStreamer/` discovers or downloads the GStreamer SDK and creates the `GStreamer::` targets with one
+`pkg_check_modules(IMPORTED_TARGET)` per library, as Qt's `FindGStreamer.cmake` does; Android and iOS link the SDK into
+the shared `GStreamer::mobile` library instead of the app. `Acquire.cmake`, `acquire/` and `Packages.cmake` hold
+everything that decides a downloaded SDK tree, because CI keys its SDK cache on them. The GStreamer
+[README](../src/VideoManager/GStreamer/README.md#build-configuration) describes its modules and configure
+options.
+
+Each HwBuffers zero-copy GPU path is switched by `QGC_GST_ENABLE_<PATH>`: DMABUF, GLMEMORY, IOSURFACE, D3D11 and
+D3D12 are ON by default; CUDA, AHARDWAREBUFFER and VULKAN, which no sink bin can reach at runtime, are OFF unless asked
+for. Configure prints which compiled paths the sink can't reach.
 
 ## Presets
 
@@ -66,8 +113,10 @@ values such as signing credentials, sanitizer selection, and target-specific pat
 type, generator, testing, coverage, toolchain, and cache defaults in the presets so local and CI
 configuration cannot drift.
 
-The root file owns `cmakeMinimumRequired`; included fragments declare only their required preset
-schema `version`. Preset build directories stay under `${sourceDir}/build` so separate source
+The root file owns `cmakeMinimumRequired`; included fragments declare only their preset schema
+`version`. Every file uses version 8, the newest that the minimum CMake (3.28) reads, and names the
+official CMake presets JSON schema in `$schema` (version 8 or later) for editor validation and
+completion. Preset build directories stay under `${sourceDir}/build` so separate source
 checkouts cannot share or overwrite one another's build trees.
 
 List every configure, build, test, package, and workflow preset with:
@@ -86,13 +135,29 @@ cmake --workflow --preset Linux-debug
 cmake --workflow --preset Linux-deb
 ```
 
+`Linux-clang-debug` is `Linux-debug` built with Clang, which loads precompiled headers far faster than
+GCC: a cold build on 24 cores takes about 75 s instead of 205 s. Clang emits a class's debug info only
+where its key function is compiled, so types from libraries without debug symbols (such as Qt without
+its debug files) can show as incomplete in the debugger; add `-fstandalone-debug` to
+`CMAKE_CXX_FLAGS_DEBUG` if that gets in the way.
+
+The hidden `lean-debug` preset uses line-table debug info (`-g1`), which is all gcov and sanitizer stack traces
+need, and unity builds of QGC targets (`QGC_UNITY_BUILD=ON`). CI builds with these presets, which inherit it:
+
+- `Linux-coverage` — Debug with tests and `QGC_ENABLE_COVERAGE=ON`, in `build/Linux-coverage`.
+- `Linux-sanitizers` — Debug with tests, ASan + UBSan and `QGC_TEST_DETECT_LEAKS=ON`, in `build/Linux-sanitizers`;
+  its test preset also excludes `NoSanitizer`. `cmake --workflow --preset Linux-sanitizers` reproduces CI's
+  sanitizer job.
+- `iOS-simulator` — x86_64 simulator Debug build without tests.
+
 The `just configure` and `just build` recipes use the matching `default*` configure and build
 presets for `BUILD_TYPE`. `just test` always uses the `default` test preset and passes `BUILD_TYPE`
 through `--build-config`. `tools/configure.py` selects a configure preset by build type and accepts
-an explicit `--preset`; `--no-preset` is reserved for unsupported custom toolchains. Coverage uses
+an explicit `--preset`, configuring into the preset's `binaryDir` unless `-B` is given. Coverage uses
 `Linux-coverage`. Docker uses the platform presets with mounted build-directory overrides;
 unsupported build types and its dynamic ARM64 sysroot keep explicit `qt-cmake` configuration.
-Multipass invokes `qt-cmake` directly; Vagrant uses the `Linux` preset with a build-directory override.
+Multipass and Vagrant both run `deploy/multipass/build_in_vm.py`, which passes the matching `Linux*` preset to
+`qt-cmake` with a build-directory override (MinSizeRel has no preset).
 
 | Preset family | Required environment | Notes |
 | --- | --- | --- |

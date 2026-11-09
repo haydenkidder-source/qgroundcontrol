@@ -10,6 +10,10 @@ class VehicleRoleControllerTest : public UnitTest
 private slots:
     void init() override;
     void cleanup() override;
+    void _systemIdRoundTrip_data();
+    void _systemIdRoundTrip();
+    void _invalidSavedSystemId_data();
+    void _invalidSavedSystemId();
     void _availableRolesAreArduPilotVehicleTypes();
     void _suggestedRoleFollowsVehicleType_data();
     void _suggestedRoleFollowsVehicleType();

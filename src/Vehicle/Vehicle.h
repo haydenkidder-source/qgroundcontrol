@@ -19,7 +19,6 @@
 
 #include "QGCMAVLink.h"
 #include "VehicleFactGroup.h"
-#include "VehicleSigningController.h"  // Q_PROPERTY needs the full QObject type for moc/QML metatype registration
 #include "VehicleTypes.h"
 
 class Actuators;
@@ -41,9 +40,7 @@ class VehicleDistanceSensorFactGroup;
 class VehicleEFIFactGroup;
 class VehicleEstimatorStatusFactGroup;
 class VehicleGeneratorFactGroup;
-class VehicleGPS2FactGroup;
 class VehicleGPSFactGroup;
-class VehicleGPSAggregateFactGroup;
 class VehicleHygrometerFactGroup;
 class VehicleLocalPositionFactGroup;
 class VehicleLocalPositionSetpointFactGroup;
@@ -81,6 +78,8 @@ class TerrainQueryCoordinator;
 class TerrainProtocolHandler;
 class TrajectoryPoints;
 class VehicleObjectAvoidance;
+class VehicleReadiness;
+class VehicleSigningController;
 class VehicleSupports;
 
 class Vehicle : public VehicleFactGroup, public VehicleTypes
@@ -101,7 +100,10 @@ class Vehicle : public VehicleFactGroup, public VehicleTypes
     Q_MOC_INCLUDE("TrajectoryPoints.h")
     Q_MOC_INCLUDE("VehicleLinkManager.h")
     Q_MOC_INCLUDE("VehicleObjectAvoidance.h")
+    Q_MOC_INCLUDE("VehicleReadiness.h")
+    Q_MOC_INCLUDE("VehicleSigningController.h")
     Q_MOC_INCLUDE("VehicleSupports.h")
+    Q_MOC_INCLUDE("VehicleGPSFactGroup.h")
 
     friend class InitialConnectStateMachine;
     friend class VehicleLinkManager;
@@ -115,12 +117,8 @@ class Vehicle : public VehicleFactGroup, public VehicleTypes
     friend class GimbalController;                  // Allow GimbalController to call _addFactGroup
 
 public:
-    Vehicle(LinkInterface*          link,
-            int                     vehicleId,
-            int                     defaultComponentId,
-            MAV_AUTOPILOT           firmwareType,
-            MAV_TYPE                vehicleType,
-            QObject*                parent = nullptr);
+    Vehicle(LinkInterface* link, quint32 vehicleId, int defaultComponentId, MAV_AUTOPILOT firmwareType,
+            MAV_TYPE vehicleType, QObject* parent = nullptr);
 
     // Pass these into the offline constructor to create an offline vehicle which tracks the offline vehicle settings.
     // Keep these as valid enum values to avoid UBSan failures on enum loads/comparisons.
@@ -142,7 +140,7 @@ public:
     };
     Q_ENUM(CheckList)
 
-    Q_PROPERTY(int                  id                          READ id                                                             CONSTANT)
+    Q_PROPERTY(quint32 id READ id CONSTANT)
     Q_PROPERTY(AutoPilotPlugin*     autopilotPlugin             MEMBER _autopilotPlugin                                             CONSTANT)
     Q_PROPERTY(QGeoCoordinate       coordinate                  READ coordinate                                                     NOTIFY coordinateChanged)
     Q_PROPERTY(QGeoCoordinate       homePosition                READ homePosition                                                   NOTIFY homePositionChanged)
@@ -170,6 +168,7 @@ public:
     Q_PROPERTY(bool                 rover                       READ rover                                                          NOTIFY vehicleTypeChanged)
     Q_PROPERTY(bool                 sub                         READ sub                                                            NOTIFY vehicleTypeChanged)
     Q_PROPERTY(VehicleSupports*     supports                    READ supports                                                       CONSTANT)
+    Q_PROPERTY(VehicleReadiness* readiness READ readiness CONSTANT)
     Q_PROPERTY(QString              prearmError                 READ prearmError                WRITE setPrearmError                NOTIFY prearmErrorChanged)
     Q_PROPERTY(int                  motorCount                  READ motorCount                                                     CONSTANT)
     Q_PROPERTY(bool                 coaxialMotors               READ coaxialMotors                                                  CONSTANT)
@@ -240,9 +239,8 @@ public:
     // FactGroup object model properties
 
     Q_PROPERTY(FactGroup*           vehicle         READ vehicleFactGroup           CONSTANT)
-    Q_PROPERTY(FactGroup*           gps             READ gpsFactGroup               CONSTANT)
-    Q_PROPERTY(FactGroup*           gps2            READ gps2FactGroup              CONSTANT)
-    Q_PROPERTY(FactGroup*           gpsAggregate    READ gpsAggregateFactGroup      CONSTANT)
+    Q_PROPERTY(VehicleGPSFactGroup* gps READ gpsFactGroup CONSTANT)
+    Q_PROPERTY(VehicleGPSFactGroup* gps2 READ gps2FactGroup CONSTANT)
     Q_PROPERTY(FactGroup*           wind            READ windFactGroup              CONSTANT)
     Q_PROPERTY(FactGroup*           vibration       READ vibrationFactGroup         CONSTANT)
     Q_PROPERTY(FactGroup*           temperature     READ temperatureFactGroup       CONSTANT)
@@ -420,6 +418,9 @@ public:
     QString gotoFlightMode          () const;
 
     VehicleSupports* supports() { return _vehicleSupports; }
+
+    /// nullptr for the offline editing vehicle, which has nothing to be ready for
+    VehicleReadiness* readiness() { return _readiness; }
     bool    hasGripper              () const;
     bool haveMRSpeedLimits() const { return _multirotor_speed_limits_available; }
     bool haveFWSpeedLimits() const { return _fixed_wing_airspeed_limits_available; }
@@ -442,7 +443,7 @@ public:
     void sendJoystickAuxRcOverrideThreadSafe(const std::array<uint16_t, kAuxRcOverrideChannelCount> &channelValues, const std::array<bool, kAuxRcOverrideChannelCount> &channelEnabled, bool useRcOverride);
 
     // Property accesors
-    int id() const{ return _systemID; }
+    quint32 id() const { return _systemID; }
     int compId() const{ return _compID; }
     MAV_AUTOPILOT firmwareType() const { return _firmwareType; }
     MAV_TYPE vehicleType() const { return _vehicleType; }
@@ -565,13 +566,15 @@ public:
     VehicleSigningController* signingController() { return _signingController; }
     const VehicleSigningController* signingController() const { return _signingController; }
 
+    const StandardModes* standardModes() const { return _standardModes; }
+
     void startCalibration   (QGCMAVLink::CalibrationType calType);
     void stopCalibration    (bool showError);
 
-    FactGroup* vehicleFactGroup             () { return _vehicleFactGroup; }
-    FactGroup* gpsFactGroup                 ();
-    FactGroup* gps2FactGroup                ();
-    FactGroup* gpsAggregateFactGroup        ();
+    FactGroup* vehicleFactGroup() { return _vehicleFactGroup; }
+
+    VehicleGPSFactGroup* gpsFactGroup();
+    VehicleGPSFactGroup* gps2FactGroup();
     FactGroup* windFactGroup                ();
     FactGroup* vibrationFactGroup           ();
     FactGroup* temperatureFactGroup         ();
@@ -778,6 +781,9 @@ signals:
     void armedPositionChanged();
     void armedChanged                   (bool armed);
     void flightModeChanged              (const QString& flightMode);
+    /// The custom mode used for health and arming check mode groups changed. Unlike flightModeChanged this also fires
+    /// when only CURRENT_MODE's intended mode changes.
+    void effectiveCustomModeChanged();
     void underwayChanged(bool underway);
     void airborneChanged(bool airborne);
     void landingChanged                 (bool landing);
@@ -834,7 +840,8 @@ signals:
     void servoOutputsChanged(QVector<int> servoValues);
 
     // Mavlink Log Download
-    void mavlinkLogData                 (Vehicle* vehicle, uint8_t target_system, uint8_t target_component, uint16_t sequence, uint8_t first_message, QByteArray data, bool acked);
+    void mavlinkLogData(Vehicle* vehicle, quint32 target_system, uint8_t target_component, uint16_t sequence,
+                        uint8_t first_message, QByteArray data, bool acked);
 
     /// Signalled in response to usage of sendMavCommand
     ///     @param vehicleId        Vehicle which command was sent to
@@ -842,7 +849,7 @@ signals:
     ///     @param command          Command which was sent
     ///     @param ackResult        MAV_RESULT returned in ack
     ///     @param failureCode      More detailed failure code Vehicle::MavCmdResultFailureCode_t
-    void mavCommandResult               (int vehicleId, int targetComponent, int command, int ackResult, int failureCode);
+    void mavCommandResult(quint32 vehicleId, int targetComponent, int command, int ackResult, int failureCode);
 
     // MAVlink Serial Data
     void mavlinkSerialControl           (uint8_t device, uint8_t flags, uint16_t timeout, uint32_t baudrate, QByteArray data);
@@ -881,7 +888,8 @@ private slots:
     void _updateHobbsMeter                  ();
     void _vehicleParamLoaded                (bool ready);
     void _sendQGCTimeToVehicle              ();
-    void _mavlinkMessageStatus              (int uasId, uint64_t totalSent, uint64_t totalReceived, uint64_t totalLoss, float lossPercent);
+    void _mavlinkMessageStatus(quint32 uasId, uint64_t totalSent, uint64_t totalReceived, uint64_t totalLoss,
+                               float lossPercent);
     void _orbitTelemetryTimeout             ();
     void _updateFlightTime                  ();
     void _gotProgressUpdate                 (float progressValue);
@@ -943,7 +951,7 @@ private:
     /// Stops command processing timers to prevent callbacks during vehicle destruction.
     void _stopCommandProcessing();
 
-    int     _systemID;                    ///< Mavlink system id
+    quint32 _systemID;                      ///< Mavlink system id
     int     _defaultComponentId;
     bool    _offlineEditingVehicle = false; ///< true: This Vehicle is a "disconnected" vehicle for ui use while offline editing
 
@@ -1007,6 +1015,7 @@ private:
     Autotune*                       _autotune                       = nullptr;
     GimbalController*               _gimbalController               = nullptr;
     VehicleSupports*                _vehicleSupports                = nullptr;
+    VehicleReadiness* _readiness = nullptr;
 
     bool    _armed = false;         ///< true: vehicle is armed
     uint8_t _base_mode = 0;     ///< base_mode from HEARTBEAT
@@ -1103,7 +1112,6 @@ public:
     const QString _vehicleFactGroupName =            QStringLiteral("vehicle");
     const QString _gpsFactGroupName =                QStringLiteral("gps");
     const QString _gps2FactGroupName =               QStringLiteral("gps2");
-    const QString _gpsAggregateFactGroupName =       QStringLiteral("gpsAggregate");
     const QString _windFactGroupName =               QStringLiteral("wind");
     const QString _vibrationFactGroupName =          QStringLiteral("vibration");
     const QString _temperatureFactGroupName =        QStringLiteral("temperature");
@@ -1122,8 +1130,7 @@ public:
 
     VehicleFactGroup*               _vehicleFactGroup;
     VehicleGPSFactGroup*                _gpsFactGroup               = nullptr;
-    VehicleGPS2FactGroup*               _gps2FactGroup              = nullptr;
-    VehicleGPSAggregateFactGroup*       _gpsAggregateFactGroup      = nullptr;
+    VehicleGPSFactGroup* _gps2FactGroup = nullptr;
     VehicleWindFactGroup*               _windFactGroup              = nullptr;
     VehicleVibrationFactGroup*          _vibrationFactGroup         = nullptr;
     VehicleTemperatureFactGroup*        _temperatureFactGroup       = nullptr;
@@ -1231,26 +1238,36 @@ signals:
 /*                         STATUS TEXT HANDLER                               */
 /*===========================================================================*/
 private:
-    Q_PROPERTY(int criticalMessageCount READ criticalMessageCount NOTIFY criticalMessageCountChanged)
+    Q_PROPERTY(int unreadCriticalMessageCount READ unreadCriticalMessageCount NOTIFY unreadCriticalMessageCountChanged)
+    Q_PROPERTY(int unreadWarningMessageCount READ unreadWarningMessageCount NOTIFY unreadWarningMessageCountChanged)
+    Q_PROPERTY(bool hasUnreadMessages READ hasUnreadMessages NOTIFY hasUnreadMessagesChanged)
+    Q_PROPERTY(int unreadMessageCount READ unreadMessageCount NOTIFY unreadMessageCountChanged)
     Q_PROPERTY(QString formattedMessages READ formattedMessages NOTIFY formattedMessagesChanged)
 
     // Q_PROPERTY(StatusTextHandler *statusTextHandler READ statusTextHandler NOTIFY statusTextHandlerChanged)
 
 public:
     Q_INVOKABLE void clearMessages();
+    Q_INVOKABLE void markMessagesRead();
 
-    int criticalMessageCount() const;
+    int unreadCriticalMessageCount() const;
+    int unreadWarningMessageCount() const;
+    bool hasUnreadMessages() const;
+    int unreadMessageCount() const;
     QString formattedMessages() const;
 
     // StatusTextHandler* statusTextHandler() { return m_statusTextHandler; }
 
 signals:
-    void textMessageReceived(int sysid, int componentid, int severity, QString text, QString description);
+    void textMessageReceived(quint32 sysid, int componentid, int severity, QString text, QString description);
 
     void messagesReceivedChanged();
     void messagesSentChanged();
     void messagesLostChanged();
-    void criticalMessageCountChanged();
+    void unreadCriticalMessageCountChanged();
+    void unreadWarningMessageCountChanged();
+    void hasUnreadMessagesChanged();
+    void unreadMessageCountChanged();
     void formattedMessagesChanged();
     void newFormattedMessage(QString formattedMessage);
 
@@ -1335,12 +1352,17 @@ private:
 public:
     HealthAndArmingCheckReport* healthAndArmingCheckReport();
 
+    /// True if the component's events metadata lists the libevents health and arming check protocol
+    bool healthAndArmingChecksSupported(uint8_t compid) const;
+
+    /// Autopilot health and arming check mode group of a custom mode. -1 if unknown.
+    int healthAndArmingCheckModeGroup(uint32_t customMode) const;
+
     void setEventsMetadata(uint8_t compid, const QString& metadataJsonFileName);
 
 private:
     void _createMAVLinkEventManager();
     void _handleEventMessage(const mavlink_message_t& msg);
-    bool _healthAndArmingChecksSupported(uint8_t compid);
 
     std::unique_ptr<MAVLinkEventManager> _eventManager;
 };

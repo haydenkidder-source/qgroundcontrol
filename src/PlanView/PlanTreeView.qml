@@ -44,7 +44,7 @@ TreeView {
     function _rowFor(modelIndex) { return root.rowAtIndex(modelIndex) }
 
     // QGCFlickableScrollIndicator expects parent to have indicatorColor (provided by QGCFlickable/QGCListView)
-    property color indicatorColor: qgcPal.text
+    property color indicatorColor: qgcPal.textPrimary
 
     QGCPalette { id: qgcPal; colorGroupEnabled: enabled }
 
@@ -52,6 +52,24 @@ TreeView {
     QGCFlickableScrollIndicator { parent: root; orientation: QGCFlickableScrollIndicator.Vertical }
 
     property int _lastMissionItemCount: 0
+
+    // The tree can be created mid-session when the tabbed panel setting is turned off, after the last visualItemsReset
+    Component.onCompleted: _resetToDefaultState()
+
+    function _resetToDefaultState() {
+        root.collapseRecursively()
+        if (_missionController.containsItems) {
+            // Non-empty plan: expand mission group
+            root.expand(_rowFor(_missionController.missionGroupIndex))
+        } else {
+            // Empty plan: expand Plan Info and Defaults, scroll to top
+            root.expand(_rowFor(_missionController.planFileGroupIndex))
+            root.expand(_rowFor(_missionController.defaultsGroupIndex))
+            root.contentY = 0
+        }
+        root._lastMissionItemCount = _missionController.visualItems ? _missionController.visualItems.count : 0
+        root.editingLayerChangeRequested(PlanEditLayers.layerMission)
+    }
 
     Connections {
         target: root._missionController.visualItems
@@ -80,18 +98,7 @@ TreeView {
     Connections {
         target: root._missionController
         function onVisualItemsReset() {
-            root.collapseRecursively()
-            if (_missionController.containsItems) {
-                // Non-empty plan: expand mission group
-                root.expand(_rowFor(_missionController.missionGroupIndex))
-            } else {
-                // Empty plan: expand Plan Info and Defaults, scroll to top
-                root.expand(_rowFor(_missionController.planFileGroupIndex))
-                root.expand(_rowFor(_missionController.defaultsGroupIndex))
-                root.contentY = 0
-            }
-            root._lastMissionItemCount = _missionController.visualItems ? _missionController.visualItems.count : 0
-            root.editingLayerChangeRequested(PlanEditLayers.layerMission)
+            root._resetToDefaultState()
         }
         function onPlanViewStateChanged() {
             // Current item changed — bring it on-screen if completely off-screen.
@@ -203,7 +210,7 @@ TreeView {
         implicitWidth: root.width
         implicitHeight: (loader.item ? loader.item.height : 1) + (separatorLine.visible ? separatorLine.height + root.rowSpacing : 0)
         enabled: !root._createNewPlanMode || _enabledInCreateMode
-        opacity: enabled ? 1 : root.editorMap._nonInteractiveOpacity
+        opacity: enabled || !root.editorMap ? 1 : root.editorMap._nonInteractiveOpacity
         width: root.width
 
         required property TreeView treeView
@@ -341,7 +348,7 @@ TreeView {
             anchors.left: parent.left
             anchors.right: parent.right
             height: 1
-            color: qgcPal.groupBorder
+            color: qgcPal.borderSubtle
             visible: delegateRoot.separator
         }
 
@@ -353,7 +360,7 @@ TreeView {
                 objectName: "planTree_" + delegateRoot.nodeType + "Header"
                 width:  delegateRoot.width
                 height: ScreenTools.implicitComboBoxHeight + ScreenTools.defaultFontPixelWidth
-                color:  qgcPal.windowShade
+                color:  qgcPal.windowCard
 
                 RowLayout {
                     id: groupHeaderRow
@@ -368,7 +375,7 @@ TreeView {
                         Layout.preferredWidth: ScreenTools.defaultFontPixelHeight * 0.75
                         Layout.preferredHeight: Layout.preferredWidth
                         source: "/InstrumentValueIcons/cheveron-right.svg"
-                        color: qgcPal.text
+                        color: qgcPal.textPrimary
                         rotation: delegateRoot.expanded ? 90 : 0
                     }
 
@@ -383,7 +390,7 @@ TreeView {
                         Layout.preferredWidth: ScreenTools.defaultFontPixelHeight * 0.75
                         Layout.preferredHeight: Layout.preferredWidth
                         source: root._groupIcon(delegateRoot.nodeType)
-                        color: qgcPal.text
+                        color: qgcPal.textPrimary
                         visible: source.toString() !== ""
                     }
 

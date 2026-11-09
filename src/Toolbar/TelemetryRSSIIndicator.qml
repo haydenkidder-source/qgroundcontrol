@@ -27,7 +27,7 @@ Item {
         sourceSize.height:  height
         source:             "/qmlimages/TelemRSSI.svg"
         fillMode:           Image.PreserveAspectFit
-        color:              qgcPal.buttonText
+        color:              qgcPal.textPrimary
     }
 
     MouseArea {
@@ -41,7 +41,7 @@ Item {
         ToolIndicatorPage {
             showExpand: false
 
-            contentComponent: SettingsGroupLayout {
+            contentComponent: QGCGroupBox {
                 heading: qsTr("Telemetry RSSI Status")
 
                 LabelledLabel {

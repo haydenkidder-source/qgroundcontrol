@@ -21,10 +21,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from _bootstrap import ensure_tools_dir
-
-ensure_tools_dir(__file__)
-
+import _bootstrap as _bootstrap
 from common.file_traversal import find_repo_root
 from common.io import chdir
 from common.logging import log_error, log_info, log_ok

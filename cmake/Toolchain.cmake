@@ -47,16 +47,7 @@ if(CMAKE_EXPORT_COMPILE_COMMANDS
    AND NOT CMAKE_HOST_WIN32
    AND NOT "${CMAKE_BINARY_DIR}" STREQUAL "${CMAKE_SOURCE_DIR}"
 )
-    file(CREATE_LINK
-        "${CMAKE_BINARY_DIR}/compile_commands.json"
-        "${CMAKE_SOURCE_DIR}/compile_commands.json"
-        SYMBOLIC
-    )
-endif()
-
-if(QGC_UNITY_BUILD)
-    set(CMAKE_UNITY_BUILD ON)
-    set(CMAKE_UNITY_BUILD_BATCH_SIZE 16)
+    file(CREATE_LINK "${CMAKE_BINARY_DIR}/compile_commands.json" "${CMAKE_SOURCE_DIR}/compile_commands.json" SYMBOLIC)
 endif()
 
 # ----------------------------------------------------------------------------
@@ -65,7 +56,10 @@ endif()
 if(QGC_ENABLE_CLANG_TIDY)
     find_program(QGC_CLANG_TIDY_PROGRAM NAMES clang-tidy)
     if(QGC_CLANG_TIDY_PROGRAM)
-        set(CMAKE_CXX_CLANG_TIDY "${QGC_CLANG_TIDY_PROGRAM}" CACHE STRING "clang-tidy executable" FORCE)
+        set(CMAKE_CXX_CLANG_TIDY
+            "${QGC_CLANG_TIDY_PROGRAM}"
+            CACHE STRING "clang-tidy executable" FORCE
+        )
         message(STATUS "QGC: clang-tidy enabled (${QGC_CLANG_TIDY_PROGRAM})")
     else()
         message(WARNING "QGC: QGC_ENABLE_CLANG_TIDY is ON but clang-tidy not found")
@@ -93,7 +87,7 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
     qgc_enable_split_dwarf()
 
     # Build profiling: -ftime-trace emits per-TU Chrome-tracing JSON next to each .o.
-    # Aggregate with ClangBuildAnalyzer; see docs in tools/README.md.
+    # Summarize with tools/build_profile.py (see tools/README.md).
     if(QGC_TIME_TRACE)
         if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
             add_compile_options(-ftime-trace -ftime-trace-granularity=100)
@@ -111,17 +105,21 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
 elseif(MSVC)
     # MSVC-specific optimizations
     add_link_options("$<$<CONFIG:Release>:/LTCG:INCREMENTAL>")
-    # /Z7 not /Zi — /Zi's absolute PDB paths break ccache hashing (ccache#1040); linker still emits a sidecar PDB.
+    # /Z7 not /Zi — /Zi's absolute PDB paths break ccache hashing (ccache#1040); the linker writes the PDB.
     set(CMAKE_MSVC_DEBUG_INFORMATION_FORMAT "Embedded")
+    # Release PDB beside the exe symbolizes CI crash dumps; installs exclude it. /DEBUG would
+    # otherwise drop the /OPT:REF and /OPT:ICF size optimizations.
+    add_link_options("$<$<CONFIG:Release>:/DEBUG:FULL;/OPT:REF;/OPT:ICF>")
     set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
+    # Runs after qgc_enable_ipo(), whose /GL objects lld-link cannot link.
+    qgc_set_msvc_linker()
 endif()
 
 # ----------------------------------------------------------------------------
 # Link Job Pool (Ninja only)
 # ----------------------------------------------------------------------------
 if(NOT QGC_LINK_PARALLEL_LEVEL MATCHES "^[1-9][0-9]*$")
-    message(FATAL_ERROR
-        "QGC_LINK_PARALLEL_LEVEL must be a positive integer, got '${QGC_LINK_PARALLEL_LEVEL}'")
+    message(FATAL_ERROR "QGC_LINK_PARALLEL_LEVEL must be a positive integer, got '${QGC_LINK_PARALLEL_LEVEL}'")
 endif()
 if(CMAKE_GENERATOR MATCHES "Ninja")
     set_property(GLOBAL APPEND PROPERTY JOB_POOLS link_pool=${QGC_LINK_PARALLEL_LEVEL})
@@ -135,10 +133,16 @@ endif()
 if(CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
     if(LINUX)
         # Linux uses AppDir structure for AppImage packaging
-        set(CMAKE_INSTALL_PREFIX "${CMAKE_BINARY_DIR}/AppDir/usr" CACHE PATH "Install path prefix for AppImage" FORCE)
+        set(CMAKE_INSTALL_PREFIX
+            "${CMAKE_BINARY_DIR}/AppDir/usr"
+            CACHE PATH "Install path prefix for AppImage" FORCE
+        )
     else()
         # Other platforms use staging directory
-        set(CMAKE_INSTALL_PREFIX "${CMAKE_BINARY_DIR}/staging" CACHE PATH "Install path prefix" FORCE)
+        set(CMAKE_INSTALL_PREFIX
+            "${CMAKE_BINARY_DIR}/staging"
+            CACHE PATH "Install path prefix" FORCE
+        )
     endif()
 endif()
 
@@ -147,7 +151,9 @@ endif()
 # ----------------------------------------------------------------------------
 if(CMAKE_CROSSCOMPILING)
     if(NOT DEFINED QT_HOST_PATH OR QT_HOST_PATH STREQUAL "")
-        message(FATAL_ERROR "QGC: Cross-compilation requires QT_HOST_PATH to be defined and set to a valid Qt host installation path")
+        message(
+            FATAL_ERROR "QGC: Cross-compilation requires QT_HOST_PATH to be set to a valid Qt host installation path"
+        )
     endif()
 
     if(NOT IS_DIRECTORY "${QT_HOST_PATH}")

@@ -1,12 +1,17 @@
 #include "VehicleRoleController.h"
 
+#include <cmath>
+#include <limits>
+
 #include <QtCore/QFile>
 #include <QtCore/QJsonArray>
 #include <QtCore/QJsonDocument>
 #include <QtCore/QJsonObject>
+#include <QtCore/QSettings>
 
 #include "AppSettings.h"
 #include "LinkManager.h"
+#include "LinkPreferenceController.h"
 #include "QGCLoggingCategory.h"
 #include "QGCMAVLink.h"
 #include "QmlObjectListModel.h"
@@ -17,13 +22,22 @@ QGC_LOGGING_CATEGORY(VehicleRoleLog, "Custom.VehicleRoles")
 
 namespace {
 const char* kRolesFileName = "VehicleRoles.json";
-}
+const char* kFailbackHoldKey = "Custom/LinkPreference/FailbackHoldSeconds";
+}  // namespace
 
 VehicleRoleLinkEntry::VehicleRoleLinkEntry(const QString& label, const QString& linkConfigName, QObject* parent)
     : QObject(parent)
     , _label(label)
     , _linkConfigName(linkConfigName)
 {}
+
+void VehicleRoleLinkEntry::setPreferred(bool preferred)
+{
+    if (_preferred != preferred) {
+        _preferred = preferred;
+        emit preferredChanged(_preferred);
+    }
+}
 
 void VehicleRoleLinkEntry::setLabel(const QString& label)
 {
@@ -41,7 +55,7 @@ void VehicleRoleLinkEntry::setLinkConfigName(const QString& linkConfigName)
     }
 }
 
-VehicleRoleEntry::VehicleRoleEntry(int sysid, const QString& role, const QString& name, int port, QObject* parent)
+VehicleRoleEntry::VehicleRoleEntry(quint32 sysid, const QString& role, const QString& name, int port, QObject* parent)
     : QObject(parent)
     , _sysid(sysid)
     , _role(role)
@@ -78,10 +92,12 @@ VehicleRoleController::VehicleRoleController(QObject* parent)
     : QObject(parent)
     , _roleEntries(new QmlObjectListModel(this))
 {
+    _failbackHoldSeconds = qBound(5, QSettings().value(kFailbackHoldKey, 15).toInt(), 300);
     _load();
+    new LinkPreferenceController(this);
 }
 
-int VehicleRoleController::_indexForSysid(int sysid) const
+int VehicleRoleController::_indexForSysid(quint32 sysid) const
 {
     for (int i = 0; i < _roleEntries->count(); i++) {
         if (qobject_cast<VehicleRoleEntry*>(_roleEntries->get(i))->sysid() == sysid) {
@@ -97,9 +113,9 @@ VehicleRoleLinkEntry* VehicleRoleController::_linkAt(int index, int linkIndex) c
     return entry ? qobject_cast<VehicleRoleLinkEntry*>(entry->links()->get(linkIndex)) : nullptr;
 }
 
-void VehicleRoleController::addEntry(int sysid, const QString& role, const QString& name, int port)
+void VehicleRoleController::addEntry(quint32 sysid, const QString& role, const QString& name, int port)
 {
-    if (sysid < 1 || sysid > 255 || !availableRoles().contains(role) || port < 0 || port > 65535) {
+    if (sysid == 0 || !availableRoles().contains(role) || port < 0 || port > 65535) {
         qCWarning(VehicleRoleLog) << "Ignoring invalid entry - sysid:" << sysid << "role:" << role << "port:" << port;
         return;
     }
@@ -128,6 +144,7 @@ void VehicleRoleController::removeEntry(int index)
         _roleEntries->removeOne(entry);
         entry->deleteLater();
         _save();
+        emit linkPreferencesChanged();
     }
 }
 
@@ -197,7 +214,7 @@ QString VehicleRoleController::suggestedRole(Vehicle* vehicle) const
     return vehicle ? roleForMavType(vehicle->vehicleType()) : QString();
 }
 
-bool VehicleRoleController::isNicknameTaken(const QString& name, int exceptSysid) const
+bool VehicleRoleController::isNicknameTaken(const QString& name, quint32 exceptSysid) const
 {
     const QString wanted = name.trimmed();
     if (wanted.isEmpty()) {
@@ -213,25 +230,25 @@ bool VehicleRoleController::isNicknameTaken(const QString& name, int exceptSysid
     return false;
 }
 
-QString VehicleRoleController::nameForSysid(int sysid) const
+QString VehicleRoleController::nameForSysid(quint32 sysid) const
 {
     const int index = _indexForSysid(sysid);
     return index >= 0 ? qobject_cast<VehicleRoleEntry*>(_roleEntries->get(index))->name() : QString();
 }
 
-QString VehicleRoleController::roleForSysid(int sysid) const
+QString VehicleRoleController::roleForSysid(quint32 sysid) const
 {
     const int index = _indexForSysid(sysid);
     return index >= 0 ? qobject_cast<VehicleRoleEntry*>(_roleEntries->get(index))->role() : QString();
 }
 
-int VehicleRoleController::portForSysid(int sysid) const
+int VehicleRoleController::portForSysid(quint32 sysid) const
 {
     const int index = _indexForSysid(sysid);
     return index >= 0 ? qobject_cast<VehicleRoleEntry*>(_roleEntries->get(index))->port() : 0;
 }
 
-QmlObjectListModel* VehicleRoleController::linksForSysid(int sysid) const
+QmlObjectListModel* VehicleRoleController::linksForSysid(quint32 sysid) const
 {
     const int index = _indexForSysid(sysid);
     return index >= 0 ? qobject_cast<VehicleRoleEntry*>(_roleEntries->get(index))->links() : nullptr;
@@ -259,6 +276,7 @@ void VehicleRoleController::removeLink(int index, int linkIndex)
     if (auto* link = qobject_cast<VehicleRoleLinkEntry*>(entry->links()->removeAt(linkIndex))) {
         link->deleteLater();
         _save();
+        emit linkPreferencesChanged();
     }
 }
 
@@ -277,9 +295,55 @@ void VehicleRoleController::setLinkLabel(int index, int linkIndex, const QString
 void VehicleRoleController::setLinkConfigName(int index, int linkIndex, const QString& linkConfigName)
 {
     if (auto* link = _linkAt(index, linkIndex)) {
-        link->setLinkConfigName(linkConfigName);
-        _save();
+        if (link->linkConfigName() != linkConfigName) {
+            link->setPreferred(false);
+            link->setLinkConfigName(linkConfigName);
+            _save();
+            emit linkPreferencesChanged();
+        }
     }
+}
+
+void VehicleRoleController::setFailbackHoldSeconds(int seconds)
+{
+    seconds = qBound(5, seconds, 300);
+    if (_failbackHoldSeconds != seconds) {
+        _failbackHoldSeconds = seconds;
+        QSettings().setValue(kFailbackHoldKey, seconds);
+        emit failbackHoldSecondsChanged();
+    }
+}
+
+void VehicleRoleController::setLinkPreferred(int index, int linkIndex, bool preferred)
+{
+    auto* link = _linkAt(index, linkIndex);
+    if (!link || (preferred && link->linkConfigName().isEmpty())) {
+        return;
+    }
+    auto* entry = qobject_cast<VehicleRoleEntry*>(_roleEntries->get(index));
+    for (int i = 0; i < entry->links()->count(); ++i) {
+        auto* other = qobject_cast<VehicleRoleLinkEntry*>(entry->links()->get(i));
+        if (other != link && preferred) {
+            other->setPreferred(false);
+        }
+    }
+    link->setPreferred(preferred);
+    _save();
+    emit linkPreferencesChanged();
+}
+
+QString VehicleRoleController::preferredLinkConfigNameForSysid(quint32 sysid) const
+{
+    auto* links = linksForSysid(sysid);
+    if (links) {
+        for (int i = 0; i < links->count(); ++i) {
+            const auto* link = qobject_cast<VehicleRoleLinkEntry*>(links->get(i));
+            if (link && link->preferred()) {
+                return link->linkConfigName();
+            }
+        }
+    }
+    return {};
 }
 
 bool VehicleRoleController::isLinkConfigConnected(const QString& linkConfigName) const
@@ -315,11 +379,14 @@ void VehicleRoleController::_load()
 
     for (const QJsonValue& value : doc.array()) {
         const QJsonObject obj = value.toObject();
-        const int sysid = obj.value(QStringLiteral("sysid")).toInt();
-        if (sysid < 1 || sysid > 255) {
-            qCWarning(VehicleRoleLog) << "Skipping invalid saved entry - sysid:" << sysid;
+        const QJsonValue savedSysid = obj.value(QStringLiteral("sysid"));
+        const double numericSysid = savedSysid.toDouble();
+        if (!savedSysid.isDouble() || !std::isfinite(numericSysid) || numericSysid < 1 ||
+            numericSysid > std::numeric_limits<quint32>::max() || std::floor(numericSysid) != numericSysid) {
+            qCWarning(VehicleRoleLog) << "Skipping invalid saved entry - sysid:" << savedSysid;
             continue;
         }
+        const auto sysid = static_cast<quint32>(numericSysid);
         QString role = obj.value(QStringLiteral("role")).toString();
         QString name = obj.value(QStringLiteral("name")).toString();
         // Older saves used a fixed call-sign ("Rover"/"Stallion"/"Hex") as the role. "Rover" still
@@ -344,6 +411,7 @@ void VehicleRoleController::_load()
         // page. The legacy "port" above is preserved either way, but it never represented an
         // actual persisted link identity (see VehicleRoleEntry::port()), so nothing is silently
         // lost by not attempting to migrate it into a link association.
+        bool hasPreferred = false;
         for (const QJsonValue& linkValue : obj.value(QStringLiteral("links")).toArray()) {
             const QJsonObject linkObj = linkValue.toObject();
             const QString label = linkObj.value(QStringLiteral("label")).toString();
@@ -351,8 +419,13 @@ void VehicleRoleController::_load()
                 qCWarning(VehicleRoleLog) << "Skipping saved link with empty label for sysid:" << sysid;
                 continue;
             }
-            entry->links()->append(
-                new VehicleRoleLinkEntry(label, linkObj.value(QStringLiteral("linkConfigName")).toString(), this));
+            auto* link =
+                new VehicleRoleLinkEntry(label, linkObj.value(QStringLiteral("linkConfigName")).toString(), this);
+            const bool preferred = linkObj.value(QStringLiteral("preferred")).toBool(false) &&
+                                   !link->linkConfigName().isEmpty() && !hasPreferred;
+            link->setPreferred(preferred);
+            hasPreferred = hasPreferred || preferred;
+            entry->links()->append(link);
         }
 
         _roleEntries->append(entry);
@@ -365,7 +438,7 @@ void VehicleRoleController::_save()
     for (int i = 0; i < _roleEntries->count(); i++) {
         auto* entry = qobject_cast<VehicleRoleEntry*>(_roleEntries->get(i));
         QJsonObject obj;
-        obj[QStringLiteral("sysid")] = entry->sysid();
+        obj[QStringLiteral("sysid")] = static_cast<double>(entry->sysid());
         obj[QStringLiteral("role")] = entry->role();
         obj[QStringLiteral("name")] = entry->name();
         obj[QStringLiteral("port")] = entry->port();
@@ -376,6 +449,9 @@ void VehicleRoleController::_save()
             QJsonObject linkObj;
             linkObj[QStringLiteral("label")] = link->label();
             linkObj[QStringLiteral("linkConfigName")] = link->linkConfigName();
+            if (link->preferred()) {
+                linkObj[QStringLiteral("preferred")] = true;
+            }
             linksArray.append(linkObj);
         }
         obj[QStringLiteral("links")] = linksArray;

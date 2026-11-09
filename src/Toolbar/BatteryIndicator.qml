@@ -220,7 +220,7 @@ Item {
                                 return qgcPal.colorYellow
                             }
                         } else {
-                            return qgcPal.text
+                            return qgcPal.textPrimary
                         }
                     case MAVLinkEnums.MAV_BATTERY_CHARGE_STATE_LOW:
                         return qgcPal.colorOrange
@@ -230,7 +230,7 @@ Item {
                     case MAVLinkEnums.MAV_BATTERY_CHARGE_STATE_UNHEALTHY:
                         return qgcPal.colorRed
                     default:
-                        return qgcPal.text
+                        return qgcPal.textPrimary
                 }
             }
 
@@ -330,7 +330,7 @@ Item {
                 QGCLabel {
                     Layout.alignment:       Qt.AlignHCenter
                     verticalAlignment:      Text.AlignVCenter
-                    color:                  qgcPal.text
+                    color:                  qgcPal.textPrimary
                     text:                   getBatteryPercentageText()
                     font.pointSize:         _showBoth ? ScreenTools.defaultFontPointSize : ScreenTools.mediumFontPointSize
                     visible:                _showBoth || _showPercentage
@@ -339,7 +339,7 @@ Item {
                 QGCLabel {
                     Layout.alignment:       Qt.AlignHCenter
                     font.pointSize:         _showBoth ? ScreenTools.defaultFontPointSize : ScreenTools.mediumFontPointSize
-                    color:                  qgcPal.text
+                    color:                  qgcPal.textPrimary
                     text:                   getBatteryVoltageText()
                     visible:                _showBoth || _showVoltage
                 }
@@ -371,7 +371,7 @@ Item {
             Repeater {
                 model: _activeVehicle ? _activeVehicle.batteries : 0
 
-                SettingsGroupLayout {
+                QGCGroupBox {
                     heading:        qsTr("Battery %1").arg(_activeVehicle.batteries.length === 1 ? qsTr("Status") : object.id.rawValue)
                     contentSpacing: 0
                     showDividers:   false
@@ -440,7 +440,7 @@ Item {
 
             FactPanelController { id: controller }
 
-            SettingsGroupLayout {
+            QGCGroupBox {
                 heading:            qsTr("Battery Display")
                 Layout.fillWidth:   true
 
@@ -555,7 +555,7 @@ Item {
                 source:             _activeVehicle.expandedToolbarIndicatorSource("Battery")
             }
 
-            SettingsGroupLayout {
+            QGCGroupBox {
                 visible: _activeVehicle.autopilotPlugin.knownVehicleComponentAvailable(AutoPilotPlugin.KnownPowerVehicleComponent) &&
                             QGroundControl.corePlugin.showAdvancedUI
 

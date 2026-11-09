@@ -33,7 +33,7 @@ Supported versions: Windows 10 (1809 or later), Windows 11:
 
 ## Mac OS {#macOS}
 
-Supported versions: macOS 13 (Ventura) or later:
+Supported versions: macOS 14.4 (Sonoma) or later:
 
 <!-- match version using https://docs.qgroundcontrol.com/master/en/qgc-dev-guide/getting_started/#native-builds -->
 
@@ -106,6 +106,29 @@ chmod +x QGroundControl-<arch>.AppImage
 ```bash
 ./QGroundControl-<arch>.AppImage
 ```
+
+**(Optional) Install a better text-to-speech voice:**
+
+By default, spoken announcements on Linux use the system speech engine, which often sounds robotic.
+If [Piper](https://github.com/OHF-Voice/piper1-gpl) and a Piper voice are installed, _QGroundControl_ uses them automatically instead.
+
+1. Install Piper:
+
+```bash
+sudo apt install -y pipx
+pipx install piper-tts
+```
+
+1. Download a voice into `~/.local/share/piper-voices` (see the [list of Piper voices](https://huggingface.co/rhasspy/piper-voices) for other voices):
+
+```bash
+mkdir -p ~/.local/share/piper-voices
+cd ~/.local/share/piper-voices
+wget https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/lessac/medium/en_US-lessac-medium.onnx
+wget https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/lessac/medium/en_US-lessac-medium.onnx.json
+```
+
+1. Restart _QGroundControl_.
 
 ## 안드로이드 {#android}
 

@@ -1,5 +1,7 @@
 #include "VehicleConfigUITestBase.h"
 
+#include <functional>
+
 #include <QtCore/QElapsedTimer>
 #include <QtCore/QLocale>
 #include <QtCore/QPointer>
@@ -128,11 +130,13 @@ void VehicleConfigUITestBase::clickThroughAllComponents(Vehicle *vehicle, const 
         const QString cleanName  = QString(comp->name()).remove(QLatin1Char(' '));
         const QString buttonName = QStringLiteral("vehicleConfig_comp_") + cleanName;
 
-        QQuickItem *btn = findVisibleItem(_rootItem, buttonName, 2000);
-        if (!btn) {
-            // Component may be hidden (e.g. optional peripheral not present) – skip silently
+        // VehicleConfigView.qml _componentVisible(): components without a setup page are hidden
+        if (comp->setupSource().isEmpty()) {
             continue;
         }
+
+        QQuickItem* btn = findVisibleItem(_rootItem, buttonName, 2000);
+        QVERIFY2(btn, qPrintable(QStringLiteral("%1Sidebar button %2 not visible").arg(prefix, buttonName)));
 
         clickSidebarButton(buttonName);
         if (QTest::currentTestFailed()) return;
@@ -149,14 +153,27 @@ void VehicleConfigUITestBase::clickThroughAllComponents(Vehicle *vehicle, const 
         if (QTest::currentTestFailed()) return;
 
         // Click each section button in the expanded tree and verify the page
-        // shows content for that section
+        // shows content for that section. A single section gets no sub-items (hasSections).
         const QStringList sectionIds = comp->sectionIds();
+        if (sectionIds.size() < 2) {
+            continue;
+        }
         for (const QString &sectionId : sectionIds) {
             // Matches objectName in VehicleConfigView.qml: "vehicleConfig_section_" + id without spaces
             const QString sectionButtonName =
                 QStringLiteral("vehicleConfig_section_") + QString(sectionId).remove(QLatin1Char(' '));
-            if (!findVisibleItem(_rootItem, sectionButtonName, 250)) {
-                // Section hidden by sectionVisible() filtering – skip silently
+            // The expanded component creates every section button; with its page loaded, the ones
+            // filtered out by sectionVisible() exist but stay hidden
+            QQuickItem* sectionButton = nullptr;
+            const bool sectionButtonCreated = QTest::qWaitFor(
+                [&] {
+                    sectionButton = findItem(_rootItem, sectionButtonName);
+                    return sectionButton != nullptr;
+                },
+                2000);
+            QVERIFY2(sectionButtonCreated,
+                     qPrintable(QStringLiteral("%1Section button %2 not created").arg(prefix, sectionButtonName)));
+            if (!sectionButton->isVisible()) {
                 continue;
             }
             clickSidebarButton(sectionButtonName);
@@ -230,8 +247,8 @@ void VehicleConfigUITestBase::clickThroughAllComponentsAllLocales(Vehicle *vehic
     // to actually retranslate the UI (not just flip the setting)
     clickSidebarButton(QStringLiteral("vehicleConfig_comp_Sensors"));
     if (QTest::currentTestFailed()) return;
-    QPointer<QQuickItem> anchor = findVisibleItem(_rootItem, QStringLiteral("sensorsSetup_calibrateCompass"), 3000);
-    QVERIFY2(anchor, "Calibrate Compass language anchor not found");
+    QPointer<QQuickItem> anchor = findVisibleItem(_rootItem, languageAnchorObjectName(), 3000);
+    QVERIFY2(anchor, "Language anchor not found");
     const QString englishAnchorText = anchor->property("text").toString();
 
     qgcApp()->resetRebootMessageDebounce();
@@ -263,12 +280,17 @@ void VehicleConfigUITestBase::clickThroughAllComponentsAllLocales(Vehicle *vehic
     // The saved language may itself be non-English, so only verify retranslation
     // back to the English anchor when it renders English
     if (savedLanguage.toInt() == QLocale::English) {
-        QPointer<QQuickItem> restoredAnchor = findVisibleItem(_rootItem, QStringLiteral("sensorsSetup_calibrateCompass"), 3000);
+        QPointer<QQuickItem> restoredAnchor = findVisibleItem(_rootItem, languageAnchorObjectName(), 3000);
         if (restoredAnchor) {
             QVERIFY2(QTest::qWaitFor([&] { return restoredAnchor && (restoredAnchor->property("text").toString() == englishAnchorText); }, 3000),
                      "UI text did not return to English after restoring language");
         }
     }
+}
+
+QString VehicleConfigUITestBase::languageAnchorObjectName() const
+{
+    return QStringLiteral("sensorsSetup_calibrateCompass");
 }
 
 void VehicleConfigUITestBase::waitForParamRefreshQuiet(Vehicle *vehicle)
@@ -438,4 +460,24 @@ void VehicleConfigUITestBase::runAPMCompassCal()
     QVERIFY2(vehicle->rebootRequired(), "Compass calibration did not latch rebootRequired");
     QVERIFY2(clickButton(QStringLiteral("popupDialog_acceptButton")),
              "Failed to dismiss post-compass-cal dialog");
+}
+
+QPair<int, int> VehicleConfigUITestBase::countRows(const QString& prefix, const QStringList& excluded) const
+{
+    int visible = 0;
+    int total = 0;
+    const std::function<void(QQuickItem*)> count = [&](QQuickItem* item) {
+        const QString name = item->objectName();
+        if (name.startsWith(prefix) && !excluded.contains(name)) {
+            total++;
+            if (item->isVisible()) {
+                visible++;
+            }
+        }
+        for (QQuickItem* child : item->childItems()) {
+            count(child);
+        }
+    };
+    count(_rootItem);
+    return {visible, total};
 }

@@ -71,6 +71,8 @@ public:
     bool            isLoiterItem        (void) const;
     bool            showLoiterRadius    (void) const;
     double          loiterRadius        (void) const;
+    /// Distance flown circling a MAV_CMD_NAV_LOITER_TURNS item, 0 for other commands
+    double          loiterDistance      (void) const;
 
     CameraSection*  cameraSection       (void) { return _cameraSection; }
     SpeedSection*   speedSection        (void) { return _speedSection; }
@@ -127,6 +129,7 @@ public:
     bool            terrainAltitudeRequiredInFlyView(void) const final { return _altitudeFrame == QGroundControlQmlGlobal::AltitudeFrameTerrain; }
     void            appendMissionItems          (QList<MissionItem*>& items, QObject* missionItemParent) final;
     void            applyNewAltitude            (double newAltitude) final;
+    bool usesAltitudeFrame(QGroundControlQmlGlobal::AltitudeFrame altitudeFrame) const final;
     void            setMissionFlightStatus      (MissionFlightStatus_t& missionFlightStatus) final;
     ReadyForSaveState readyForSaveState         (void) const final;
     double          additionalTimeDelay         (void) const final;
@@ -149,6 +152,7 @@ signals:
     void isLoiterItemChanged        (void);
     void showLoiterRadiusChanged    (void);
     void loiterRadiusChanged        (double loiterRadius);
+    void loiterDistanceChanged(void);
 
 private slots:
     void _setDirty                              (void);
@@ -167,6 +171,7 @@ private slots:
     void _possibleVehicleYawChanged             (void);
     void _signalIfVTOLTransitionCommand         (void);
     void _possibleRadiusChanged                 (void);
+    void _possibleLoiterDistanceChanged(void);
 
 private:
     void _connectSignals        (void);

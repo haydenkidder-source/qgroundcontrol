@@ -17,11 +17,9 @@ class QGCOptions;
 class QGeoPositionInfoSource;
 class QmlObjectListModel;
 class QQmlApplicationEngine;
-class QQuickItem;
 class SettingsManager;
 class Vehicle;
 class VideoReceiver;
-class VideoSink;
 class FactValueGrid;
 typedef struct __mavlink_message mavlink_message_t;
 
@@ -143,12 +141,8 @@ public:
     /// Allows the plugin to override the creation of VideoReceiver.
     virtual VideoReceiver *createVideoReceiver(QObject *parent);
 
+    /// False while a custom view owns the network video endpoints.
     virtual bool startStandardVideoReceivers() const { return true; }
-
-    /// Allows the plugin to override the creation of VideoSink.
-    virtual void *createVideoSink(QQuickItem *widget, QObject *parent);
-    /// Allows the plugin to override the release of VideoSink.
-    virtual void releaseVideoSink(void *sink);
 
     /// Allows the plugin to see all mavlink traffic to a vehicle
     /// @return true: Allow vehicle to continue processing, false: Vehicle should not process message

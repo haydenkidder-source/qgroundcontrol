@@ -22,6 +22,8 @@ private slots:
     void _testPruneCache();
     void _testResetDatabase();
     void _testStopWhileProcessing();
+    void _testMapEngineCloseStopsWorkerAndRefusesInit();
+    void _testMapEngineEnsureInitializedAcceptsTasks();
 
 private:
     bool _startWorker(QGCCacheWorker& worker, int timeoutMs = TestTimeout::mediumMs());

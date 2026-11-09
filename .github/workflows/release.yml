@@ -14,6 +14,7 @@ permissions:
 jobs:
   semantic-release:
     name: Semantic Release
+    if: github.ref == 'refs/heads/master'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -39,7 +40,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v7
         with:
-          node-version-file: .nvmrc
+          node-version-file: docs/.nvmrc
 
       - name: Run semantic-release
         id: release
@@ -47,12 +48,12 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          ./tools/release.py --install
+          python3 tools/release.py --install
           # @semantic-release/exec verifyReleaseCmd writes tools/release/.release-version
           # iff a release was actually published. Reading from a file is
           # immune to log-format drift across SR major versions.
           rm -f tools/release/.release-version
-          ./tools/release.py --run
+          python3 tools/release.py --run
 
           if [[ -f tools/release/.release-version ]]; then
             version=$(tr -d '[:space:]' < tools/release/.release-version)
@@ -96,7 +97,7 @@ jobs:
           RELEASE_TAG: v${{ needs.semantic-release.outputs.version }}
           REPO: ${{ github.repository }}
         run: |
-          python3 .github/scripts/release_builds.py --repo "$REPO" \
+          python3 tools/ci/publish/release_builds.py --repo "$REPO" \
             --sha "$GITHUB_SHA" --tag "$RELEASE_TAG" --output release-build-runs.json
 
       - uses: actions/upload-artifact@v7
@@ -152,21 +153,21 @@ jobs:
           name: release-build-runs
 
       - name: Download artifacts
-        uses: ./.github/actions/download-all-artifacts
-        with:
-          head-sha: ${{ github.sha }}
-          workflows: Linux,Windows
-          event: workflow_dispatch
-          runs-file: release-build-runs.json
-          strict-runs: 'true'
-          output-dir: artifacts
-          artifact-prefixes: Custom-QGroundControl,sbom-
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          python3 tools/ci/reporting/download_artifacts.py --repo "$REPO" \
+            --head-sha "$GITHUB_SHA" --workflows Linux,Windows --event workflow_dispatch \
+            --runs-cache release-build-runs.json --strict-runs --output-dir artifacts \
+            --artifact-prefixes Custom-QGroundControl,sbom-
 
       - name: Validate release assets
         run: |
-          python3 .github/scripts/release_assets.py \
+          python3 tools/ci/publish/release_assets.py \
             --repo "${{ github.repository }}" \
             --artifacts-dir artifacts \
+            --runs-file release-build-runs.json \
             --head-sha "$GITHUB_SHA" \
             --source-sbom "${RUNNER_TEMP}/sbom-source.spdx.json" \
             --source-sbom "${RUNNER_TEMP}/sbom-source.cdx.json" \

@@ -11,14 +11,14 @@ import QGroundControl.Controls
 Rectangle {
     id: root
     implicitHeight: layout.implicitHeight
-    color: QGroundControl.globalPalette.windowShade
+    color: QGroundControl.globalPalette.windowCard
 
     property var hostWindow
     readonly property var selected: COPController.selected
     readonly property var activeVehicle: QGroundControl.multiVehicleManager.activeVehicle
     readonly property bool controlling: selected && selected.connected && selected.vehicle === activeVehicle
 
-    function select(sysid: int) {
+    function select(sysid: real) {
         if (hostWindow && hostWindow.allowViewSwitch()) {
             COPController.selectVehicle(sysid)
             hostWindow.showFlyView()
@@ -54,6 +54,7 @@ Rectangle {
                     QGCButton {
                         text: qsTr("COP")
                         highlighted: COPController.selectedSysid === 0
+                        highlightColor: QGroundControl.globalPalette.accent
                         onClicked: root.select(0)
                     }
                     Repeater {
@@ -71,6 +72,7 @@ Rectangle {
                                 color: vehicleTab.object.color
                             }
                             QGCButton {
+                                objectName: "copVehicleTab_" + vehicleTab.object.sysid
                                 // Null-guarded: a remembered-but-disconnected entry's vehicle is null, which would
                                 // otherwise equal a null activeVehicle and mark every such tab as controlled.
                                 readonly property bool isActiveVehicle: root.activeVehicle !== null
@@ -81,7 +83,7 @@ Rectangle {
                                 // of whether it also happens to be COP-selected right now - which
                                 // vehicle you're flying is the safety-relevant state to always show.
                                 highlightColor: isActiveVehicle ? QGroundControl.globalPalette.colorGreen
-                                                                 : QGroundControl.globalPalette.buttonHighlight
+                                                                 : QGroundControl.globalPalette.accent
                                 onClicked: root.select(vehicleTab.object.sysid)
                             }
                             QGCButton {
@@ -161,7 +163,7 @@ Rectangle {
 
         QGCPopupDialog {
             id: dialog
-            required property int sysid
+            required property real sysid
             property string suggestedRole: ""
             title: qsTr("Vehicle %1 — name and role").arg(sysid)
             buttons: Dialog.Save | Dialog.Cancel
@@ -182,7 +184,7 @@ Rectangle {
                     Layout.fillWidth: true
                     visible: dialog.nicknameTaken
                     wrapMode: Text.WordWrap
-                    color: QGroundControl.globalPalette.warningText
+                    color: QGroundControl.globalPalette.errorText
                     text: qsTr("Another vehicle already uses this nickname. Give each vehicle its own.")
                 }
                 QGCLabel { text: qsTr("Role (vehicle type)") }

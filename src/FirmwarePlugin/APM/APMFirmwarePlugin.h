@@ -34,6 +34,7 @@ public:
     double minimumTakeoffAltitudeMeters(Vehicle *vehicle) const override;
     void startTakeoff(Vehicle *vehicle) const override;
     void startMission(Vehicle *vehicle) const override;
+    VehicleReadiness* createVehicleReadiness(Vehicle* vehicle) const override;
     QStringList flightModes(Vehicle *vehicle) const override;
     QString flightMode(uint8_t base_mode, uint32_t custom_mode) const override;
     bool setFlightMode(const QString &flightMode, uint8_t *base_mode, uint32_t *custom_mode) const override;
@@ -53,6 +54,8 @@ public:
     virtual void initializeStreamRates(Vehicle *vehicle);
     void initializeVehicle(Vehicle *vehicle) override;
     bool sendHomePositionToVehicle() const override { return true; }
+
+    MissionUploadRecoveryPolicy missionUploadRecoveryPolicy(MAV_MISSION_TYPE missionType) const override;
     QString missionCommandOverrides(QGCMAVLink::VehicleClass_t vehicleClass) const override;
     QString _internalParameterMetaDataFile(const Vehicle* vehicle) const override;
     MAV_AUTOPILOT _autopilotType() const override { return MAV_AUTOPILOT_ARDUPILOTMEGA; }
@@ -118,7 +121,8 @@ private:
 
     QVariantList _toolIndicatorList;
     QList<APMCustomMode> _supportedModes;
-    QMap<int /* vehicle id */, QMap<int /* componentId */, bool /* true: component is part of ArduPilot stack */>> _ardupilotComponentMap;
+    QMap<quint32 /* vehicle id */, QMap<int /* componentId */, bool /* true: component is part of ArduPilot stack */>>
+        _ardupilotComponentMap;
 
     QMutex _adjustOutgoingMavlinkMutex;
 

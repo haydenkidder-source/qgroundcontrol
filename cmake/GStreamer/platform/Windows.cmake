@@ -1,223 +1,155 @@
-# Windows GStreamer SDK discovery — invoked by Orchestrator.cmake.
+# Windows GStreamer: SDK discovery, invoked by Orchestrator.cmake, and the installer qgc_gst_install_platform_sdk
+# (Install.cmake) runs.
 
 include_guard(GLOBAL)
 
-function(_qgc_windows_sdk_complete ROOT_DIR OUT_VAR)
-    set(_required_paths
-        "bin/pkg-config.exe"
-        "include/gstreamer-1.0"
-        "lib/gstreamer-1.0"
-        "lib/pkgconfig/gstreamer-1.0.pc"
+# _qgc_gst_windows_sdk_arch(<out_var>)
+# Returns the SDK architecture (arm64 or x86_64) of the build's target: the MSVC compiler's target
+# architecture when known, since a Ninja build from a vcvarsamd64_arm64 prompt reports the AMD64
+# host as CMAKE_SYSTEM_PROCESSOR; otherwise the Visual Studio platform or the processor.
+function(_qgc_gst_windows_sdk_arch out_var)
+    if(CMAKE_CXX_COMPILER_ARCHITECTURE_ID STREQUAL "ARM64")
+        set(_arch arm64)
+    elseif(CMAKE_CXX_COMPILER_ARCHITECTURE_ID STREQUAL "x64")
+        set(_arch x86_64)
+    elseif(
+        CMAKE_GENERATOR_PLATFORM MATCHES "ARM64|aarch64" OR (NOT CMAKE_GENERATOR_PLATFORM AND CMAKE_SYSTEM_PROCESSOR
+                                                                                              MATCHES "ARM64|aarch64")
     )
-
-    set(_is_complete TRUE)
-    foreach(_path IN LISTS _required_paths)
-        if(NOT EXISTS "${ROOT_DIR}/${_path}")
-            set(_is_complete FALSE)
-            break()
-        endif()
-    endforeach()
-
-    set(${OUT_VAR} "${_is_complete}" PARENT_SCOPE)
-endfunction()
-
-function(_qgc_windows_sdk_version ROOT_DIR OUT_VAR)
-    set(_pkg_config_file "${ROOT_DIR}/lib/pkgconfig/gstreamer-1.0.pc")
-    if(NOT EXISTS "${_pkg_config_file}")
-        set(${OUT_VAR} "" PARENT_SCOPE)
-        return()
-    endif()
-
-    file(STRINGS "${_pkg_config_file}" _version_line REGEX "^Version:[ \t]*" LIMIT_COUNT 1)
-    string(REGEX REPLACE "^Version:[ \t]*" "" _version "${_version_line}")
-    string(STRIP "${_version}" _version)
-    set(${OUT_VAR} "${_version}" PARENT_SCOPE)
-endfunction()
-
-function(_qgc_find_win_sdk_root EXTRACTED_DIR OUT_VAR)
-    if(EXISTS "${EXTRACTED_DIR}/bin/pkg-config.exe")
-        set(${OUT_VAR} "${EXTRACTED_DIR}" PARENT_SCOPE)
-        return()
-    endif()
-    file(GLOB_RECURSE _pkg_config_files "${EXTRACTED_DIR}/pkg-config.exe")
-    if(_pkg_config_files)
-        # A bundled second pkg-config.exe would yield a non-canonical root via
-        # element 0 — pick the shortest path so the canonical SDK root wins.
-        set(_first_pkg_config "")
-        set(_shortest_depth -1)
-        foreach(_candidate IN LISTS _pkg_config_files)
-            string(REGEX MATCHALL "/" _candidate_slashes "${_candidate}")
-            list(LENGTH _candidate_slashes _candidate_depth)
-            # Lower-case the equal-depth tiebreak so it stays deterministic on
-            # Windows' case-insensitive filesystem.
-            string(TOLOWER "${_candidate}" _candidate_lc)
-            string(TOLOWER "${_first_pkg_config}" _first_pkg_config_lc)
-            if(_shortest_depth EQUAL -1
-               OR _candidate_depth LESS _shortest_depth
-               OR (_candidate_depth EQUAL _shortest_depth AND _candidate_lc STRLESS "${_first_pkg_config_lc}"))
-                set(_first_pkg_config "${_candidate}")
-                set(_shortest_depth ${_candidate_depth})
-            endif()
-        endforeach()
-        cmake_path(GET _first_pkg_config PARENT_PATH _bin_dir)
-        cmake_path(GET _bin_dir PARENT_PATH _found_root)
-        set(${OUT_VAR} "${_found_root}" PARENT_SCOPE)
+        set(_arch arm64)
     else()
-        set(${OUT_VAR} "" PARENT_SCOPE)
+        set(_arch x86_64)
     endif()
+    set(${out_var}
+        "${_arch}"
+        PARENT_SCOPE
+    )
 endfunction()
 
-macro(_qgc_discover_windows_sdk)
-    if(CMAKE_GENERATOR_PLATFORM MATCHES "ARM64|aarch64" OR
-       (NOT CMAKE_GENERATOR_PLATFORM AND CMAKE_SYSTEM_PROCESSOR MATCHES "ARM64|aarch64"))
-        set(_gst_win_arch "arm64")
-        set(_gst_win_platform "windows_msvc_arm64")
-    else()
-        set(_gst_win_arch "x86_64")
-        set(_gst_win_platform "windows_msvc_x64")
+# _qgc_gst_windows_installed_sdk(<arch> <out_var>)
+# Sets <out_var> to the installed <arch> (x86_64 or arm64) SDK named by the GSTREAMER_1_0_ROOT_<ARCH> environment
+# variable, else by GSTREAMER_1_0_ROOT_MSVC_<ARCH> in MSVC builds, else found in a standard install location; "" when
+# none exists. An installation in a path with spaces (the installer's default, C:/Program Files) is skipped with a
+# warning, since pkg-config cannot pass such paths on (_qgc_gst_require_no_spaces).
+function(_qgc_gst_windows_installed_sdk arch out_var)
+    string(TOUPPER "${arch}" _env_arch)
+    set(_candidates "$ENV{GSTREAMER_1_0_ROOT_${_env_arch}}")
+    if(MSVC)
+        list(APPEND _candidates "$ENV{GSTREAMER_1_0_ROOT_MSVC_${_env_arch}}")
     endif()
-
-    if(NOT DEFINED GStreamer_ROOT_DIR)
-        if(_gst_win_arch STREQUAL "arm64")
-            if(DEFINED ENV{GSTREAMER_1_0_ROOT_ARM64} AND EXISTS "$ENV{GSTREAMER_1_0_ROOT_ARM64}")
-                set(GStreamer_ROOT_DIR "$ENV{GSTREAMER_1_0_ROOT_ARM64}")
-            elseif(MSVC AND DEFINED ENV{GSTREAMER_1_0_ROOT_MSVC_ARM64} AND EXISTS "$ENV{GSTREAMER_1_0_ROOT_MSVC_ARM64}")
-                set(GStreamer_ROOT_DIR "$ENV{GSTREAMER_1_0_ROOT_MSVC_ARM64}")
-            elseif(EXISTS "C:/Program Files/gstreamer/1.0/msvc_arm64")
-                set(GStreamer_ROOT_DIR "C:/Program Files/gstreamer/1.0/msvc_arm64")
-            elseif(EXISTS "C:/gstreamer/1.0/msvc_arm64")
-                set(GStreamer_ROOT_DIR "C:/gstreamer/1.0/msvc_arm64")
-            endif()
-        else()
-            if(DEFINED ENV{GSTREAMER_1_0_ROOT_X86_64} AND EXISTS "$ENV{GSTREAMER_1_0_ROOT_X86_64}")
-                set(GStreamer_ROOT_DIR "$ENV{GSTREAMER_1_0_ROOT_X86_64}")
-            elseif(MSVC AND DEFINED ENV{GSTREAMER_1_0_ROOT_MSVC_X86_64} AND EXISTS "$ENV{GSTREAMER_1_0_ROOT_MSVC_X86_64}")
-                set(GStreamer_ROOT_DIR "$ENV{GSTREAMER_1_0_ROOT_MSVC_X86_64}")
-            elseif(EXISTS "C:/Program Files/gstreamer/1.0/msvc_x86_64")
-                set(GStreamer_ROOT_DIR "C:/Program Files/gstreamer/1.0/msvc_x86_64")
-            elseif(EXISTS "C:/gstreamer/1.0/msvc_x86_64")
-                set(GStreamer_ROOT_DIR "C:/gstreamer/1.0/msvc_x86_64")
-            endif()
+    list(APPEND _candidates "C:/Program Files/gstreamer/1.0/msvc_${arch}" "C:/gstreamer/1.0/msvc_${arch}")
+    set(_root "")
+    foreach(_candidate IN LISTS _candidates)
+        if(NOT _candidate OR NOT EXISTS "${_candidate}")
+            continue()
         endif()
-    endif()
-
-    if(DEFINED GStreamer_ROOT_DIR AND EXISTS "${GStreamer_ROOT_DIR}")
-        _qgc_windows_sdk_complete("${GStreamer_ROOT_DIR}" _gst_win_sdk_complete)
-        _qgc_windows_sdk_version("${GStreamer_ROOT_DIR}" _gst_win_sdk_version)
-        if(NOT _gst_win_sdk_complete)
-            message(WARNING
-                "Existing GStreamer SDK at ${GStreamer_ROOT_DIR} is incomplete "
-                "(missing devel/runtime artifacts). Falling back to auto-download.")
-            unset(GStreamer_ROOT_DIR)
-            unset(GStreamer_ROOT_DIR CACHE)
-        elseif(NOT _gst_win_sdk_version
-               OR _gst_win_sdk_version VERSION_LESS GStreamer_FIND_VERSION)
-            message(WARNING
-                "Existing GStreamer SDK at ${GStreamer_ROOT_DIR} has version "
-                "'${_gst_win_sdk_version}', but ${GStreamer_FIND_VERSION}+ is required. "
-                "Falling back to auto-download.")
-            unset(GStreamer_ROOT_DIR)
-            unset(GStreamer_ROOT_DIR CACHE)
-        endif()
-    endif()
-
-    if(NOT DEFINED GStreamer_ROOT_DIR OR NOT EXISTS "${GStreamer_ROOT_DIR}")
-        if(NOT MSVC OR NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
-            message(FATAL_ERROR
-                "Automatic GStreamer download on Windows requires MSVC 64-bit (x64 or ARM64).\n"
-                "MinGW and Clang/Windows toolchains are NOT supported by the auto-download "
-                "path (the MSVC SDK ABI is incompatible).\n"
-                "Set GStreamer_ROOT_DIR to a complete SDK matching your toolchain/architecture.")
-        endif()
-
-        gstreamer_resolve_or_download_sdk(
-            PLATFORM     ${_gst_win_platform}
-            CACHE_SUBDIR "gstreamer-win-${_gst_win_arch}-${GStreamer_FIND_VERSION}"
-            FILENAME_PRIMARY "gstreamer-${_gst_win_arch}.exe"
-            CACHE_DIR_OUT _gst_win_cache_dir
-            ARCHIVE_OUT   _gst_win_exe
-        )
-        set(_gst_win_extracted "${_gst_win_cache_dir}/sdk")
-
-        set(_gst_win_root "")
-        if(EXISTS "${_gst_win_extracted}")
-            _qgc_find_win_sdk_root("${_gst_win_extracted}" _gst_win_root)
-        endif()
-
-        if(NOT _gst_win_root
-           OR NOT EXISTS "${_gst_win_root}/lib/gstreamer-1.0"
-           OR NOT EXISTS "${_gst_win_root}/lib/pkgconfig/gstreamer-1.0.pc")
-            file(REMOVE_RECURSE "${_gst_win_extracted}")
-            cmake_path(NATIVE_PATH _gst_win_exe _gst_win_exe_native)
-            cmake_path(NATIVE_PATH _gst_win_extracted _gst_win_extracted_native)
-            set(_gst_win_installer_log "${_gst_win_cache_dir}/installer-${_gst_win_arch}.log")
-            cmake_path(NATIVE_PATH _gst_win_installer_log _gst_win_installer_log_native)
-
-            # The .exe is auto-run with /VERYSILENT below; with checksum verification
-            # off it may be unverified — refuse to silently execute it.
-            if(NOT GStreamer_REQUIRE_CHECKSUM)
-                message(FATAL_ERROR
-                    "GStreamer: refusing to silently run the downloaded Windows installer "
-                    "'${_gst_win_exe_native}' because GStreamer_REQUIRE_CHECKSUM is OFF, so its "
-                    "integrity was not verified. Re-enable checksum verification "
-                    "(-DGStreamer_REQUIRE_CHECKSUM=ON) or install the SDK manually and point "
-                    "GStreamer_ROOT_DIR at it.")
-            endif()
-
-            message(STATUS "Installing GStreamer ${_gst_win_arch} SDK (silent)...")
-            execute_process(
-                COMMAND "${_gst_win_exe_native}"
-                    /VERYSILENT /SUPPRESSMSGBOXES /SP- /NORESTART
-                    "/LOG=${_gst_win_installer_log_native}"
-                    "/DIR=${_gst_win_extracted_native}"
-                RESULT_VARIABLE _installer_rc
-                ERROR_VARIABLE _installer_err
-                TIMEOUT 600
+        cmake_path(SET _candidate "${_candidate}")
+        if(_candidate MATCHES " ")
+            message(
+                WARNING "GStreamer: skipping the SDK installed at '${_candidate}': pkg-config cannot pass on a "
+                        "path with spaces. Install it to C:/gstreamer/1.0/msvc_${arch} to use it."
             )
-            if(NOT _installer_rc EQUAL 0)
-                file(REMOVE_RECURSE "${_gst_win_extracted}")
-                message(FATAL_ERROR "GStreamer installer failed (exit code: ${_installer_rc}).\n"
-                    "stderr: ${_installer_err}\n"
-                    "See installer log: ${_gst_win_installer_log}")
-            endif()
+            continue()
+        endif()
+        set(_root "${_candidate}")
+        break()
+    endforeach()
+    set(${out_var}
+        "${_root}"
+        PARENT_SCOPE
+    )
+endfunction()
 
-            _qgc_find_win_sdk_root("${_gst_win_extracted}" _gst_win_root)
-            if(_gst_win_root AND NOT _gst_win_root STREQUAL "${_gst_win_extracted}")
-                message(STATUS "GStreamer: SDK root at ${_gst_win_root}")
-            endif()
+# _qgc_gst_discover_windows_sdk()
+# Uses the SDK under GStreamer_ROOT_DIR, the GSTREAMER_1_0_ROOT_* environment or a standard install location when it is
+# complete and recent enough, else downloads the official MSVC SDK for the target architecture. An SDK the user named
+# in GStreamer_ROOT_DIR that is incomplete or too old fails configure; one found elsewhere is replaced by a download.
+# The SDK brings its own pkg-config.
+# cmake-lint: disable=C0103
+function(_qgc_gst_discover_windows_sdk)
+    _qgc_gst_windows_sdk_arch(_gst_win_arch)
 
-            set(_gst_win_post_complete FALSE)
-            if(_gst_win_root)
-                _qgc_windows_sdk_complete("${_gst_win_root}" _gst_win_post_complete)
-            endif()
-            if(NOT _gst_win_post_complete)
-                file(REMOVE_RECURSE "${_gst_win_extracted}")
-                message(FATAL_ERROR "GStreamer SDK extracted but required files are missing.\n"
-                    "Delete ${_gst_win_cache_dir} and re-run cmake to retry.")
-            endif()
+    set(_gst_win_user_root FALSE)
+    if(GStreamer_ROOT_DIR AND NOT GStreamer_AUTO_DOWNLOADED)
+        set(_gst_win_user_root TRUE)
+    elseif(NOT GStreamer_ROOT_DIR)
+        _qgc_gst_windows_installed_sdk(${_gst_win_arch} GStreamer_ROOT_DIR)
+    endif()
+
+    if(GStreamer_ROOT_DIR)
+        _qgc_gst_windows_sdk_complete("${GStreamer_ROOT_DIR}" _gst_win_sdk_complete)
+        _qgc_gst_header_version("${GStreamer_ROOT_DIR}/include" _gst_win_sdk_version)
+        set(_gst_win_problem "")
+        if(NOT _gst_win_sdk_complete)
+            set(_gst_win_problem "is incomplete (missing devel or runtime files)")
+        elseif(NOT _gst_win_sdk_version OR _gst_win_sdk_version VERSION_LESS QGC_GST_REQUESTED_VERSION)
+            set(_gst_win_problem
+                "has version '${_gst_win_sdk_version}', but ${QGC_GST_REQUESTED_VERSION} or later is required"
+            )
+        endif()
+        if(_gst_win_problem AND _gst_win_user_root)
+            message(
+                FATAL_ERROR
+                    "GStreamer: the SDK at ${GStreamer_ROOT_DIR} (GStreamer_ROOT_DIR) ${_gst_win_problem}. Point "
+                    "GStreamer_ROOT_DIR at a complete SDK of that version, or unset it to download one."
+            )
+        elseif(_gst_win_problem)
+            message(WARNING "GStreamer: the SDK at ${GStreamer_ROOT_DIR} ${_gst_win_problem}; downloading one instead.")
+            unset(GStreamer_ROOT_DIR)
+        endif()
+    endif()
+
+    if(NOT GStreamer_ROOT_DIR)
+        if(NOT MSVC OR NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
+            message(
+                FATAL_ERROR
+                    "Automatic GStreamer download on Windows requires MSVC 64-bit (x64 or ARM64).\n"
+                    "MinGW and Clang/Windows toolchains are NOT supported by the auto-download "
+                    "path (the MSVC SDK ABI is incompatible).\n"
+                    "Set GStreamer_ROOT_DIR to a complete SDK matching your toolchain/architecture."
+            )
         endif()
 
-        set(GStreamer_ROOT_DIR "${_gst_win_root}")
+        _qgc_gst_space_free_download_cache()
+        _qgc_gst_acquire_windows_sdk(${_gst_win_arch} GStreamer_ROOT_DIR)
         set(GStreamer_AUTO_DOWNLOADED TRUE)
     endif()
 
-    gstreamer_create_layout_target(
-        SDK_ROOT "${GStreamer_ROOT_DIR}"
-        TYPE FLAT
-    )
-    # Strip any prior define-variable entries (from a cached PKG_CONFIG_ARGN on
-    # reconfigure) before re-deriving them, so values can't double-apply or go stale.
-    list(FILTER PKG_CONFIG_ARGN EXCLUDE REGEX "^--define-variable=(prefix|libdir|includedir)=")
-    list(APPEND PKG_CONFIG_ARGN
-        "--define-variable=prefix=${GStreamer_ROOT_DIR}"
-        "--define-variable=libdir=${GSTREAMER_LIB_PATH}"
-        "--define-variable=includedir=${GSTREAMER_INCLUDE_PATH}"
+    qgc_gst_resolve_layout(SDK_ROOT "${GStreamer_ROOT_DIR}")
+    list(APPEND PKG_CONFIG_ARGN "--define-variable=prefix=${GStreamer_ROOT_DIR}"
+         "--define-variable=libdir=${GSTREAMER_LIB_PATH}" "--define-variable=includedir=${GSTREAMER_INCLUDE_PATH}"
     )
 
-    gstreamer_apply_pkgconfig_env(
+    qgc_gst_apply_pkgconfig_env(
         MODE SDK
         PKG_CONFIG_EXE "${GStreamer_ROOT_DIR}/bin/pkg-config.exe"
         LIBDIR "${GSTREAMER_LIB_PATH}/pkgconfig" "${GSTREAMER_PLUGIN_PATH}/pkgconfig"
         DONT_DEFINE_PREFIX
     )
-endmacro()
+    _qgc_gst_return_discovery()
+endfunction()
+
+# Windows: the plugins, GIO modules, libproxy backends and libexec helpers, the SDK DLLs they and QGC load, and the
+# notice. gioopenssl verifies against the Windows certificate stores, so the SDK's CA bundle stays out.
+function(qgc_gst_install_windows_sdk app_name plugin_dest_out)
+    qgc_gst_layout_get(ROOT_DIR _gst_root)
+    qgc_gst_layout_get(PLUGIN_PATH _gst_plugin_path)
+    qgc_gst_layout_get(PLUGIN_SCANNER_PATH _gst_scanner_path)
+    qgc_gst_layout_get(GIO_MODULE_PATH _gst_gio_module_path)
+    set(_plugin_dest "${CMAKE_INSTALL_LIBDIR}/gstreamer-1.0")
+    _qgc_gst_begin_runtime_closure()
+    qgc_gst_install_plugins("${_gst_plugin_path}" "${_plugin_dest}" "gst" "dll")
+    qgc_gst_install_gio_modules("${_gst_gio_module_path}" "${CMAKE_INSTALL_LIBDIR}/gio/modules" "dll")
+    # giolibproxy.dll loads proxy-1.dll, which loads its backends from lib/libproxy; startup only puts the app's bin
+    # directory on PATH, so they go there too.
+    file(GLOB _gst_libproxy_backends "${_gst_root}/lib/libproxy/*.dll")
+    _qgc_gst_install_files("${CMAKE_INSTALL_BINDIR}" ${_gst_libproxy_backends})
+    file(GLOB _gst_helpers "${_gst_scanner_path}/*.exe")
+    _qgc_gst_install_files("${CMAKE_INSTALL_LIBEXECDIR}/gstreamer-1.0" PROGRAMS ${_gst_helpers})
+    _qgc_gst_install_runtime_closure("${CMAKE_INSTALL_BINDIR}")
+    _qgc_gst_install_notice(share/licenses/gstreamer)
+    set(${plugin_dest_out}
+        "${_plugin_dest}"
+        PARENT_SCOPE
+    )
+endfunction()

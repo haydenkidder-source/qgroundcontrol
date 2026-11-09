@@ -7,6 +7,7 @@
 #include "CameraMetaData.h"
 #include "Fixtures/RAIIFixtures.h"
 #include "MAVLinkLib.h"
+#include "MockLink.h"
 #include "QGCCameraManager.h"
 #include "Vehicle.h"
 
@@ -37,9 +38,6 @@ void QGCCameraManagerTest::_testLostCameraCleanupWithPendingRequest()
     TestFixtures::MavCommandAckTimeoutFixture shortAckTimeout;
     ignoreLogMessage("Vehicle.MavCommandQueue", QtWarningMsg,
                      QRegularExpression("Giving up sending command after max retries:"));
-    // The AVAILABLE_MODES enumeration started during connect can still be in flight here and
-    // fails against MockLink. Timing dependent, so it only shows up on the slower CI lanes.
-    ignoreLogMessage("Vehicle.StandardModes", QtWarningMsg, QRegularExpression("Failed to retrieve available modes"));
 
     // Enable camera manager debug logging: the failure handlers log CameraStruct
     // fields, widening the use-after-free reads for ASan to catch. Scoped so the

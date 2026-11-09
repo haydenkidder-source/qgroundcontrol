@@ -1,8 +1,13 @@
 #pragma once
 
-#include <QtCore/QPointer>
 #include <functional>
+#include <memory>
 #include <optional>
+
+#include <QtCore/QHash>
+#include <QtCore/QPointer>
+#include <QtCore/QUrl>
+#include <QtQml/QQmlAbstractUrlInterceptor>
 
 #include "UnitTest.h"
 
@@ -45,6 +50,9 @@ protected slots:
     {
         _verifyFileDialogTestHookConsumed();
         stopUI();
+        _qmlUrlOverrides.clear();
+        _restoreUseTabbedPlanPanel();
+        _restoreUseGeoMapPlanEngine();
         UnitTest::cleanup();
     }
 
@@ -59,6 +67,18 @@ protected:
     /// retained-state page can cover the stock Fly View and absorb the clicks these tests send it,
     /// so the default is to run without one. Tests that exercise the overlay itself return true.
     virtual bool usesPluginFlyViewOverlay() const { return false; }
+
+    /// Makes the next startUI() load \a replacement wherever the UI loads \a original, so a test can stand in
+    /// for a QML file which custom builds override. Overrides are cleared after each test.
+    void overrideQmlFile(const QUrl& original, const QUrl& replacement);
+
+    /// Selects the tabbed Plan panel (true) or the tree view (false) for the next startUI(). The setting is
+    /// restored after each test because settings Facts are not reset between test functions.
+    void setUseTabbedPlanPanel(bool use);
+
+    /// Selects the GeoMap engine (true) or the QtLocation map (false) for the Plan View map on the next startUI().
+    /// Restored after each test like setUseTabbedPlanPanel().
+    void setUseGeoMapPlanEngine(bool use);
 
     /// Close the QML window and wait for it to settle.
     void closeUIWindow();
@@ -217,6 +237,15 @@ protected:
     int _pageDelay = 0;  ///< ms to pause between page switches when onscreen
 
 private:
+    QHash<QUrl, QUrl> _qmlUrlOverrides;
+    std::unique_ptr<QQmlAbstractUrlInterceptor> _qmlUrlInterceptor;
+    std::optional<bool> _savedUseTabbedPlanPanel;
+    std::optional<bool> _savedUseGeoMapPlanEngine;
+
+    void _restoreUseTabbedPlanPanel();
+    void _restoreUseGeoMapPlanEngine();
+    void _setUseGeoMapPlanEngineFact(bool use);
+
     /// Shared implementation for the verify* helpers: find the visible item,
     /// guard against the property not existing (an invalid QVariant silently
     /// converts to false/"" which would make false/empty expectations pass

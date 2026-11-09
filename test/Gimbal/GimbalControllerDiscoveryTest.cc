@@ -2,6 +2,7 @@
 
 #include <optional>
 
+#include <QtCore/QElapsedTimer>
 #include <QtCore/QScopeGuard>
 #include <QtTest/QSignalSpy>
 #include <QtTest/QTest>
@@ -24,6 +25,7 @@ constexpr uint8_t kOutOfRangeDeviceId = 200;
 constexpr int kManagerInfoHeartbeatRetries = 6;  // GimbalController::PotentialGimbalManager
 constexpr int kStatusIntervalRetries = 6;        // Gimbal::_requestStatusRetries
 constexpr int kStatusIntervalFallbackUs = 5000000;
+constexpr int kNoNewRequestWindowMs = 300;       // spans several MockLink heartbeats, which trigger requests
 
 }  // namespace
 
@@ -187,10 +189,25 @@ void GimbalControllerDiscoveryTest::_testManagerInformationUnavailable()
     };
 
     QVERIFY_TRUE_WAIT(requestCount() >= 1, TestTimeout::longMs());
-    int lastCount = requestCount();
-    while (QTest::qWaitFor([&]() { return requestCount() > lastCount; }, TestTimeout::mediumMs())) {
-        lastCount = requestCount();
-    }
+
+    // Without manager information no gimbal exists, so heartbeats are the only request source. Once every potential
+    // manager has spent its heartbeat budget and no request is in flight, the request count is final.
+    GimbalController* const controller = gimbalController();
+    QVERIFY(controller);
+    const auto retryBudgetSpent = [controller]() {
+        if (controller->_pendingInformationRequestCompId != -1) {
+            return false;
+        }
+        for (const auto& manager : std::as_const(controller->_potentialGimbalManagers)) {
+            if (!manager.receivedGimbalManagerInformation && (manager.requestGimbalManagerInformationRetries > 0)) {
+                return false;
+            }
+        }
+        return true;
+    };
+    QVERIFY_TRUE_WAIT(retryBudgetSpent(), TestTimeout::longMs());
+    const int lastCount = requestCount();
+    QVERIFY(!QTest::qWaitFor([&]() { return requestCount() > lastCount; }, kNoNewRequestWindowMs));
     QVERIFY2(lastCount <= kManagerInfoHeartbeatRetries * kCommandResends,
              qPrintable(QStringLiteral("%1 requests sent").arg(lastCount)));
     if (response == MockLinkGimbal::InformationResponse::Nack) {
@@ -270,7 +287,15 @@ void GimbalControllerDiscoveryTest::_testStatusIntervalRetryFallback()
         return;
     }
 
-    QVERIFY_TRUE_WAIT(activeGimbal() != nullptr, TestTimeout::longMs());
+    // Each gimbal message lets QGC retry the ignored request; push attitude rather than wait on the 1Hz stream
+    QElapsedTimer elapsed;
+    elapsed.start();
+    while (!activeGimbal() && (elapsed.elapsed() < TestTimeout::longMs())) {
+        mockGimbal()->sendGimbalDeviceAttitudeStatusNow();
+        (void) QTest::qWaitFor([this]() { return activeGimbal() != nullptr; },
+                               2 * GimbalController::kTestStatusRequestSpacingMs);
+    }
+    QVERIFY(activeGimbal());
 
     const QList<int> requests = mockGimbal()->statusIntervalRequests();
     QVERIFY2(requests.count() > kIgnoredRequests,

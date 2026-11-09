@@ -1,6 +1,7 @@
 #include "GuidedActionTargetUITest.h"
 
 #include <QtCore/QRegularExpression>
+#include <QtCore/QScopeGuard>
 #include <QtCore/QTimer>
 #include <QtQuick/QQuickItem>
 #include <QtQuick/QQuickWindow>
@@ -156,7 +157,7 @@ void GuidedActionTargetUITest::_emergencyStopConfirmationStaysWithItsVehicle()
     int firstArmDisarmResults = 0;
     int secondArmDisarmResults = 0;
     const auto countArmDisarm = [](int& count) {
-        return [&count](int, int, int command, int, int) {
+        return [&count](quint32, int, int command, int, int) {
             if (command == MAV_CMD_COMPONENT_ARM_DISARM) {
                 ++count;
             }
@@ -197,6 +198,48 @@ void GuidedActionTargetUITest::_emergencyStopConfirmationStaysWithItsVehicle()
     QCOMPARE(confirmButton->property("text").toString(), QStringLiteral("EMERGENCY STOP"));
     QVERIFY(QMetaObject::invokeMethod(confirmButton, "activated"));
     QVERIFY_TRUE_WAIT(!first->armed(), TestTimeout::mediumMs());
+}
+
+void GuidedActionTargetUITest::_cancelledConfirmationCannotBeActivated()
+{
+    startUI();
+    QVERIFY(!QTest::currentTestFailed());
+    LinkManager::instance()->setConnectionsAllowed();
+
+    // The airborne transition creates QGCPressure, which warns on hosts without a pressure backend
+    ignoreLogMessage("Utilities.QGCSensors", QtWarningMsg,
+                     QRegularExpression(QStringLiteral("Failed to connect to pressure backend")));
+    ignoreLogMessage("Utilities.QGCSensors", QtWarningMsg,
+                     QRegularExpression(QStringLiteral("Error Initializing Pressure Sensor")));
+
+    QPointer<MockLink> link = _startVehicle(0, MAV_AUTOPILOT_PX4, MAV_TYPE_QUADROTOR, true);
+    QVERIFY(link);
+    auto* manager = MultiVehicleManager::instance();
+    Vehicle* const vehicle = manager->getVehicleById(link->vehicleId());
+    QVERIFY(vehicle);
+    manager->setActiveVehicle(vehicle);
+    QVERIFY_TRUE_WAIT(manager->activeVehicle() == vehicle, TestTimeout::mediumMs());
+
+    // Emergency Stop stops being applicable once the vehicle is disarmed, which cancels its open confirmation.
+    // A hold that completes after that must not send the command to the same vehicle either.
+    QVERIFY(_openEmergencyStopConfirmation());
+    QQuickItem* const staleButton =
+        findVisibleItem(_rootItem, QStringLiteral("guidedActionConfirmButton"), TestTimeout::mediumMs());
+    QVERIFY(staleButton);
+    vehicle->setArmed(false, false /* showError */);
+    QVERIFY_TRUE_WAIT(!vehicle->armed(), TestTimeout::longMs());
+    QVERIFY_TRUE_WAIT(_confirmationHidden(), TestTimeout::mediumMs());
+
+    int armDisarmResults = 0;
+    const QMetaObject::Connection resultConnection =
+        connect(vehicle, &Vehicle::mavCommandResult, this, [&armDisarmResults](quint32, int, int command, int, int) {
+            if (command == MAV_CMD_COMPONENT_ARM_DISARM) {
+                ++armDisarmResults;
+            }
+        });
+    const auto disconnectGuard = qScopeGuard([resultConnection] { QObject::disconnect(resultConnection); });
+    QVERIFY(QMetaObject::invokeMethod(staleButton, "activated"));
+    QVERIFY(!QTest::qWaitFor([&] { return armDisarmResults > 0; }, TestTimeout::shortMs()));
 }
 
 void GuidedActionTargetUITest::_planRemovalConfirmationStaysWithItsVehicle()

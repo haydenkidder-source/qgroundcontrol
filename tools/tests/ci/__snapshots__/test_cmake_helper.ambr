@@ -1,0 +1,117 @@
+# serializer version: 1
+# name: test_failed_build_annotates_and_summarizes_compiler_errors
+  '''
+  ### Build
+  
+  | Item | Value |
+  | --- | --- |
+  | Result | failed |
+  | Duration | 0.0s |
+  
+  <details><summary>Failed targets / first errors</summary>
+  
+  Failed targets:
+  
+  - `CMakeFiles/QGroundControl.dir/test/MAVLink/HealthAndArmingCheckReportTest.cc.o`
+  
+  Errors:
+  
+  ```
+  test/MAVLink/HealthAndArmingCheckReportTest.cc:83:31: error: no matching function for call to ‘EventHandler::EventHandler(std::nullptr_t, QString)’
+  test/MAVLink/HealthAndArmingCheckReportTest.cc:144:31: error: no matching function for call to ‘EventHandler::EventHandler(std::nullptr_t, QString)’
+  ```
+  
+  </details>
+  
+  
+  '''
+# ---
+# name: test_failed_configure_annotates_and_summarizes_the_first_cmake_error
+  '''
+  ### Configure
+  
+  | Item | Value |
+  | --- | --- |
+  | Result | failed |
+  | Duration | 0.0s |
+  | Preset | `Windows` |
+  | Generator | Ninja |
+  
+  <details><summary>CMake error</summary>
+  
+  ```
+  CMake Error at .cache/CPM/zstd/dfd2/build/cmake/CMakeLists.txt:36 (project):
+    No CMAKE_ASM_COMPILER could be found.
+  
+    Tell CMake where to find the compiler by setting either the environment
+    variable "ASM" or the CMake cache entry CMAKE_ASM_COMPILER to the full path
+    to the compiler, or to the compiler name if it is in the PATH.
+  ```
+  
+  </details>
+  
+  <details><summary>Configure output (last 40 lines)</summary>
+  
+  ```
+  -- liblzma support enabled
+  -- The ASM compiler identification is unknown
+  -- Didn't find assembler
+  CMake Error at .cache/CPM/zstd/dfd2/build/cmake/CMakeLists.txt:36 (project):
+    No CMAKE_ASM_COMPILER could be found.
+    Tell CMake where to find the compiler by setting either the environment
+    variable "ASM" or the CMake cache entry CMAKE_ASM_COMPILER to the full path
+    to the compiler, or to the compiler name if it is in the PATH.
+  -- Configuring incomplete, errors occurred!
+  ```
+  
+  </details>
+  
+  
+  '''
+# ---
+# name: test_summary_writes_one_build_section
+  '''
+  ### Build
+  
+  | Item | Value |
+  | --- | --- |
+  | Result | passed |
+  | Duration | 12m 34s |
+  | Toolchain | Debug, Ninja, GNU 13.3.0, unity |
+  | Compiler cache | ccache: 1,934 of 2,000 (96.7%) hits (1,900 direct, 34 preprocessed) |
+  | Compiler cache size | 1.2 GiB of 3.0 GiB, 0 LRU cleanups |
+  | moc cache | 812 of 820 (99.0%) hits (this build) |
+  | moc cache size | 212 MiB of 1.0 GiB |
+  | Build steps run | 2,345 |
+  
+  <details><summary>Slowest build steps (top 10)</summary>
+  
+  | Output | Kind | Time |
+  | --- | --- | ---: |
+  | `src/Vehicle/CMakeFiles/Vehicle.dir/Vehicle.cc.o` | compile | 1m 01s |
+  | `Debug/QGroundControl` | link/archive | 42s |
+  
+  </details>
+  
+  <details><summary>Build time by kind</summary>
+  
+  | Kind | Commands | Time (summed; commands overlap) |
+  | --- | ---: | ---: |
+  | compile | 2,100 | 1h 30m |
+  | autogen/moc | 233 | 2m 00s |
+  | link/archive | 12 | 1m 35s |
+  
+  </details>
+  
+  <details><summary>moc cache events</summary>
+  
+  | Event | Count | Meaning |
+  | --- | ---: | --- |
+  | `miss-first-seen` | 5 | first time this header was moc'd |
+  | `miss-include-changed` | 3 | a header it includes changed |
+  
+  </details>
+  
+  
+  '''
+# ---

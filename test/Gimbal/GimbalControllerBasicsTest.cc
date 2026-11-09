@@ -1,12 +1,15 @@
 #include "GimbalControllerBasicsTest.h"
 
+#include <QtCore/QScopeGuard>
 #include <QtTest/QSignalSpy>
 #include <QtTest/QTest>
 
+#include "Fact.h"
 #include "Gimbal.h"
 #include "GimbalController.h"
 #include "GimbalControllerSettings.h"
 #include "MAVLinkProtocol.h"
+#include "MavlinkSettings.h"
 #include "MockConfiguration.h"
 #include "MockLink.h"
 #include "MultiSignalSpy.h"
@@ -100,9 +103,9 @@ void GimbalControllerBasicsTest::_testControlArbitration()
     controller->gimbalOnScreenControl(1.0f, 0.0f, true /* clickAndPoint */, false, false);
 
     QVERIFY(spy.emittedOnce("showAcquireGimbalControlPopup"));
-    // No command may reach the gimbal; proving absence needs the full window
+    // No command may reach the gimbal
     QVERIFY(!QTest::qWaitFor([mock, pitchYawBefore]() { return mock->lastPitchYawCommand().count > pitchYawBefore; },
-                             TestTimeout::shortMs()));
+                             kNoCommandWindowMs));
 
     // Control released by the other GCS: a command with nobody in control acquires control implicitly
     mock->setPrimaryControl(0, 0);
@@ -117,6 +120,38 @@ void GimbalControllerBasicsTest::_testControlArbitration()
                       TestTimeout::mediumMs());
     QVERIFY_TRUE_WAIT(mock->lastPitchYawCommand().count > pitchYawBefore, TestTimeout::mediumMs());
     QVERIFY_TRUE_WAIT(gimbal->gimbalHaveControl(), TestTimeout::longMs());
+}
+
+void GimbalControllerBasicsTest::_testWideGcsSystemIdBlocksControl()
+{
+    GimbalController* const controller = gimbalController();
+    MockLinkGimbal* const mock = mockGimbal();
+    Fact* const gcsSystemId = SettingsManager::instance()->mavlinkSettings()->gcsMavlinkSystemID();
+    const QVariant previousSystemId = gcsSystemId->rawValue();
+    const auto restoreSystemId =
+        qScopeGuard([gcsSystemId, previousSystemId]() { gcsSystemId->setRawValue(previousSystemId); });
+    gcsSystemId->setRawValue(0x800001ffU);
+
+    const int configureBefore = _mockLink->receivedMavCommandCount(MAV_CMD_DO_GIMBAL_MANAGER_CONFIGURE);
+    const int pitchYawBefore = mock->lastPitchYawCommand().count;
+    const QRegularExpression unavailable(QStringLiteral("Gimbal control unavailable.*ID 2147484159"));
+
+    // GIMBAL_MANAGER_STATUS can't name a wide GCS id, so control is refused rather than claimed with a garbled id.
+    expectAppMessage(unavailable);
+    controller->acquireGimbalControl();
+    verifyExpectedLogMessage();
+
+    expectAppMessage(unavailable);
+    controller->sendPitchBodyYaw(0.0f, 0.0f, false);
+    verifyExpectedLogMessage();
+
+    // No command may reach the gimbal
+    QVERIFY(!QTest::qWaitFor(
+        [this, mock, configureBefore, pitchYawBefore]() {
+            return (_mockLink->receivedMavCommandCount(MAV_CMD_DO_GIMBAL_MANAGER_CONFIGURE) > configureBefore) ||
+                   (mock->lastPitchYawCommand().count > pitchYawBefore);
+        },
+        kNoCommandWindowMs));
 }
 
 void GimbalControllerBasicsTest::_testYawLockRoundTrip()
@@ -288,7 +323,7 @@ void GimbalControllerBasicsTest::_testJoystickRateSlots()
     // Both axes stopped: no further resends
     const int afterStop = mock->lastSetAttitudeCommand().count;
     QVERIFY(!QTest::qWaitFor([mock, afterStop]() { return mock->lastSetAttitudeCommand().count > afterStop; },
-                             TestTimeout::shortMs()));
+                             kNoCommandWindowMs));
 }
 
 void GimbalControllerBasicsTest::_testRateCommand()
@@ -327,7 +362,7 @@ void GimbalControllerBasicsTest::_testRateCommand()
                       TestTimeout::mediumMs());
     const int afterStop = mock->lastSetAttitudeCommand().count;
     QVERIFY(!QTest::qWaitFor([mock, afterStop]() { return mock->lastSetAttitudeCommand().count > afterStop; },
-                             TestTimeout::shortMs()));
+                             kNoCommandWindowMs));
 }
 
 UT_REGISTER_TEST(GimbalControllerBasicsTest, TestLabel::Integration, TestLabel::Vehicle)

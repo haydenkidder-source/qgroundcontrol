@@ -33,6 +33,7 @@ public:
     QString             followFlightMode                (void) const override;
     QString             takeOffFlightMode               (void) const override;
     QString             stabilizedFlightMode            (void) const override;
+    VehicleReadiness* createVehicleReadiness(Vehicle* vehicle) const override;
     void                pauseVehicle                    (Vehicle* vehicle) const override;
     void                guidedModeRTL                   (Vehicle* vehicle, bool smartRTL) const override;
     void                guidedModeLand                  (Vehicle* vehicle) const override;
@@ -68,8 +69,14 @@ public:
 
     void                updateAvailableFlightModes      (FlightModeList &modeList) override;
 
-private slots:
-    void _mavCommandResult(int vehicleId, int component, int command, int result, int failureCode);
+    /// Number of PX4 External Mode slots. PX4FirmwarePlugin.cc checks it against px4_custom_mode.h.
+    static constexpr int kExternalFlightModeCount = 8;
+
+    /// Name a vehicle's AVAILABLE_MODES list gives an External Mode (1-based), empty if no mode is registered there
+    static QString externalFlightModeName(const FlightModeList& modeList, int externalIndex);
+
+    /// externalFlightModeName of each of External Mode 1-8, in order
+    static QStringList externalFlightModeNames(const FlightModeList& modeList);
 
 private:
     void    _handleAutopilotVersion         (Vehicle* vehicle, mavlink_message_t* message);

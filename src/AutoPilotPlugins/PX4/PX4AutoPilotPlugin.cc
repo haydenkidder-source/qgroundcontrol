@@ -1,19 +1,22 @@
 #include "PX4AutoPilotPlugin.h"
-#include "PX4AirframeLoader.h"
-#include "AppMessages.h"
-#include "FlightModesComponent.h"
-#include "PX4RadioComponent.h"
-#include "PX4TuningComponent.h"
-#include "PowerComponent.h"
-#include "SafetyComponent.h"
-#include "SensorsComponent.h"
-#include "ParameterManager.h"
-#include "Vehicle.h"
-#include "Actuators.h"
-#include "ActuatorComponent.h"
-#include "QGCLoggingCategory.h"
 
 #include <algorithm>
+
+#include "ActuatorComponent.h"
+#include "Actuators.h"
+#include "AppMessages.h"
+#include "FailureInjectionComponent.h"
+#include "FlightModesComponent.h"
+#include "PX4AirframeLoader.h"
+#include "PX4CollisionComponent.h"
+#include "PX4EscComponent.h"
+#include "PX4RadioComponent.h"
+#include "PX4ReturnLandComponent.h"
+#include "PX4TuningComponent.h"
+#include "ParameterManager.h"
+#include "QGCLoggingCategory.h"
+#include "SensorsComponent.h"
+#include "Vehicle.h"
 
 QGC_LOGGING_CATEGORY(PX4AutoPilotPluginLog, "Vehicle.Actuators.PX4AutoPilotPlugin")
 
@@ -23,10 +26,15 @@ PX4AutoPilotPlugin::PX4AutoPilotPlugin(Vehicle* vehicle, QObject* parent)
     , _airframeComponent(nullptr)
     , _radioComponent(nullptr)
     , _esp8266Component(nullptr)
+    , _failureInjectionComponent(nullptr)
     , _flightModesComponent(nullptr)
     , _sensorsComponent(nullptr)
-    , _safetyComponent(nullptr)
-    , _powerComponent(nullptr)
+    , _returnLandComponent(nullptr)
+    , _collisionComponent(nullptr)
+    , _failsafesComponent(nullptr)
+    , _serialPortsComponent(nullptr)
+    , _escComponent(nullptr)
+    , _batteryComponent(nullptr)
     , _motorComponent(nullptr)
     , _actuatorComponent(nullptr)
     , _tuningComponent(nullptr)
@@ -73,9 +81,16 @@ const QVariantList& PX4AutoPilotPlugin::vehicleComponents(void)
                 _flightModesComponent->setupTriggerSignals();
                 _components.append(QVariant::fromValue(static_cast<VehicleComponent*>(_flightModesComponent)));
 
-                _powerComponent = new PowerComponent(_vehicle, this, this);
-                _powerComponent->setupTriggerSignals();
-                _components.append(QVariant::fromValue(static_cast<VehicleComponent*>(_powerComponent)));
+                _escComponent = new PX4EscComponent(_vehicle, this, this);
+                _escComponent->setupTriggerSignals();
+                _components.append(QVariant::fromValue(static_cast<VehicleComponent*>(_escComponent)));
+
+                if (_vehicle->parameterManager()->parameterExists(ParameterManager::defaultComponentId,
+                                                                  "BAT1_SOURCE")) {
+                    _batteryComponent = new PX4BatteryComponent(_vehicle, this, this);
+                    _batteryComponent->setupTriggerSignals();
+                    _components.append(QVariant::fromValue(static_cast<VehicleComponent*>(_batteryComponent)));
+                }
 
                 if (_vehicle->actuators()) {
                     _vehicle->actuators()->init(); // At this point params are loaded, so we can init the actuators
@@ -110,9 +125,31 @@ const QVariantList& PX4AutoPilotPlugin::vehicleComponents(void)
                     _components.append(QVariant::fromValue(static_cast<VehicleComponent*>(_motorComponent)));
                 }
 
-                _safetyComponent = new SafetyComponent(_vehicle, this, this);
-                _safetyComponent->setupTriggerSignals();
-                _components.append(QVariant::fromValue(static_cast<VehicleComponent*>(_safetyComponent)));
+                _returnLandComponent = new PX4ReturnLandComponent(_vehicle, this, this);
+                _returnLandComponent->setupTriggerSignals();
+                _components.append(QVariant::fromValue(static_cast<VehicleComponent*>(_returnLandComponent)));
+
+                if (_vehicle->parameterManager()->parameterExists(ParameterManager::defaultComponentId, "CP_DIST")) {
+                    _collisionComponent = new PX4CollisionComponent(_vehicle, this, this);
+                    _collisionComponent->setupTriggerSignals();
+                    _components.append(QVariant::fromValue(static_cast<VehicleComponent*>(_collisionComponent)));
+                }
+
+                _failsafesComponent = new PX4FailsafesComponent(_vehicle, this, this);
+                _failsafesComponent->setupTriggerSignals();
+                _components.append(QVariant::fromValue(static_cast<VehicleComponent*>(_failsafesComponent)));
+
+                if (!PX4SerialPortsComponent::functionFacts(_vehicle->parameterManager()).isEmpty()) {
+                    _serialPortsComponent = new PX4SerialPortsComponent(_vehicle, this, this);
+                    _serialPortsComponent->setupTriggerSignals();
+                    _components.append(QVariant::fromValue(static_cast<VehicleComponent*>(_serialPortsComponent)));
+                }
+
+                if (_vehicle->parameterManager()->parameterExists(ParameterManager::defaultComponentId, "SYS_FAILURE_EN")) {
+                    _failureInjectionComponent = new FailureInjectionComponent(_vehicle, this, this);
+                    _failureInjectionComponent->setupTriggerSignals();
+                    _components.append(QVariant::fromValue(static_cast<VehicleComponent*>(_failureInjectionComponent)));
+                }
 
                 _tuningComponent = new PX4TuningComponent(_vehicle, this, this);
                 _tuningComponent->setupTriggerSignals();
@@ -189,9 +226,10 @@ QString PX4AutoPilotPlugin::prerequisiteSetup(VehicleComponent* component) const
         }
     } else if (qobject_cast<const PX4TuningComponent*>(component)) {
         requiresAirframeCheck = true;
-    } else if (qobject_cast<const PowerComponent*>(component)) {
+    } else if (qobject_cast<const PX4EscComponent*>(component) || qobject_cast<const PX4BatteryComponent*>(component)) {
         requiresAirframeCheck = true;
-    } else if (qobject_cast<const SafetyComponent*>(component)) {
+    } else if (qobject_cast<const PX4ReturnLandComponent*>(component) ||
+               qobject_cast<const PX4CollisionComponent*>(component)) {
         requiresAirframeCheck = true;
     } else if (qobject_cast<const SensorsComponent*>(component)) {
         requiresAirframeCheck = true;

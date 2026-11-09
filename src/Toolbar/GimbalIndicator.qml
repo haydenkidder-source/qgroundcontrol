@@ -59,7 +59,7 @@ Item {
                 source:                  "/res/CameraGimbal.png"
                 fillMode:                Image.PreserveAspectFit
                 sourceSize.height:       height
-                color:                   qgcPal.text
+                color:                   qgcPal.textPrimary
 
             }
 
@@ -68,7 +68,7 @@ Item {
                 anchors.horizontalCenter: parent.horizontalCenter
                 font.pointSize:         ScreenTools.smallFontPointSize
                 text:                   control.gimbalName(activeGimbal)
-                color:                  qgcPal.text
+                color:                  qgcPal.textPrimary
                 visible:                multiGimbalSetup
             }
         }
@@ -87,7 +87,7 @@ Item {
                 text:                   activeGimbal && activeGimbal.retracted ?
                                             qsTr("Retracted") :
                                             (activeGimbal && activeGimbal.yawLock ? qsTr("Yaw locked") : qsTr("Yaw follow"))
-                color:                  qgcPal.text
+                color:                  qgcPal.textPrimary
                 Layout.columnSpan:      2
                 Layout.alignment:       Qt.AlignHCenter
             }
@@ -95,7 +95,7 @@ Item {
                 id:             pitchLabel
                 font.pointSize: ScreenTools.smallFontPointSize
                 text:           activeGimbal ? qsTr("P: ") + activeGimbal.absolutePitch.valueString : ""
-                color:          qgcPal.text
+                color:          qgcPal.textPrimary
             }
             QGCLabel {
                 id:             panLabel
@@ -105,7 +105,7 @@ Item {
                                         (qsTr("Az: ") + activeGimbal.absoluteYaw.valueString) :
                                         (qsTr("Y: ") + activeGimbal.bodyYaw.valueString)) :
                                     ""
-                color:          qgcPal.text
+                color:          qgcPal.textPrimary
             }
         }
     }
@@ -132,7 +132,7 @@ Item {
         ColumnLayout {
             spacing: ScreenTools.defaultFontPixelWidth / 2
 
-            SettingsGroupLayout {
+            QGCGroupBox {
                 heading: qsTr("Active Gimbal")
                 visible: multiGimbalSetup
 
@@ -173,7 +173,7 @@ Item {
                 }
             }
 
-            SettingsGroupLayout {
+            QGCGroupBox {
                 heading:        qsTr("Commands")
                 showDividers:   false
 
@@ -243,7 +243,7 @@ Item {
         ColumnLayout {
             spacing: ScreenTools.defaultFontPixelWidth / 2
 
-            SettingsGroupLayout {
+            QGCGroupBox {
                 heading:        qsTr("On-Screen Control")
                 showDividers:   false
 
@@ -280,7 +280,7 @@ Item {
                 }
             }
 
-            SettingsGroupLayout {
+            QGCGroupBox {
                 heading:        qsTr("Zoom speed")
                 showDividers:   false
 
@@ -296,7 +296,7 @@ Item {
 
             }
 
-            SettingsGroupLayout {
+            QGCGroupBox {
                 LabelledFactTextField {
                     label:      qsTr("Joystick buttons speed:")
                     fact:       _gimbalControllerSettings.joystickButtonsSpeed

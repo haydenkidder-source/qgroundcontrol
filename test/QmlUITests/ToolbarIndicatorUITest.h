@@ -1,8 +1,11 @@
 #pragma once
 
-#include "QmlUITestBase.h"
-
 #include <functional>
+#include <memory>
+
+#include <QtCore/QTemporaryDir>
+
+#include "QmlUITestBase.h"
 
 class MockLink;
 
@@ -25,11 +28,24 @@ private slots:
     void _testAPMCopterIndicators();
     void _testEmergencyStopReplacesDisarmInFlight_data();
     void _testEmergencyStopReplacesDisarmInFlight();
+    void _testActionsDisabledWhileVehicleNotReady();
+    void _testTakeoffLandShareSlot();
     void _testArmRequiresEnforcedChecklist();
     void _testDisarmReachableWithoutParameters();
     void _testRebootRequiredIndicator_data();
     void _testRebootRequiredIndicator();
     void _testIndicatorDrawerClosesOnVehicleDisconnect();
+    void _testVehicleMessagesMarkReadAndClear();
+    void _testMockLinkBootStatusTextShowsNonCriticalIndicator();
+    void _testChecklistBadgeShownBesideOtherProblems();
+    void _testHealthChecksDriveToolbarSeverity();
+    void _testChecklistProgressPersistsAcrossDropdownCloseAndReconnect();
+    void _testStockChecklistLocksLaterSections();
+    void _testPreVehicleChecklistSurvivesConnectAndDisconnect();
+    void _testPreVehicleChecklistLocksVehicleChecks();
+    void _testPreVehicleChecklistResetsAfterFlight();
+    void _testEnforcedChecklistRequiresPreVehicleChecks();
+    void _testAutomaticPreVehicleChecksPassOnLoad();
 
 private:
     /// Shared implementation: connect a MockLink via \a factory and cycle
@@ -42,4 +58,25 @@ private:
     /// \a expectExpand is true (failing if the button is absent), then close
     /// it with Escape.  Returns true on success.
     bool _exerciseIndicator(QQuickItem *indicatorItem, const QString &indicatorName, bool expectExpand);
+
+    /// Starts the UI and connects a PX4 MockLink for the checklist tests. Returns false if setup failed.
+    bool _startChecklistUI(QPointer<MockLink>& mockLink, Vehicle*& vehicle);
+
+    /// Tears down what _startChecklistUI set up.
+    void _stopChecklistUI(QPointer<MockLink>& mockLink);
+
+    /// Opens the main status dropdown and selects its checklist tab. Returns nullptr if there is no checklist tab.
+    QQuickItem* _openChecklistTab();
+
+    /// Confirms every enabled manual pre-vehicle checklist item, returning their names.
+    QStringList _passPreVehicleChecklistItems();
+
+    /// Closes the main status dropdown with Escape and waits for it to go away. Returns false if it stays open.
+    bool _closeIndicatorDrawer();
+
+    /// Makes the next startUI() load \a fixtureQml as the pre-vehicle checklist, since stock QGC ships none. Without
+    /// \a fixtureQml it has a single manual check. Returns false if the fixture could not be written.
+    bool _usePreVehicleChecksFixture(const char* fixtureQml = nullptr);
+
+    std::unique_ptr<QTemporaryDir> _preVehicleChecksDir;
 };

@@ -1,7 +1,10 @@
-target_sources(${CMAKE_PROJECT_NAME}
+target_sources(
+    QGCUnitTests
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/CoordFixtures.cc
         ${CMAKE_CURRENT_SOURCE_DIR}/CoordFixtures.h
+        ${CMAKE_CURRENT_SOURCE_DIR}/HealthReportFixtures.cc
+        ${CMAKE_CURRENT_SOURCE_DIR}/HealthReportFixtures.h
         ${CMAKE_CURRENT_SOURCE_DIR}/MissionFixtures.cc
         ${CMAKE_CURRENT_SOURCE_DIR}/MissionFixtures.h
         ${CMAKE_CURRENT_SOURCE_DIR}/RAIIFixtures.cc

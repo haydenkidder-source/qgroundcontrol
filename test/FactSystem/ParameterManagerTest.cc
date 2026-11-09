@@ -3,9 +3,11 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <memory>
 
 #include <QtCore/QElapsedTimer>
 #include <QtCore/QRegularExpression>
+#include <QtCore/QScopeGuard>
 #include <QtTest/QSignalSpy>
 
 #include "BulkRefreshJob.h"
@@ -37,6 +39,10 @@ Vehicle *ParameterManagerTest::_connectAndWaitForVehicle(MockConfiguration::Fail
         qWarning() << "MockLink already connected";
         return nullptr;
     }
+    // On a slow runner the PARAM_VALUE stream can delay a COMMAND_ACK past the ack timeout. A stray
+    // UNSUPPORTED ack from the retried GIMBAL_MANAGER_INFORMATION probe (which MockLink rejects) can
+    // then be credited to the post-connect AVAILABLE_MODES request, which is unrelated to these tests.
+    ignoreLogMessage("Vehicle.StandardModes", QtWarningMsg, QRegularExpression("Failed to retrieve available modes"));
     _mockLink = MockLink::startPX4MockLink(MockConfiguration::OptionNone, failureMode);
     _mockLink->mockLinkFTP()->setParamPckEnabled(false);
     MultiVehicleManager* vehicleMgr = MultiVehicleManager::instance();
@@ -81,32 +87,40 @@ void ParameterManagerTest::cleanup()
 void ParameterManagerTest::_noFailureWorker(MockConfiguration::FailureMode_t failureMode)
 {
     QVERIFY2(!_mockLink, "MockLink already connected");
-    _mockLink = MockLink::startPX4MockLink(MockConfiguration::OptionNone, failureMode);
     MultiVehicleManager* vehicleMgr = MultiVehicleManager::instance();
     QVERIFY(vehicleMgr);
-    // Wait for the Vehicle to get created
+    // Spy from vehicle creation: a fast load can complete before the vehicle becomes active
     QSignalSpy spyVehicle(vehicleMgr, &MultiVehicleManager::activeVehicleAvailableChanged);
-    QVERIFY_SIGNAL_WAIT(spyVehicle, TestTimeout::mediumMs());
+    QSignalSpy spyParamsReady(vehicleMgr, &MultiVehicleManager::parameterReadyVehicleAvailableChanged);
+    std::unique_ptr<QSignalSpy> spyProgress;
+    const QMetaObject::Connection vehicleAddedConnection =
+        connect(vehicleMgr, &MultiVehicleManager::vehicleAdded, this, [&spyProgress](Vehicle* addedVehicle) {
+            spyProgress =
+                std::make_unique<QSignalSpy>(addedVehicle->parameterManager(), &ParameterManager::loadProgressChanged);
+        });
+    const auto disconnectVehicleAdded = qScopeGuard([vehicleAddedConnection] { disconnect(vehicleAddedConnection); });
+    _mockLink = MockLink::startPX4MockLink(MockConfiguration::OptionNone, failureMode);
+    // Wait for the Vehicle to get created
+    QVERIFY_SIGNAL_COUNT_WAIT(spyVehicle, 1, TestTimeout::mediumMs());
     QCOMPARE(spyVehicle.count(), 1);
     QList<QVariant> arguments = spyVehicle.takeFirst();
     QCOMPARE(arguments.count(), 1);
     QCOMPARE(arguments.at(0).toBool(), true);
     Vehicle* vehicle = vehicleMgr->activeVehicle();
     QVERIFY(vehicle);
+    QVERIFY(spyProgress);
     // We should get progress bar updates during load
-    QSignalSpy spyProgress(vehicle->parameterManager(), &ParameterManager::loadProgressChanged);
-    QVERIFY_SIGNAL_WAIT(spyProgress, TestTimeout::mediumMs());
-    arguments = spyProgress.takeFirst();
+    QVERIFY_SIGNAL_COUNT_WAIT(*spyProgress, 1, TestTimeout::mediumMs());
+    arguments = spyProgress->takeFirst();
     QCOMPARE(arguments.count(), 1);
     QVERIFY(arguments.at(0).toFloat() > 0.0f);
     // When param load is complete we get the param ready signal
-    QSignalSpy spyParamsReady(vehicleMgr, &MultiVehicleManager::parameterReadyVehicleAvailableChanged);
-    QVERIFY_SIGNAL_WAIT(spyParamsReady, TestTimeout::longMs());
+    QVERIFY_SIGNAL_COUNT_WAIT(spyParamsReady, 1, TestTimeout::longMs());
     arguments = spyParamsReady.takeFirst();
     QCOMPARE(arguments.count(), 1);
     QCOMPARE(arguments.at(0).toBool(), true);
     // Progress should have been set back to 0
-    arguments = spyProgress.takeLast();
+    arguments = spyProgress->takeLast();
     QCOMPARE(arguments.count(), 1);
     QCOMPARE(arguments.at(0).toFloat(), 0.0f);
 }
@@ -140,11 +154,16 @@ void ParameterManagerTest::_requestListNoResponse()
     QVERIFY(vehicle);
     QSignalSpy spyParamsReady(vehicleMgr, &MultiVehicleManager::parameterReadyVehicleAvailableChanged);
     QSignalSpy spyProgress(vehicle->parameterManager(), &ParameterManager::loadProgressChanged);
+    QSignalSpy spyRequestFailed(vehicle->parameterManager(), &ParameterManager::initialParametersRequestFailed);
     expectAppMessage(QRegularExpression("did not respond to request for parameters"));
-    // We should not get any progress bar updates, nor a parameter ready signal.
-    // ParameterManager exhausts initial request retries in bounded test intervals.
-    QVERIFY_NO_SIGNAL_WAIT(spyProgress, TestTimeout::shortMs());
-    QVERIFY_NO_SIGNAL_WAIT(spyParamsReady, ParameterManager::kTestMaxInitialRequestTimeMs);
+    expectLogMessage("FactSystem.ParameterManager", QtWarningMsg,
+                     QRegularExpression("did not respond to request for parameters"));
+    // ParameterManager exhausts initial request retries in bounded test intervals and gives up
+    // without any progress bar updates or a parameter ready signal.
+    QVERIFY_SIGNAL_WAIT(spyRequestFailed, ParameterManager::kTestMaxInitialRequestTimeMs);
+    QCOMPARE(spyProgress.count(), 0);
+    QCOMPARE(spyParamsReady.count(), 0);
+    verifyExpectedLogMessage();
     verifyExpectedLogMessage();
 }
 
@@ -269,14 +288,16 @@ void ParameterManagerTest::_requestListNonDefaultComponentDoesNotGateReady()
 void ParameterManagerTest::_refreshAllViaFtpKeepsProgressDownForBackgroundComponent()
 {
     QVERIFY2(!_mockLink, "MockLink already connected");
-    _mockLink = MockLink::startPX4MockLink(MockConfiguration::OptionNone, MockConfiguration::FailNonDefaultComponentLossy);
     MultiVehicleManager* vehicleMgr = MultiVehicleManager::instance();
     QSignalSpy spyVehicle(vehicleMgr, &MultiVehicleManager::activeVehicleAvailableChanged);
-    QVERIFY_SIGNAL_WAIT(spyVehicle, TestTimeout::mediumMs());
+    // Spy before connecting: the FTP load can complete before the vehicle becomes active
+    QSignalSpy spyParamsReady(vehicleMgr, &MultiVehicleManager::parameterReadyVehicleAvailableChanged);
+    _mockLink =
+        MockLink::startPX4MockLink(MockConfiguration::OptionNone, MockConfiguration::FailNonDefaultComponentLossy);
+    QVERIFY_SIGNAL_COUNT_WAIT(spyVehicle, 1, TestTimeout::mediumMs());
     Vehicle* vehicle = vehicleMgr->activeVehicle();
     QVERIFY(vehicle);
-    QSignalSpy spyParamsReady(vehicleMgr, &MultiVehicleManager::parameterReadyVehicleAvailableChanged);
-    QVERIFY_SIGNAL_WAIT(spyParamsReady, TestTimeout::longMs());
+    QVERIFY_SIGNAL_COUNT_WAIT(spyParamsReady, 1, TestTimeout::longMs());
     ParameterManager* const paramManager = vehicle->parameterManager();
     QVERIFY(paramManager);
 
@@ -461,8 +482,18 @@ void ParameterManagerTest::_paramWriteParamError()
     verifyExpectedLogMessage();
 }
 
+void ParameterManagerTest::_paramReadParamError_data()
+{
+    QTest::addColumn<bool>("notifyFailure");
+
+    QTest::newRow("notify") << true;
+    QTest::newRow("silent") << false;
+}
+
 void ParameterManagerTest::_paramReadParamError()
 {
+    QFETCH(bool, notifyFailure);
+
     QVERIFY2(!_mockLink, "MockLink already connected");
     _connectMockLink();
     QVERIFY(_mockLink);
@@ -476,14 +507,18 @@ void ParameterManagerTest::_paramReadParamError()
     QSignalSpy paramReadFailureSpy(paramManager, &ParameterManager::_paramRequestReadFailure);
     QVERIFY(vehicleUpdatedSpy.isValid());
     QVERIFY(paramReadFailureSpy.isValid());
-    expectAppMessage(QRegularExpression("Parameter read failed"));
-    paramManager->refreshParameter(MAV_COMP_ID_AUTOPILOT1, fact->name());
+    if (notifyFailure) {
+        expectAppMessage(QRegularExpression("Parameter read failed"));
+    }
+    paramManager->refreshParameter(MAV_COMP_ID_AUTOPILOT1, fact->name(), notifyFailure);
     // PARAM_ERROR should cause immediate failure - no retries needed, so wait just one ack interval plus buffer
     const int maxWaitTimeMs = ParameterManager::kWaitForParamValueAckMs + TestTimeout::shortMs();
     QVERIFY_SIGNAL_WAIT(paramReadFailureSpy, maxWaitTimeMs);
     QCOMPARE(paramReadFailureSpy.count(), 1);
     QCOMPARE(vehicleUpdatedSpy.count(), 0);
-    verifyExpectedLogMessage();
+    if (notifyFailure) {
+        verifyExpectedLogMessage();
+    }
     _disconnectMockLink();
 }
 
@@ -619,8 +654,25 @@ void ParameterManagerTest::_setParamWithFailureMode(MockLink::ParamSetFailureMod
     _disconnectMockLink();
 }
 
-void ParameterManagerTest::_rebootRequiredNoticeDebounced()
+void ParameterManagerTest::_rebootRequiredNotice_data()
 {
+    QTest::addColumn<int>("suppressCalls");
+    QTest::addColumn<int>("unsuppressCalls");
+    QTest::addColumn<bool>("expectNotice");
+
+    QTest::newRow("notify") << 0 << 0 << true;
+    QTest::newRow("suppressed") << 1 << 0 << false;
+    QTest::newRow("nestedStillSuppressed") << 2 << 1 << false;
+    QTest::newRow("balancedNotifies") << 2 << 2 << true;
+    QTest::newRow("extraUnsuppressIgnored") << 0 << 1 << true;
+}
+
+void ParameterManagerTest::_rebootRequiredNotice()
+{
+    QFETCH(int, suppressCalls);
+    QFETCH(int, unsuppressCalls);
+    QFETCH(bool, expectNotice);
+
     _connectMockLink(MAV_AUTOPILOT_PX4);
     QVERIFY(_vehicle);
     ParameterManager* const paramManager = _vehicle->parameterManager();
@@ -634,20 +686,45 @@ void ParameterManagerTest::_rebootRequiredNoticeDebounced()
     QSignalSpy pendingSpy(paramManager, &ParameterManager::pendingWritesChanged);
     QVERIFY(pendingSpy.isValid());
 
+    for (int i = 0; i < suppressCalls; i++) {
+        paramManager->suppressRebootMessage();
+    }
+    for (int i = 0; i < unsuppressCalls; i++) {
+        const bool unbalanced = i >= suppressCalls;
+        if (unbalanced) {
+            expectLogMessage("FactSystem.ParameterManager", QtWarningMsg,
+                             QRegularExpression("unsuppressRebootMessage without matching suppressRebootMessage"));
+        }
+        paramManager->unsuppressRebootMessage();
+        if (unbalanced) {
+            verifyExpectedLogMessage();
+        }
+    }
+
     const QRegularExpression notice("Vehicle reboot required for changes to take effect");
     const double originalValue = fact->rawValue().toDouble();
-    expectAppMessage(notice);
-    fact->setRawValue(originalValue + 0.1);
-    verifyExpectedLogMessage();
+    const auto writeValue = [&](double value, bool notifies) {
+        if (notifies) {
+            expectAppMessage(notice);
+        }
+        fact->setRawValue(value);
+        if (notifies) {
+            verifyExpectedLogMessage();
+        }
+    };
+
+    writeValue(originalValue + 0.1, expectNotice);
 
     // A change right after the first one is debounced
-    fact->setRawValue(originalValue + 0.2);
+    writeValue(originalValue + 0.2, false);
 
     // Once the debounce window has passed, a later change notifies again
     qgcApp()->resetRebootMessageDebounce();
-    expectAppMessage(notice);
-    fact->setRawValue(originalValue + 0.3);
-    verifyExpectedLogMessage();
+    writeValue(originalValue + 0.3, expectNotice);
+
+    for (int i = unsuppressCalls; i < suppressCalls; i++) {
+        paramManager->unsuppressRebootMessage();
+    }
 
     QVERIFY(_vehicle->rebootRequired());
     QCOMPARE(rebootRequiredSpy.count(), 1);
@@ -697,6 +774,43 @@ void ParameterManagerTest::_FTPnoFailure()
     QCOMPARE(battLowVoltFact->rawValue().toFloat(), 0.0f);
     QCOMPARE(rc1MinFact->rawValue().toInt(), 1000);
     QCOMPARE(batt2MonFact->rawValue().toInt(), 4);
+}
+
+void ParameterManagerTest::_FTPRequestsHeartbeatComponentParams_data()
+{
+    QTest::addColumn<MAV_AUTOPILOT>("firmwareType");
+
+    QTest::newRow("ArduPilot") << MAV_AUTOPILOT_ARDUPILOTMEGA;
+    QTest::newRow("PX4") << MAV_AUTOPILOT_PX4;
+}
+
+// param.pck only carries the autopilot's params. Other components that heartbeat must still be asked over the
+// parameter protocol, without making the autopilot stream the params it just sent in the file.
+void ParameterManagerTest::_FTPRequestsHeartbeatComponentParams()
+{
+    QFETCH(MAV_AUTOPILOT, firmwareType);
+    QVERIFY2(!_mockLink, "MockLink already connected");
+
+    MultiVehicleManager* vehicleMgr = MultiVehicleManager::instance();
+    QSignalSpy spyVehicle(vehicleMgr, &MultiVehicleManager::activeVehicleAvailableChanged);
+    QSignalSpy spyParamsReady(vehicleMgr, &MultiVehicleManager::parameterReadyVehicleAvailableChanged);
+    _mockLink = (firmwareType == MAV_AUTOPILOT_PX4)
+                    ? MockLink::startPX4MockLink(MockConfiguration::OptionCompanionParams)
+                    : MockLink::startAPMArduPlaneMockLink(MockConfiguration::OptionCompanionParams);
+    QVERIFY_SIGNAL_COUNT_WAIT(spyVehicle, 1, TestTimeout::mediumMs());
+    QVERIFY_SIGNAL_COUNT_WAIT(spyParamsReady, 1, TestTimeout::longMs());
+    QVERIFY(_mockLink->receivedMavlinkMessageCount(MAVLINK_MSG_ID_FILE_TRANSFER_PROTOCOL) > 0);
+
+    Vehicle* const vehicle = vehicleMgr->activeVehicle();
+    QVERIFY(vehicle);
+    ParameterManager* const paramManager = vehicle->parameterManager();
+    QVERIFY(paramManager);
+    QTRY_COMPARE_WITH_TIMEOUT(paramManager->parameterNames(MAV_COMP_ID_ONBOARD_COMPUTER).count(), 3,
+                              TestTimeout::longMs());
+
+    const QList<int> requestListTargets = _mockLink->paramRequestListTargetLog();
+    QVERIFY(!requestListTargets.contains(MAV_COMP_ID_AUTOPILOT1));
+    QVERIFY(!requestListTargets.contains(MAV_COMP_ID_ALL));
 }
 
 void ParameterManagerTest::_FTPChangeParam()
@@ -824,7 +938,9 @@ void ParameterManagerTest::_bulkRefreshUnknownNameSkipped()
     paramManager->bulkRefresh(MAV_COMP_ID_AUTOPILOT1, {QStringLiteral("ZZZZ_DOES_NOT_EXIST")});
     verifyExpectedLogMessage();
 
-    QVERIFY_NO_SIGNAL_WAIT(successSpy, TestTimeout::shortMs());
+    // bulkRefresh starts its job synchronously, so no job means no request can follow
+    QVERIFY(paramManager->findChildren<BulkRefreshJob*>(Qt::FindDirectChildrenOnly).isEmpty());
+    QCOMPARE(successSpy.count(), 0);
     QCOMPARE(failureSpy.count(), 0);
 
     _disconnectMockLink();

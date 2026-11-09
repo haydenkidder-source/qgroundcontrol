@@ -4,9 +4,13 @@
 
 // #define MAVLINK_NO_SIGN_PACKET
 // #define MAVLINK_NO_SIGNATURE_CHECK
-#define MAVLINK_USE_MESSAGE_INFO
+// MAVLINK_USE_MESSAGE_INFO is defined only in MAVLinkMessageInfo.cc; look message info up through MAVLinkMessageInfo.h.
 
 #include <stddef.h>
+
+// moc needs no message definitions, and preprocessing the full dialect after some Qt headers takes moc seconds per
+// header. MAVLinkMessageType.h above still provides the base types.
+#ifndef Q_MOC_RUN
 
 // Ignore warnings from mavlink headers for both GCC/Clang and MSVC
 #ifdef __GNUC__
@@ -28,3 +32,5 @@
 #else
 #	pragma warning(pop, 0)
 #endif
+
+#endif  // Q_MOC_RUN

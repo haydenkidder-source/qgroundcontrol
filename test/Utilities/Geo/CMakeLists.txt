@@ -3,7 +3,8 @@
 # Tests for geographic calculations, shapefile parsing, and KML handling
 # ============================================================================
 
-target_sources(${CMAKE_PROJECT_NAME}
+target_sources(
+    QGCUnitTests
     PRIVATE
         GeoJsonHelperTest.cc
         GeoJsonHelperTest.h
@@ -11,6 +12,8 @@ target_sources(${CMAKE_PROJECT_NAME}
         GeoTest.h
         KMLDomDocumentTest.cc
         KMLDomDocumentTest.h
+        PlanarGeometryTest.cc
+        PlanarGeometryTest.h
         ShapeTest.cc
         ShapeTest.h
 )
@@ -20,7 +23,8 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_
 # ----------------------------------------------------------------------------
 # Test Data Resources
 # ----------------------------------------------------------------------------
-qt_add_resources(${CMAKE_PROJECT_NAME} "Test_Utilities_Geo_res"
+qt_add_resources(
+    ${CMAKE_PROJECT_NAME} "Test_Utilities_Geo_res"
     PREFIX "/unittest"
     FILES
         pline.dbf
@@ -38,4 +42,5 @@ qt_add_resources(${CMAKE_PROJECT_NAME} "Test_Utilities_Geo_res"
 add_qgc_test(GeoTest LABELS Unit Utilities)
 add_qgc_test(GeoJsonHelperTest LABELS Unit Utilities)
 add_qgc_test(KMLDomDocumentTest LABELS Unit Utilities)
+add_qgc_test(PlanarGeometryTest LABELS Unit Utilities)
 add_qgc_test(ShapeTest LABELS Unit Utilities)

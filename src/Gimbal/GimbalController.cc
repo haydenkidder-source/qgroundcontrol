@@ -3,6 +3,7 @@
 #include <cmath>
 #include <cstring>
 
+#include "AppMessages.h"
 #include "Gimbal.h"
 #include "GimbalControllerSettings.h"
 #include "MAVLinkLib.h"
@@ -27,7 +28,7 @@ GimbalController::GimbalController(Vehicle *vehicle)
     (void) connect(_vehicle, &Vehicle::initialConnectComplete, this, &GimbalController::_initialConnectCompleted, Qt::UniqueConnection);
     (void) connect(_vehicle, &Vehicle::mavlinkMessageReceived, this, &GimbalController::_mavlinkMessageReceived);
 
-    _rateSenderTimer.setInterval(500);
+    _rateSenderTimer.setInterval(QGC::runningUnitTests() ? kTestRateResendIntervalMs : kRateResendIntervalMs);
     (void) connect(&_rateSenderTimer, &QTimer::timeout, this, &GimbalController::_rateSenderTimeout);
 }
 
@@ -408,9 +409,11 @@ void GimbalController::_checkComplete(Gimbal &gimbal, GimbalPairId pairId)
             --gimbal._requestInformationRetries;
         }
     }
-    // Limit to 1 second between set message interval requests, per gimbal
+    // Limit the rate of set message interval requests, per gimbal
     const qint64 now = QDateTime::currentMSecsSinceEpoch();
-    if (!gimbal._receivedGimbalManagerStatus && (gimbal._requestStatusRetries > 0) && (now - gimbal._lastStatusRequestMs > 1000)) {
+    const int statusRequestSpacingMs = QGC::runningUnitTests() ? kTestStatusRequestSpacingMs : kStatusRequestSpacingMs;
+    if (!gimbal._receivedGimbalManagerStatus && (gimbal._requestStatusRetries > 0) &&
+        (now - gimbal._lastStatusRequestMs > statusRequestSpacingMs)) {
         gimbal._lastStatusRequestMs = now;
         _vehicle->sendMavCommand(pairId.managerCompid,
                                  MAV_CMD_SET_MESSAGE_INTERVAL,
@@ -482,6 +485,14 @@ bool GimbalController::_tryGetGimbalControl()
         return false;
     }
 
+    if (!_gcsSystemIdSupportsGimbalControl()) {
+        if (!_gcsSystemIdUnsupportedMessageShown) {
+            _gcsSystemIdUnsupportedMessageShown = true;
+            _showGcsSystemIdUnsupportedMessage();
+        }
+        return false;
+    }
+
     if (_activeGimbal->gimbalOthersHaveControl()) {
         qCDebug(GimbalControllerLog) << "Others in control, showing popup for user to confirm control..";
         emit showAcquireGimbalControlPopup();
@@ -492,6 +503,21 @@ bool GimbalController::_tryGetGimbalControl()
     }
 
     return true;
+}
+
+bool GimbalController::_gcsSystemIdSupportsGimbalControl()
+{
+    // GIMBAL_MANAGER_STATUS reports the controlling system in an 8-bit field, so a wider GCS id can never own
+    // the gimbal.
+    return MAVLinkProtocol::instance()->getSystemId() <= UINT8_MAX;
+}
+
+void GimbalController::_showGcsSystemIdUnsupportedMessage()
+{
+    QGC::showAppMessage(tr("Gimbal control unavailable. The gimbal can only identify a ground station with a system "
+                           "ID from 1 to 255, but this one uses ID %1. Change MAVLink System ID in Application "
+                           "Settings > Telemetry to 255 or lower to control the gimbal.")
+                            .arg(MAVLinkProtocol::instance()->getSystemId()));
 }
 
 bool GimbalController::_yawInVehicleFrame(uint32_t flags)
@@ -806,6 +832,11 @@ void GimbalController::acquireGimbalControl()
 {
     if (!_activeGimbal) {
         qCCritical(GimbalControllerLog) << "acquireGimbalControl: active gimbal is nullptr, returning";
+        return;
+    }
+
+    if (!_gcsSystemIdSupportsGimbalControl()) {
+        _showGcsSystemIdUnsupportedMessage();
         return;
     }
 

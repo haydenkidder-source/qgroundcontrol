@@ -94,6 +94,29 @@ void InitialConnectTest::_boardVendorProductId()
     QTRY_VERIFY_WITH_TIMEOUT(!vehicleRemovedSpy.isEmpty(), TestTimeout::mediumMs());
 }
 
+void InitialConnectTest::_notCompleteUntilSequenceFinishes()
+{
+    // vehicleAdded is emitted from the Vehicle creation call stack, before the queued state machine start runs.
+    std::optional<bool> completeWhenAdded;
+    const QMetaObject::Connection addedConnection = connect(
+        MultiVehicleManager::instance(), &MultiVehicleManager::vehicleAdded, this,
+        [&completeWhenAdded](Vehicle* vehicle) { completeWhenAdded = vehicle->isInitialConnectComplete(); },
+        Qt::DirectConnection);
+    const auto disconnectAdded = qScopeGuard([addedConnection]() { disconnect(addedConnection); });
+
+    _connectMockLink(MAV_AUTOPILOT_PX4);
+    if (QTest::currentTestFailed()) {
+        return;
+    }
+
+    QVERIFY(completeWhenAdded.has_value());
+    QVERIFY(!completeWhenAdded.value());
+    QVERIFY(_vehicle->capabilitiesKnown());
+    QVERIFY(_vehicle->isInitialConnectComplete());
+
+    _disconnectMockLink();
+}
+
 void InitialConnectTest::_progressTracking()
 {
     QList<float> progressValues;
@@ -216,6 +239,7 @@ void InitialConnectTest::_rallyFailurePathDoesNotLeakCompletionHandler()
     // Injected rally read failure pops a transfer-failed app message.
     ignoreLogMessage("API.QGCApplication.AppMessage", QtDebugMsg,
                      QRegularExpression("Rally Point transfer failed"));
+    ignoreLogMessage("Vehicle.Vehicle", QtWarningMsg, QRegularExpression("Rally Point transfer failed"));
     LinkManager::instance()->setConnectionsAllowed();
 
     auto* mvm = MultiVehicleManager::instance();
@@ -344,10 +368,13 @@ void InitialConnectTest::_subsystemFailureFallsThrough()
     if (configFailureMode == static_cast<int>(MockConfiguration::FailParamNoResponseToRequestList)) {
         ignoreLogMessage("API.QGCApplication.AppMessage", QtDebugMsg,
                          QRegularExpression("did not respond to request for parameters"));
+        ignoreLogMessage("FactSystem.ParameterManager", QtWarningMsg,
+                         QRegularExpression("did not respond to request for parameters"));
     }
     if (blockMissionProtocolImmediately || blockMissionProtocolAfterMissionLoad) {
         ignoreLogMessage("API.QGCApplication.AppMessage", QtDebugMsg,
                          QRegularExpression("transfer failed"));
+        ignoreLogMessage("Vehicle.Vehicle", QtWarningMsg, QRegularExpression("transfer failed"));
     }
 
     LinkManager::instance()->setConnectionsAllowed();

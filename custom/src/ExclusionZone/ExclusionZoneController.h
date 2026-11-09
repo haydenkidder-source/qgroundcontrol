@@ -1,8 +1,12 @@
 #pragma once
 
+#include <QtCore/QJsonArray>
+#include <QtCore/QList>
 #include <QtCore/QMetaObject>
 #include <QtCore/QObject>
 #include <QtCore/QPointer>
+#include <QtCore/QTimer>
+#include <QtPositioning/QGeoCoordinate>
 #include <QtQmlIntegration/QtQmlIntegration>
 
 class GeoFenceManager;
@@ -56,7 +60,7 @@ public:
     Q_INVOKABLE void setApproved(int index, bool approved);
 
     /// Loads targetVehicle's current fence, merges in the approved zones, writes/re-reads the
-    /// audit-trail file, and pushes the merged result to targetVehicle's geofence. Requires
+    /// audit-trail file, pushes the merged result, and verifies a fresh vehicle readback. Requires
     /// targetVehicle to be set and approvedCount > 0.
     /// @return true if the push was started (completion is reported via pushFinished).
     Q_INVOKABLE bool pushApproved();
@@ -68,16 +72,48 @@ signals:
     void pushFinished(bool success, QString message);
 
 private:
-    void _mergeAndSend(GeoFenceManager* fenceMgr, const QList<StagedExclusionZone*>& approvedZones);
+    void _mergeAndSend(GeoFenceManager* fenceMgr);
+    bool _approvedZonesChanged() const;
 
+    enum class PushPhase
+    {
+        Idle,
+        Loading,
+        Sending,
+        VerificationPending,
+        Verifying
+    };
+
+    struct FenceItem
+    {
+        int command;
+        int frame;
+        double parameter;
+        QGeoCoordinate coordinate;
+    };
+
+    void _startVerification(quint64 transactionId);
+    bool _fenceMatches(GeoFenceManager* fenceMgr) const;
+    void _failTransaction(const QString& reason);
     void _clearTransaction();
 
     QmlObjectListModel* _stagedZones = nullptr;
     QPointer<Vehicle> _targetVehicle;
     QPointer<Vehicle> _transactionVehicle;
     bool _pushInProgress = false;
+    PushPhase _pushPhase = PushPhase::Idle;
+    quint64 _transactionId = 0;
+    bool _recoveryRequiresReadback = false;
+    QPointer<GeoFenceManager> _transactionFenceManager;
+    QList<FenceItem> _expectedFence;
+    QList<QPointer<StagedExclusionZone>> _approvedZones;
+    QJsonArray _approvedPolygons;
+    QTimer _transactionTimer;
     QMetaObject::Connection _targetDestroyedConnection;
     QMetaObject::Connection _transactionDestroyedConnection;
+    QMetaObject::Connection _transactionLinkConnection;
+    QMetaObject::Connection _transactionCommunicationConnection;
+    QMetaObject::Connection _fenceRemoveConnection;
 
     QMetaObject::Connection _fenceLoadCompleteConnection;
     QMetaObject::Connection _fenceLoadErrorConnection;

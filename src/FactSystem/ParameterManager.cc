@@ -106,7 +106,9 @@ void ParameterManager::_updateProgressBar()
 
 void ParameterManager::mavlinkMessageReceived(const mavlink_message_t &message)
 {
-    if (message.msgid == MAVLINK_MSG_ID_PARAM_VALUE) {
+    if (message.msgid == MAVLINK_MSG_ID_HEARTBEAT) {
+        _handleHeartbeat(message.compid);
+    } else if (message.msgid == MAVLINK_MSG_ID_PARAM_VALUE) {
         mavlink_param_value_t param_value{};
         mavlink_msg_param_value_decode(&message, &param_value);
 
@@ -305,7 +307,8 @@ QString ParameterManager::_vehicleAndComponentString(int componentId) const
 
 void ParameterManager::_mavlinkParamSet(int componentId, const QString &paramName, FactMetaData::ValueType_t valueType, const QVariant &rawValue)
 {
-    auto paramSetEncoder = [this, componentId, paramName, valueType, rawValue](uint8_t /*systemId*/, uint8_t channel, mavlink_message_t *message) -> void {
+    auto paramSetEncoder = [this, componentId, paramName, valueType, rawValue](quint32 /*systemId*/, uint8_t channel,
+                                                                               mavlink_message_t* message) -> void {
         const MAV_PARAM_TYPE paramType = factTypeToMavType(valueType);
 
         mavlink_param_union_t union_value{};
@@ -316,16 +319,10 @@ void ParameterManager::_mavlinkParamSet(int componentId, const QString &paramNam
         char paramId[MAVLINK_MSG_PARAM_SET_FIELD_PARAM_ID_LEN + 1] = {};
         (void) strncpy(paramId, paramName.toLocal8Bit().constData(), MAVLINK_MSG_PARAM_SET_FIELD_PARAM_ID_LEN);
 
-        (void) mavlink_msg_param_set_pack_chan(
-                    MAVLinkProtocol::instance()->getSystemId(),
-                    MAVLinkProtocol::getComponentId(),
-                    channel,
-                    message,
-                    static_cast<uint8_t>(_vehicle->id()),
-                    static_cast<uint8_t>(componentId),
-                    paramId,
-                    union_value.param_float,
-                    static_cast<uint8_t>(paramType));
+        (void) mavlink_msg_param_set_pack_chan(MAVLinkProtocol::instance()->getSystemId(),
+                                               MAVLinkProtocol::getComponentId(), channel, message, _vehicle->id(),
+                                               static_cast<uint8_t>(componentId), paramId, union_value.param_float,
+                                               static_cast<uint8_t>(paramType));
     };
 
     auto checkForCorrectParamValue = [this, componentId, paramName, rawValue](const mavlink_message_t &message) -> bool {
@@ -543,8 +540,11 @@ void ParameterManager::_factRawValueUpdated(const QVariant &rawValue)
 
     if (fact->vehicleRebootRequired()) {
         _vehicle->setRebootRequired();
-        QGC::showRebootAppMessage(tr(
-            "Vehicle reboot required for changes to take effect. Use the power indicator in the toolbar to reboot."));
+        if (_rebootMessageSuppressCount == 0) {
+            QGC::showRebootAppMessage(
+                tr("Vehicle reboot required for changes to take effect. "
+                   "Use the main status indicator in the toolbar to reboot."));
+        }
     }
 
     _mavlinkParamSet(fact->componentId(), fact->name(), fact->type(), rawValue);
@@ -563,6 +563,10 @@ void ParameterManager::_ftpDownloadComplete(const QString &fileName, const QStri
         qCDebug(ParameterManagerLog) << "ParameterManager::_ftpDownloadComplete : Parameter file received:" << fileName;
         if (_parseParamFile(fileName)) {
             qCDebug(ParameterManagerLog) << "ParameterManager::_ftpDownloadComplete : Parsed!";
+            _ftpParamsLoaded = true;
+            for (const int componentId : _heartbeatComponentIds) {
+                _sendParamRequestList(static_cast<uint8_t>(componentId));
+            }
             return;
         } else {
             qCDebug(ParameterManagerLog) << "ParameterManager::_ftpDownloadComplete : Error in parameter file";
@@ -597,6 +601,36 @@ void ParameterManager::_ftpDownloadComplete(const QString &fileName, const QStri
     } else {
         _paramRequestListTimer.start();
     }
+}
+
+void ParameterManager::_handleHeartbeat(int componentId)
+{
+    if ((componentId == MAV_COMP_ID_ALL) || (componentId == MAV_COMP_ID_AUTOPILOT1) ||
+        _heartbeatComponentIds.contains(componentId)) {
+        return;
+    }
+    _heartbeatComponentIds.insert(componentId);
+
+    // Components first heard after the param.pck load missed the requests sent when it completed
+    if (_ftpParamsLoaded) {
+        _sendParamRequestList(static_cast<uint8_t>(componentId));
+    }
+}
+
+void ParameterManager::_sendParamRequestList(uint8_t componentId)
+{
+    const SharedLinkInterfacePtr sharedLink = _vehicle->vehicleLinkManager()->primaryLink().lock();
+    if (!sharedLink) {
+        return;
+    }
+
+    qCDebug(ParameterManagerLog) << _logVehiclePrefix(componentId) << "Sending PARAM_REQUEST_LIST";
+
+    mavlink_message_t msg{};
+    mavlink_msg_param_request_list_pack_chan(MAVLinkProtocol::instance()->getSystemId(),
+                                             MAVLinkProtocol::getComponentId(), sharedLink->mavlinkChannel(), &msg,
+                                             _vehicle->id(), componentId);
+    (void) _vehicle->sendMessageOnLinkThreadSafe(sharedLink.get(), msg);
 }
 
 void ParameterManager::_ftpDownloadProgress(float progress)
@@ -721,14 +755,7 @@ void ParameterManager::_startParameterDownload(uint8_t componentId)
             }
         }
 
-        mavlink_message_t msg{};
-        mavlink_msg_param_request_list_pack_chan(MAVLinkProtocol::instance()->getSystemId(),
-                                                 MAVLinkProtocol::getComponentId(),
-                                                 sharedLink->mavlinkChannel(),
-                                                 &msg,
-                                                 _vehicle->id(),
-                                                 componentId);
-        (void) _vehicle->sendMessageOnLinkThreadSafe(sharedLink.get(), msg);
+        _sendParamRequestList(componentId);
     }
 
     const QString what = (componentId == MAV_COMP_ID_ALL) ? "MAV_COMP_ID_ALL" : QString::number(componentId);
@@ -747,19 +774,33 @@ int ParameterManager::_actualComponentId(int componentId) const
     return componentId;
 }
 
-void ParameterManager::refreshParameter(int componentId, const QString &paramName)
+void ParameterManager::refreshParameter(int componentId, const QString& paramName, bool notifyFailure)
 {
     componentId = _actualComponentId(componentId);
 
-    qCDebug(ParameterManagerLog) << _logVehiclePrefix(componentId) << "refreshParameter - name:" << paramName << ")";
+    qCDebug(ParameterManagerLog) << _logVehiclePrefix(componentId) << "refreshParameter - name:" << paramName;
 
-    _mavlinkParamRequestRead(componentId, paramName, -1, true /* notifyFailure */);
+    _mavlinkParamRequestRead(componentId, paramName, -1, notifyFailure);
+}
+
+void ParameterManager::suppressRebootMessage()
+{
+    _rebootMessageSuppressCount++;
+}
+
+void ParameterManager::unsuppressRebootMessage()
+{
+    if (_rebootMessageSuppressCount == 0) {
+        qCWarning(ParameterManagerLog) << "unsuppressRebootMessage without matching suppressRebootMessage";
+        return;
+    }
+    _rebootMessageSuppressCount--;
 }
 
 void ParameterManager::refreshParametersPrefix(int componentId, const QString &namePrefix)
 {
     componentId = _actualComponentId(componentId);
-    qCDebug(ParameterManagerLog) << _logVehiclePrefix(componentId) << "refreshParametersPrefix - name:" << namePrefix << ")";
+    qCDebug(ParameterManagerLog) << _logVehiclePrefix(componentId) << "refreshParametersPrefix - name:" << namePrefix;
 
     if (!_mapCompId2FactMap.contains(componentId)) {
         return;
@@ -981,15 +1022,9 @@ void ParameterManager::_requestHashCheck(uint8_t componentId)
     (void) strncpy(paramId, "_HASH_CHECK", MAVLINK_MSG_PARAM_REQUEST_READ_FIELD_PARAM_ID_LEN);
 
     mavlink_message_t msg{};
-    (void) mavlink_msg_param_request_read_pack_chan(
-        MAVLinkProtocol::instance()->getSystemId(),
-        MAVLinkProtocol::getComponentId(),
-        sharedLink->mavlinkChannel(),
-        &msg,
-        static_cast<uint8_t>(_vehicle->id()),
-        componentId,
-        paramId,
-        -1);
+    (void) mavlink_msg_param_request_read_pack_chan(MAVLinkProtocol::instance()->getSystemId(),
+                                                    MAVLinkProtocol::getComponentId(), sharedLink->mavlinkChannel(),
+                                                    &msg, _vehicle->id(), componentId, paramId, -1);
 
     (void) _vehicle->sendMessageOnLinkThreadSafe(sharedLink.get(), msg);
 }
@@ -1004,30 +1039,23 @@ void ParameterManager::_sendParamRequestReadIndex(int componentId, int paramInde
     // Packer copies the full fixed-width field, so a short literal would read out of bounds
     char paramId[MAVLINK_MSG_PARAM_REQUEST_READ_FIELD_PARAM_ID_LEN + 1] = {};
     mavlink_message_t msg{};
-    (void) mavlink_msg_param_request_read_pack_chan(MAVLinkProtocol::instance()->getSystemId(),
-                                                    MAVLinkProtocol::getComponentId(),
-                                                    sharedLink->mavlinkChannel(),
-                                                    &msg,
-                                                    static_cast<uint8_t>(_vehicle->id()),
-                                                    static_cast<uint8_t>(componentId),
-                                                    paramId,
-                                                    static_cast<int16_t>(paramIndex));
+    (void) mavlink_msg_param_request_read_pack_chan(
+        MAVLinkProtocol::instance()->getSystemId(), MAVLinkProtocol::getComponentId(), sharedLink->mavlinkChannel(),
+        &msg, _vehicle->id(), static_cast<uint8_t>(componentId), paramId, static_cast<int16_t>(paramIndex));
     (void) _vehicle->sendMessageOnLinkThreadSafe(sharedLink.get(), msg);
 }
 
 void ParameterManager::_mavlinkParamRequestRead(int componentId, const QString &paramName, int paramIndex, bool notifyFailure)
 {
-    auto paramRequestReadEncoder = [this, componentId, paramName, paramIndex](uint8_t /*systemId*/, uint8_t channel, mavlink_message_t *message) -> void {
+    auto paramRequestReadEncoder = [this, componentId, paramName, paramIndex](quint32 /*systemId*/, uint8_t channel,
+                                                                              mavlink_message_t* message) -> void {
         char paramId[MAVLINK_MSG_PARAM_REQUEST_READ_FIELD_PARAM_ID_LEN + 1] = {};
         (void) strncpy(paramId, paramName.toLocal8Bit().constData(), MAVLINK_MSG_PARAM_REQUEST_READ_FIELD_PARAM_ID_LEN);
 
-        (void) mavlink_msg_param_request_read_pack_chan(MAVLinkProtocol::instance()->getSystemId(),   // QGC system id
-                                                        MAVLinkProtocol::getComponentId(),            // QGC component id
-                                                        channel,
-                                                        message,
-                                                        static_cast<uint8_t>(_vehicle->id()),
-                                                        static_cast<uint8_t>(componentId),
-                                                        paramId,
+        (void) mavlink_msg_param_request_read_pack_chan(MAVLinkProtocol::instance()->getSystemId(),  // QGC system id
+                                                        MAVLinkProtocol::getComponentId(),           // QGC component id
+                                                        channel, message, _vehicle->id(),
+                                                        static_cast<uint8_t>(componentId), paramId,
                                                         static_cast<int16_t>(paramIndex));
     };
 
@@ -1136,7 +1164,7 @@ void ParameterManager::_mavlinkParamRequestRead(int componentId, const QString &
     stateMachine->start();
 }
 
-void ParameterManager::_writeLocalParamCache(int vehicleId, int componentId)
+void ParameterManager::_writeLocalParamCache(quint32 vehicleId, int componentId)
 {
     CacheMapName2ParamTypeVal cacheMap;
 
@@ -1157,19 +1185,15 @@ void ParameterManager::_writeLocalParamCache(int vehicleId, int componentId)
 
 QDir ParameterManager::parameterCacheDir()
 {
-    // Use application-specific subdirectory to isolate parallel test runs
-    const QFileInfo settingsFile(QSettings().fileName());
-    const QString basePath = settingsFile.dir().absolutePath();
-    const QString appName = settingsFile.completeBaseName();
-    return QDir(basePath + QDir::separator() + appName + QDir::separator() + QStringLiteral("ParamCache"));
+    return QDir(QStandardPaths::writableLocation(QStandardPaths::CacheLocation) + QStringLiteral("/ParamCache"));
 }
 
-QString ParameterManager::parameterCacheFile(int vehicleId, int componentId)
+QString ParameterManager::parameterCacheFile(quint32 vehicleId, int componentId)
 {
     return parameterCacheDir().filePath(QStringLiteral("%1_%2.v2").arg(vehicleId).arg(componentId));
 }
 
-void ParameterManager::_tryCacheHashLoad(int vehicleId, int componentId, const QVariant &hashValue)
+void ParameterManager::_tryCacheHashLoad(quint32 vehicleId, int componentId, const QVariant& hashValue)
 {
     qCDebug(ParameterManagerLog) << "Attemping load from cache";
 
@@ -1239,15 +1263,13 @@ void ParameterManager::_tryCacheHashLoad(int vehicleId, int componentId, const Q
             (void) strncpy(p.param_id, "_HASH_CHECK", sizeof(p.param_id));
             union_value.param_uint32 = crc32_value;
             p.param_value = union_value.param_float;
-            p.target_system = static_cast<uint8_t>(_vehicle->id());
             p.target_component = static_cast<uint8_t>(componentId);
 
             mavlink_message_t msg{};
-            (void) mavlink_msg_param_set_encode_chan(MAVLinkProtocol::instance()->getSystemId(),
-                                                     MAVLinkProtocol::getComponentId(),
-                                                     sharedLink->mavlinkChannel(),
-                                                     &msg,
-                                                     &p);
+            (void) mavlink_msg_param_set_pack_chan(MAVLinkProtocol::instance()->getSystemId(),
+                                                   MAVLinkProtocol::getComponentId(), sharedLink->mavlinkChannel(),
+                                                   &msg, _vehicle->id(), p.target_component, p.param_id, p.param_value,
+                                                   p.param_type);
             (void) _vehicle->sendMessageOnLinkThreadSafe(sharedLink.get(), msg);
         }
 
@@ -1528,7 +1550,7 @@ void ParameterManager::_paramRequestListTimeout()
     if (!_vehicle->genericFirmware()) {
         const QString errorMsg = tr("Vehicle %1 did not respond to request for parameters. "
                                     "This will cause %2 to be unable to display its full user interface.").arg(_vehicle->id()).arg(QCoreApplication::applicationName());
-        qCDebug(ParameterManagerLog) << errorMsg;
+        qCWarning(ParameterManagerLog) << errorMsg;
         QGC::showAppMessage(errorMsg);
     }
     emit initialParametersRequestFailed();
@@ -1583,19 +1605,20 @@ void ParameterManager::_loadOfflineEditingParams()
     QFile paramFile(paramFilename);
     if (!paramFile.open(QFile::ReadOnly)) {
         qCWarning(ParameterManagerLog) << "Unable to open offline editing params file" << paramFilename;
+        return;
     }
 
     QTextStream paramStream(&paramFile);
     while (!paramStream.atEnd()) {
         const QString line = paramStream.readLine();
-        if (line.startsWith("#")) {
+        if (line.trimmed().isEmpty() || line.startsWith("#")) {
             continue;
         }
 
         const QStringList paramData = line.split("\t");
         if (paramData.count() != 5) {
-            qCWarning(ParameterManagerLog) << "Invalid offline parameter row in" << paramFilename;
-            return;
+            qCWarning(ParameterManagerLog) << "Skipping malformed offline editing param line" << line;
+            continue;
         }
 
         const int offlineDefaultComponentId = paramData.at(1).toInt();
@@ -1632,10 +1655,14 @@ void ParameterManager::_loadOfflineEditingParams()
             break;
         }
 
-        Fact *const fact = new Fact(offlineDefaultComponentId, paramName, mavTypeToFactType(paramType), this);
+        CompInfoParam* const compInfoParam = _vehicle->compInfoManager()->compInfoParam(offlineDefaultComponentId);
+        if (!compInfoParam) {
+            qCWarning(ParameterManagerLog) << "No parameter metadata for component" << offlineDefaultComponentId;
+            continue;
+        }
 
-        FactMetaData *const factMetaData = _vehicle->compInfoManager()->compInfoParam(offlineDefaultComponentId)->factMetaDataForName(paramName, fact->type());
-        fact->setMetaData(factMetaData);
+        Fact* const fact = new Fact(offlineDefaultComponentId, paramName, mavTypeToFactType(paramType), this);
+        fact->setMetaData(compInfoParam->factMetaDataForName(paramName, fact->type()));
 
         _mapCompId2FactMap[defaultComponentId][paramName] = fact;
     }

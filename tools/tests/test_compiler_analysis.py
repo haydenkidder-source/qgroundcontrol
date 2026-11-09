@@ -1,7 +1,7 @@
 """Compiler analyzer regressions: diagnostics, invocation errors, and file selection."""
 
 import json
-import sys
+from contextlib import nullcontext
 from pathlib import Path
 from subprocess import CompletedProcess, TimeoutExpired
 from unittest.mock import patch
@@ -11,6 +11,22 @@ import pytest
 from analyze import FileCollector
 from analyzers.clang_tidy import ClangTidyAnalyzer
 from analyzers.clazy import ClazyAnalyzer
+from analyzers.dependencies import DependencyScanError
+
+from ._helpers import commit_files, git
+
+
+def _scan_including(header: Path, dependents: set[Path]):
+    """Fake dependency scan in which only the given dependents include the header."""
+
+    def scan(entries, jobs):
+        sources = {(Path(entry["directory"]) / entry["file"]).resolve() for entry in entries}
+        return {
+            source: frozenset({source, header} if source in dependents else {source})
+            for source in sources
+        }
+
+    return scan
 
 
 @pytest.fixture(autouse=True)
@@ -83,7 +99,6 @@ def test_advisory_cli_rejects_driver_errors_but_allows_warnings(
         else "file.cc:1:1: warning: inefficient copy [performance-copy]\n"
     )
     with (
-        patch.object(sys, "argv", ["analyze.py", "--tool", analyzer.name, "--advisory", "file.cc"]),
         patch.object(analyze, "find_repo_root", return_value=tmp_path),
         patch.object(analyze, "get_analyzer", return_value=analyzer),
         patch.object(analyzer, "require_compile_commands", return_value=True),
@@ -93,7 +108,8 @@ def test_advisory_cli_rejects_driver_errors_but_allows_warnings(
             return_value=CompletedProcess([], int(driver_error), "", diagnostic),
         ),
     ):
-        assert analyze.main() == (2 if driver_error else 0)
+        argv = ["--tool", analyzer.name, "--advisory", "file.cc"]
+        assert analyze.main(argv) == (2 if driver_error else 0)
 
 
 def test_no_files_is_explicitly_skipped(tmp_path):
@@ -122,7 +138,9 @@ def test_headers_select_active_project_units_once(tmp_path, analyzer_type):
     )
     analyzer = analyzer_type(tmp_path, tmp_path)
     with (
-        patch("analyzers.compiler.header_dependents", return_value=None),
+        patch(
+            "analyzers.compiler.scan_dependencies", side_effect=DependencyScanError("unavailable")
+        ),
         patch.object(analyzer, "require_tool", return_value=True),
         patch(
             "analyzers.compiler.run_captured", return_value=CompletedProcess([], 0, "", "")
@@ -144,7 +162,10 @@ def test_header_selection_keeps_changed_sources_and_records_timings(tmp_path):
     analyzer = ClazyAnalyzer(tmp_path, tmp_path)
     with (
         patch.object(analyzer, "require_tool", return_value=True),
-        patch("analyzers.compiler.header_dependents", return_value={tmp_path / "src/dependent.cc"}),
+        patch(
+            "analyzers.compiler.scan_dependencies",
+            side_effect=_scan_including(tmp_path / "src/header.h", {tmp_path / "src/dependent.cc"}),
+        ),
         patch("analyzers.compiler.run_captured", return_value=CompletedProcess([], 0, "", "")),
     ):
         result = analyzer.run([tmp_path / "src/header.h", tmp_path / "src/changed.cc"])
@@ -152,6 +173,112 @@ def test_header_selection_keeps_changed_sources_and_records_timings(tmp_path):
     timings = json.loads((tmp_path / "clazy-timings.json").read_text())
     assert {row["file"] for row in timings["files"]} == {"src/changed.cc", "src/dependent.cc"}
     assert all(row["seconds"] >= 0 for row in timings["files"])
+
+
+def test_unique_diagnostics_are_recorded_once_per_location(tmp_path, monkeypatch):
+    monkeypatch.setenv("GITHUB_SHA", "merge")
+    source = tmp_path / "source"
+    build = tmp_path / "build"
+    build.mkdir()
+    (build / "compile_commands.json").write_text(
+        json.dumps([{"directory": str(source), "file": f"src/{name}"} for name in ("a.cc", "b.cc")])
+    )
+    header = f"{source}/src/shared.h:3:7: warning: shared [modernize-use-nodiscard]\n"
+    outputs = {
+        "a.cc": header + f"{source}/src/a.cc:1:2: warning: own [readability-braces]\n",
+        "b.cc": header
+        + f"{build}/gen/../gen/moc.h:4:1: error: bad [bugprone-macro]\n"
+        + f"{source}/src/b.cc:2:1: fatal error: 'x.h' file not found\n",
+    }
+
+    def run(command, **kwargs):
+        return CompletedProcess(command, 1, outputs[Path(command[-1]).name], "")
+
+    analyzer = ClangTidyAnalyzer(source, build)
+    with (
+        patch.object(analyzer, "require_tool", return_value=True),
+        patch("analyzers.compiler.run_captured", side_effect=run),
+    ):
+        analyzer.run([source / "src/a.cc", source / "src/b.cc"])
+
+    assert json.loads((build / "clang-tidy-diagnostics.json").read_text()) == {
+        "tool": "clang-tidy",
+        "shard": 1,
+        "commit": "merge",
+        "diagnostics": {
+            "build/gen/moc.h": [[4, 1, "error", "bugprone-macro"]],
+            "src/a.cc": [[1, 2, "warning", "readability-braces"]],
+            "src/shared.h": [[3, 7, "warning", "modernize-use-nodiscard"]],
+        },
+    }
+
+
+@pytest.mark.parametrize("github_sha", [None, "merge"])
+def test_pull_request_diagnostics_repeat_those_on_changed_lines(git_repo, monkeypatch, github_sha):
+    base = commit_files(git_repo, {"src/a.cc": "1\n2\n3\n4\n", "src/shared.h": "h\n"}, "base")
+    head = commit_files(git_repo, {"src/a.cc": "1\n2\nthree\n4\n", "src/b.cc": "b\nb\n"}, "pr")
+    monkeypatch.setenv("PR_BASE_SHA", base)
+    monkeypatch.setenv("PR_HEAD_SHA", head)
+    if github_sha:
+        monkeypatch.setenv("GITHUB_SHA", github_sha)
+    build = git_repo / "build"
+    build.mkdir()
+    (build / "compile_commands.json").write_text(
+        json.dumps(
+            [{"directory": str(git_repo), "file": f"src/{name}"} for name in ("a.cc", "b.cc")]
+        )
+    )
+    src = git_repo / "src"
+    outputs = {
+        "a.cc": f"{src}/a.cc:2:1: warning: old [check-old]\n"
+        f"{src}/a.cc:3:5: warning: new [check-new]\n"
+        f"{src}/shared.h:1:1: warning: header [check-header]\n",
+        "b.cc": f"{src}/b.cc:2:1: warning: added file [check-added]\n",
+    }
+
+    def run(command, **kwargs):
+        return CompletedProcess(command, 0, outputs[Path(command[-1]).name], "")
+
+    analyzer = ClangTidyAnalyzer(git_repo, build)
+    with (
+        patch.object(analyzer, "require_tool", return_value=True),
+        patch("analyzers.compiler.run_captured", side_effect=run),
+    ):
+        analyzer.run([src / "a.cc", src / "b.cc"])
+
+    report = json.loads((build / "clang-tidy-diagnostics.json").read_text())
+    # Line numbers are those of the checkout: GITHUB_SHA in CI, else HEAD.
+    assert report["commit"] == (github_sha or head)
+    assert len(report["diagnostics"]["src/a.cc"]) == 2
+    # Only line 3 of a.cc changed, b.cc is new, and the header did not change.
+    assert report["changed"] == {
+        "src/a.cc": [[3, 5, "warning", "check-new"]],
+        "src/b.cc": [[2, 1, "warning", "check-added"]],
+    }
+
+
+@pytest.mark.parametrize("checkout", ["no repository", "no commits", "no git"])
+def test_diagnostics_without_a_checked_out_commit_name_none(tmp_path, isolated_git, checkout):
+    if checkout == "no commits":
+        git(tmp_path, "init", "-q")
+    analyzer = ClangTidyAnalyzer(tmp_path, tmp_path)
+    with (
+        patch.object(analyzer, "require_compile_commands", return_value=True),
+        patch.object(analyzer, "require_tool", return_value=True),
+        patch(
+            "analyzers.compiler.run_captured",
+            return_value=CompletedProcess([], 0, "file.cc:1:2: warning: w [check]\n", ""),
+        ),
+        patch("common.git.run_captured", side_effect=FileNotFoundError("git"))
+        if checkout == "no git"
+        else nullcontext(),
+    ):
+        analyzer.run([tmp_path / "file.cc"])
+    assert json.loads((tmp_path / "clang-tidy-diagnostics.json").read_text()) == {
+        "tool": "clang-tidy",
+        "shard": 1,
+        "diagnostics": {"file.cc": [[1, 2, "warning", "check"]]},
+    }
 
 
 def test_source_selection_skips_inactive_platforms(tmp_path):
@@ -296,7 +423,10 @@ def test_shards_cover_each_selected_dependency_once_and_preserve_errors(tmp_path
         analyzer = ClangTidyAnalyzer(tmp_path, tmp_path, shard=shard, shard_count=shard_count)
         with (
             patch.object(analyzer, "require_tool", return_value=True),
-            patch("analyzers.compiler.header_dependents", return_value=dependents),
+            patch(
+                "analyzers.compiler.scan_dependencies",
+                side_effect=_scan_including(tmp_path / "src/header.h", dependents),
+            ),
             patch("analyzers.compiler.run_captured", side_effect=run),
         ):
             result = analyzer.run([tmp_path / "src/header.h", tmp_path / "src/changed.cc"])
@@ -315,10 +445,9 @@ def test_shards_cover_each_selected_dependency_once_and_preserve_errors(tmp_path
 @pytest.mark.parametrize("profile_checks", [False, True])
 def test_cli_check_profiling_is_opt_in(tmp_path, monkeypatch, profile_checks):
     (tmp_path / "file.cc").touch()
-    args = ["analyze.py", "--tool", "clang-tidy", "-b", ".", "--advisory", "file.cc"]
+    args = ["--tool", "clang-tidy", "-b", ".", "--advisory", "file.cc"]
     if profile_checks:
         args.append("--profile-checks")
-    monkeypatch.setattr(sys, "argv", args)
     monkeypatch.setattr(analyze, "find_repo_root", lambda: tmp_path)
     with (
         patch.object(ClangTidyAnalyzer, "require_tool", return_value=True),
@@ -326,7 +455,7 @@ def test_cli_check_profiling_is_opt_in(tmp_path, monkeypatch, profile_checks):
             "analyzers.compiler.run_captured", return_value=CompletedProcess([], 0, "", "")
         ) as run,
     ):
-        assert analyze.main() == 0
+        assert analyze.main(args) == 0
     assert ("--enable-check-profile" in run.call_args.args[0]) == profile_checks
 
 
@@ -340,8 +469,7 @@ def test_cli_check_profiling_is_opt_in(tmp_path, monkeypatch, profile_checks):
         ["--tool", "clazy", "--profile-checks"],
     ],
 )
-def test_invalid_analysis_modes_are_rejected(monkeypatch, arguments):
-    monkeypatch.setattr(sys, "argv", ["analyze.py", *arguments])
+def test_invalid_analysis_modes_are_rejected(arguments):
     with pytest.raises(SystemExit) as exc:
-        analyze.parse_args()
+        analyze.parse_args(arguments)
     assert exc.value.code == 2

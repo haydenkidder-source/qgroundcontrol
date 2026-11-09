@@ -26,6 +26,7 @@
 #include "VehicleCameraControl.h"
 #include "VehicleComponent.h"
 #include "VehicleLinkManager.h"
+#include "VehicleReadiness.h"
 
 QGC_LOGGING_CATEGORY(FirmwarePluginLog, "FirmwarePlugin.FirmwarePlugin")
 
@@ -92,6 +93,14 @@ bool FirmwarePlugin::setFlightMode(const QString &flightMode, uint8_t *base_mode
     qCWarning(FirmwarePluginLog) << "FirmwarePlugin::setFlightMode called on base class, not supported";
 
     return false;
+}
+
+FirmwarePlugin::MissionUploadRecoveryPolicy FirmwarePlugin::missionUploadRecoveryPolicy(
+    MAV_MISSION_TYPE missionType) const
+{
+    // A duplicate fence/rally item can be ACKed even if storing the original plan failed.
+    return missionType == MAV_MISSION_TYPE_MISSION ? MissionUploadRecoveryPolicy::ResendLastItem
+                                                   : MissionUploadRecoveryPolicy::NoRecovery;
 }
 
 QString FirmwarePlugin::missionCommandOverrides(QGCMAVLink::VehicleClass_t vehicleClass) const
@@ -242,8 +251,6 @@ const QVariantList &FirmwarePlugin::toolIndicators(const Vehicle*)
     //-- Default list of indicators for all vehicles.
     if (_toolIndicatorList.isEmpty()) {
         _toolIndicatorList = QVariantList({
-            QVariant::fromValue(QUrl::fromUserInput("qrc:/qml/QGroundControl/Toolbar/VehicleGPSIndicator.qml")),
-            QVariant::fromValue(QUrl::fromUserInput("qrc:/qml/QGroundControl/Toolbar/GPSResilienceIndicator.qml")),
             QVariant::fromValue(QUrl::fromUserInput("qrc:/qml/QGroundControl/Toolbar/TelemetryRSSIIndicator.qml")),
             QVariant::fromValue(QUrl::fromUserInput("qrc:/qml/QGroundControl/Toolbar/RCRSSIIndicator.qml")),
             QVariant::fromValue(QUrl::fromUserInput("qrc:/qml/QGroundControl/Toolbar/BatteryIndicator.qml")),
@@ -491,13 +498,9 @@ void FirmwarePlugin::sendGCSMotionReport(Vehicle *vehicle, const FollowMe::GCSMo
     follow_target.vel[1] = static_cast<float>(motionReport.vyMetersPerSec);
 
     mavlink_message_t message{};
-    mavlink_msg_follow_target_encode_chan(
-        static_cast<uint8_t>(MAVLinkProtocol::instance()->getSystemId()),
-        static_cast<uint8_t>(MAVLinkProtocol::getComponentId()),
-        sharedLink->mavlinkChannel(),
-        &message,
-        &follow_target
-    );
+    mavlink_msg_follow_target_encode_chan(MAVLinkProtocol::instance()->getSystemId(),
+                                          static_cast<uint8_t>(MAVLinkProtocol::getComponentId()),
+                                          sharedLink->mavlinkChannel(), &message, &follow_target);
 
     (void) vehicle->sendMessageOnLinkThreadSafe(sharedLink.get(), message);
 }
@@ -505,6 +508,11 @@ void FirmwarePlugin::sendGCSMotionReport(Vehicle *vehicle, const FollowMe::GCSMo
 Autotune *FirmwarePlugin::createAutotune(Vehicle *vehicle) const
 {
     return new Autotune(vehicle);
+}
+
+VehicleReadiness* FirmwarePlugin::createVehicleReadiness(Vehicle* vehicle) const
+{
+    return new VehicleReadiness(vehicle);
 }
 
 void FirmwarePlugin::_updateFlightModeList(FlightModeList &flightModeList)
@@ -575,6 +583,12 @@ QString FirmwarePlugin::_cachedParameterMetaDataFile(const Vehicle *vehicle) con
     }
 
     const QString internalFile = _internalParameterMetaDataFile(vehicle);
+    // Tests always use the bundled file; resolving its version parses the whole file.
+    if (QGC::runningUnitTests()) {
+        qCDebug(FirmwarePluginLog) << "Using internal parameter metadata:" << internalFile;
+        return internalFile;
+    }
+
     QVersionNumber internalVersion = ParameterMetaData::versionFromFileName(internalFile);
     if (internalVersion.isNull()) {
         internalVersion = ParameterMetaData::versionFromMetaDataFile(internalFile);
@@ -582,7 +596,7 @@ QString FirmwarePlugin::_cachedParameterMetaDataFile(const Vehicle *vehicle) con
 
     // Without a known internal version we can't safely compare against
     // cache — use the bundled file to avoid stale overrides.
-    if (internalVersion.isNull() || QGC::runningUnitTests()) {
+    if (internalVersion.isNull()) {
         qCDebug(FirmwarePluginLog) << "Using internal parameter metadata:" << internalFile;
         return internalFile;
     }

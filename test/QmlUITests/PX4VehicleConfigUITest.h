@@ -17,6 +17,12 @@ private slots:
     void _testNavigateVehicleConfig();
     void _testDisconnectWithPIDTuningOpen();
     void _testSidebarDividers();
+    void _testSearchMatchesComponentKeywords();
+
+protected:
+    // The Advanced tab of the Sensors page. Its title uses SetupPage's "Advanced" translation, so the text follows the
+    // language.
+    QString languageAnchorObjectName() const override { return QStringLiteral("sensors_tab_advanced"); }
 
 private:
     /// Click each axis button in \a axisNames in order, waiting for a polish

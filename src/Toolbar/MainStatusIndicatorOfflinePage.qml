@@ -14,6 +14,10 @@ ToolIndicatorPage {
     property bool   noLinks:                true
     property var    editingConfig:          null
     property var    autoConnectSettings:    QGroundControl.settingsManager.autoConnectSettings
+    property Loader preVehicleChecklistLoader:  null
+    property bool   showChecklist:          false
+
+    readonly property bool _checklistPassed: !preVehicleChecklistLoader || !preVehicleChecklistLoader.item || preVehicleChecklistLoader.item.allChecksPassed
 
     Component.onCompleted: {
         for (var i = 0; i < linkConfigs.count; i++) {
@@ -26,27 +30,46 @@ ToolIndicatorPage {
     }
 
     contentComponent: Component {
-        SettingsGroupLayout {
-            heading: qsTr("Select Link to Connect")
+        QGCGroupBox {
+            Component.onCompleted: currentIndex = (showChecklist && !_checklistPassed) ? 0 : 1
 
-            QGCLabel {
-                text:       qsTr("No Links Configured")
-                visible:    noLinks
+            QGCGroupBoxTab {
+                title:              qsTr("Pre-Flight Checklist")
+                buttonObjectName:   "mainStatusChecklistTab"
+                tabVisible:         showChecklist
+                badge: StatusPill {
+                    objectName: "mainStatusChecklistTabBadge"
+                    text:       _checklistPassed ? qsTr("Passed") : qsTr("In Progress")
+                    color:      _checklistPassed ? QGroundControl.globalPalette.successIndicator : QGroundControl.globalPalette.warningIndicator
+                }
+
+                MainStatusChecklistHost {
+                    loader: control.preVehicleChecklistLoader
+                }
             }
 
-            Repeater {
-                model: linkConfigs
+            QGCGroupBoxTab {
+                title: qsTr("Select Link to Connect")
 
-                delegate: QGCButton {
-                    Layout.fillWidth:   true
-                    text:               object.name + (object.link ? " (" + qsTr("Connected") + ")" : "")
-                    visible:            !object.dynamic
-                    enabled:            !object.link
-                    autoExclusive:      true
+                QGCLabel {
+                    text:       qsTr("No Links Configured")
+                    visible:    noLinks
+                }
 
-                    onClicked: {
-                        QGroundControl.linkManager.createConnectedLink(object)
-                        mainWindow.closeIndicatorDrawer()
+                Repeater {
+                    model: linkConfigs
+
+                    delegate: QGCButton {
+                        Layout.fillWidth:   true
+                        text:               object.name + (object.link ? " (" + qsTr("Connected") + ")" : "")
+                        visible:            !object.dynamic
+                        enabled:            !object.link
+                        autoExclusive:      true
+
+                        onClicked: {
+                            QGroundControl.linkManager.createConnectedLink(object)
+                            mainWindow.closeIndicatorDrawer()
+                        }
                     }
                 }
             }
@@ -57,7 +80,7 @@ ToolIndicatorPage {
         ColumnLayout {
             spacing: ScreenTools.defaultFontPixelHeight / 2
 
-            SettingsGroupLayout {
+            QGCGroupBox {
                 LabelledButton {
                     label:      qsTr("Communication Links")
                     buttonText: qsTr("Configure")
@@ -70,7 +93,7 @@ ToolIndicatorPage {
                 }
             }
 
-            SettingsGroupLayout {
+            QGCGroupBox {
                 heading:        qsTr("AutoConnect")
                 visible:        autoConnectSettings.userVisible
 
@@ -82,10 +105,9 @@ ToolIndicatorPage {
                         autoConnectSettings.autoConnectSiKRadio,
                         autoConnectSettings.autoConnectLibrePilot,
                         autoConnectSettings.autoConnectUDP,
-                        autoConnectSettings.autoConnectRTKGPS,
                     ]
 
-                    property var names: [ qsTr("Pixhawk"), qsTr("SiK Radio"), qsTr("LibrePilot"), qsTr("UDP"), qsTr("RTK") ]
+                    property var names: [ qsTr("Pixhawk"), qsTr("SiK Radio"), qsTr("LibrePilot"), qsTr("UDP") ]
 
                     FactCheckBoxSlider {
                         Layout.fillWidth:   true

@@ -6,18 +6,12 @@ import sys
 from pathlib import Path
 
 import pytest
+from generators.common.controls import ButtonDef
 from generators.common.validation import require_qml_safe_string
 from generators.settings_qml import generate_pages as settings_generator
-from generators.settings_qml.page_generator import (
-    ControlDef,
-    GroupDef,
-    PageDef,
-    generate_page_qml,
-    generate_pages_model_qml,
-    get_fact_type,
-    load_page_def,
-    load_settings_metadata,
-)
+from generators.settings_qml.emit import generate_page_qml, generate_pages_model_qml
+from generators.settings_qml.metadata import get_fact_type, load_settings_metadata
+from generators.settings_qml.model import ControlDef, GroupDef, PageDef, load_page_def
 
 from ._helpers import REPO_ROOT
 
@@ -235,6 +229,32 @@ class TestLoadPageDef:
         assert page.groups[0].component == "MyCustomComponent"
         assert page.groups[0].sectionName == "Custom"
         assert page.groups[0].keywords == ["a", "b"]
+
+    def test_loads_component_group_properties(self, tmp_path: Path):
+        data = {
+            "version": 1,
+            "groups": [
+                {"component": "MyCustomComponent", "properties": {"editable": False, "rows": 3}},
+            ],
+        }
+        page = load_page_def(_make_page_json(tmp_path, data))
+        assert page.groups[0].properties == {"editable": "false", "rows": "3"}
+
+    def test_group_properties_require_component(self, tmp_path: Path):
+        data = {
+            "version": 1,
+            "groups": [{"heading": "G", "properties": {"editable": False}, "controls": []}],
+        }
+        with pytest.raises(ValueError, match="component groups"):
+            load_page_def(_make_page_json(tmp_path, data))
+
+    def test_group_properties_reserved_name_rejected(self, tmp_path: Path):
+        data = {
+            "version": 1,
+            "groups": [{"component": "MyCustomComponent", "properties": {"id": "other"}}],
+        }
+        with pytest.raises(ValueError, match="reserved"):
+            load_page_def(_make_page_json(tmp_path, data))
 
     def test_loads_showWhen_enableWhen(self, tmp_path: Path):
         data = {
@@ -536,6 +556,14 @@ class TestGeneratePageQml:
         assert "ColumnLayout {" in qml
         assert "spacing: 0" in qml
 
+    def test_component_group_properties(self, settings_dir: Path):
+        page = PageDef(
+            groups=[GroupDef(component="MyCustomWidget", properties={"editable": "false"})]
+        )
+        qml = generate_page_qml(page, settings_dir)
+        assert "MyCustomWidget {" in qml
+        assert "editable: false" in qml
+
     def test_component_group_with_showWhen(self, settings_dir: Path):
         page = PageDef(
             groups=[
@@ -562,7 +590,7 @@ class TestGeneratePageQml:
         qml = generate_page_qml(page, settings_dir)
         assert "MyInlineWidget {" in qml
         assert "Layout.fillWidth: true" in qml
-        # Should NOT be wrapped in a ColumnLayout (it's inside SettingsGroupLayout)
+        # Should NOT be wrapped in a ColumnLayout (it's inside QGCGroupBox)
         lines = [line.strip() for line in qml.splitlines()]
         idx = lines.index("MyInlineWidget {")
         assert "ColumnLayout {" not in lines[idx - 1]
@@ -606,6 +634,28 @@ class TestGeneratePageQml:
         qml = generate_page_qml(page, settings_dir)
         assert "MyWidget {" in qml
         assert "enabled: isReady" in qml
+
+    def test_component_control_properties(self, tmp_path: Path, settings_dir: Path):
+        data = {
+            "version": 1,
+            "groups": [
+                {
+                    "heading": "G",
+                    "controls": [
+                        {
+                            "control": "component",
+                            "component": "MyWidget",
+                            "showWhen": "featureEnabled",
+                            "properties": {"editable": False, "heading": '""'},
+                        }
+                    ],
+                }
+            ],
+        }
+        qml = generate_page_qml(load_page_def(_make_page_json(tmp_path, data)), settings_dir)
+        assert "visible: featureEnabled" in qml
+        assert "editable: false" in qml
+        assert 'heading: ""' in qml
 
     def test_showWhen_on_group(self, settings_dir: Path):
         page = PageDef(
@@ -897,7 +947,7 @@ class TestGeneratePageQml:
 
     def test_info_control_with_button(self, settings_dir: Path):
         from generators.common.controls import ButtonDef
-        from generators.settings_qml.page_generator import ControlDef as CD
+        from generators.settings_qml.model import ControlDef as CD
 
         page = PageDef(
             groups=[
@@ -997,6 +1047,29 @@ class TestGeneratePageQml:
         qml = generate_page_qml(page, settings_dir)
         assert "sectionFilter === 0" in qml
         assert "sectionFilter === 1" in qml
+
+    def test_missing_placeholder_escaped(self, settings_dir: Path):
+        page = PageDef(groups=[GroupDef(heading="G", missing=['Say "hi" to C:\\temp'])])
+        qml = generate_page_qml(page, settings_dir)
+        assert 'text: qsTr("TODO: Say \\"hi\\" to C:\\\\temp")' in qml
+
+    def test_info_button_text_escaped(self, settings_dir: Path):
+        page = PageDef(
+            groups=[
+                GroupDef(
+                    heading="G",
+                    controls=[
+                        ControlDef(
+                            control="info",
+                            value="1",
+                            button=ButtonDef(text='Run "now"', onClicked="run()"),
+                        )
+                    ],
+                )
+            ]
+        )
+        qml = generate_page_qml(page, settings_dir, json_context="Test.SettingsUI.json")
+        assert 'text: qsTranslate("Test.SettingsUI.json", "Run \\"now\\"")' in qml
 
 
 class TestGeneratePagesModelQml:
@@ -1295,13 +1368,11 @@ class TestQmlUnsafeStringRejection:
 
 
 class TestRealPageDefinitions:
-    """Test against real QGC page definition files if available."""
+    """Test against the real QGC page definition files."""
 
     @pytest.fixture
     def repo_root(self) -> Path:
-        if (REPO_ROOT / "src" / "Settings").is_dir():
-            return REPO_ROOT
-        pytest.skip("Not running from QGC repo root")
+        return REPO_ROOT
 
     def test_all_page_defs_load(self, repo_root: Path):
         pages_dir = repo_root / "src" / "AppSettings" / "pages"
@@ -1352,28 +1423,63 @@ class TestRealPageDefinitions:
         assert "ListModel {" in qml
         assert "General" in qml
 
-    def test_ntrip_correction_controls(self, repo_root: Path):
+    def test_rtk_corrections_controls(self, repo_root: Path):
         pages_dir = repo_root / "src" / "AppSettings" / "pages"
         settings_dir = repo_root / "src" / "Settings"
-        page = load_page_def(pages_dir / "NTRIP.SettingsUI.json")
+        page = load_page_def(pages_dir / "RTKCorrections.SettingsUI.json")
         qml = generate_page_qml(page, settings_dir)
         components = {group.component for group in page.groups if group.component}
         assert components == {
-            "NtripConnectionSettings",
-            "NtripServerSettings",
-            "NtripMountpointBrowser",
-            "CorrectionRoutingSettings",
-            "CorrectionDiagnostics",
+            "CorrectionsStatus",
+            "NTRIPConnectionStatus",
+            "NTRIPMountpointBrowser",
         }
-        for name in ("rtcmUdpInputEnabled", "rtcmUdpInputPort", "rtcmUdpValidate"):
+        for name in (
+            "correctionSource",
+            "rtcmUdpInputEnabled",
+            "rtcmUdpInputPort",
+            "rtcmUdpOutputEnabled",
+            "rtcmUdpOutputAddress",
+            "rtcmUdpOutputPort",
+        ):
             assert f"gpsCorrectionSettings.{name}" in qml
             assert f"ntripSettings.{name}" not in qml
-        assert "ntripSettings.ntripUdpForwardEnabled" in qml
-        assert 'heading: qsTr("NTRIP UDP Forwarding")' in qml
+        assert "ntripUdp" not in qml
+        assert 'heading: qsTr("UDP Forwarding")' in qml
         assert "gpsCorrectionSettings.userVisible" in qml
-        assert "correctionSource as SettingsFact).userVisible" in qml
-        assert "correctionSource.userVisible" not in qml
+        # The generated NTRIP groups hide with the NTRIP settings group, as its hand-written panels do.
+        assert qml.count("(QGroundControl.settingsManager.ntripSettings.userVisible)") == 3
+        assert "NTRIPPasswordField" in qml
+        assert "correctionSourceInstance" not in qml
         assert "injectLocalReceiver" not in qml
+
+    def test_gnss_receiver_page(self, repo_root: Path):
+        pages_dir = repo_root / "src" / "AppSettings" / "pages"
+        receiver = load_page_def(pages_dir / "GNSSReceiver.SettingsUI.json")
+        assert [group.component for group in receiver.groups] == [
+            "GPSReceiverStatus",
+            "GPSReceiverSettings",
+            "GcsPositionStatus",
+        ]
+        # The status section says so when no receiver is connected instead of showing an empty page.
+        assert receiver.groups[0].properties == {"showWhenDisconnected": "true"}
+        # Only the receiver page edits the GCS position source.
+        comm_links = load_page_def(pages_dir / "CommLinks.SettingsUI.json")
+        assert "GcsPositionStatus" not in {group.component for group in comm_links.groups}
+        # Remote ID shows the position Live GNSS sends, read-only, as rows of its location section, and the
+        # fixed coordinates only for a fixed location.
+        remote_id = load_page_def(pages_dir / "RemoteID.SettingsUI.json")
+        assert "GcsPositionStatus" not in {group.component for group in remote_id.groups}
+        location = next(
+            group for group in remote_id.groups if group.heading == "GroundStation Location"
+        )
+        gcs = next(
+            control for control in location.controls if control.component == "GcsPositionStatus"
+        )
+        assert gcs.showWhen == "locationIsLive" and "locationIsLive" in remote_id.bindings
+        assert gcs.properties == {"sourceEditable": "false", "heading": '""', "showBorder": "false"}
+        fixed = [control for control in location.controls if control.setting.endswith("Fixed")]
+        assert [control.showWhen for control in fixed] == ["locationIsFixed"] * 3
 
 
 def test_cli_preserves_unchanged_output_timestamps(tmp_path: Path, monkeypatch) -> None:

@@ -8,7 +8,6 @@ import QGroundControl.FactControls
 
 ColumnLayout {
     spacing: _margin
-    visible: tabBar.currentIndex === 2
 
     property var missionItem
 
@@ -45,7 +44,7 @@ ColumnLayout {
                 height:     ScreenTools.defaultFontPixelHeight / 2
                 width:      height
                 source:     "/res/DropArrow.svg"
-                color:      qgcPal.text
+                color:      qgcPal.textPrimary
             }
         }
     }

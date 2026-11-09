@@ -6,6 +6,7 @@
 #include "Fixtures/RAIIFixtures.h"
 #include "MAVLinkLib.h"
 #include "MAVLinkProtocol.h"
+#include "MockLink.h"
 #include "Vehicle.h"
 
 void APMStreamRateTest::_testBackoffAndRecovery_data()

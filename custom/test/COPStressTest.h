@@ -46,9 +46,9 @@ protected:
 
 private:
     COPController* _controller() const;
-    COPVehicle* _entryFor(int sysid) const;
+    COPVehicle* _entryFor(quint32 sysid) const;
     MockLink* _start(MAV_TYPE type, bool increment = true);
-    bool _selectTab(int sysid);
+    bool _selectTab(quint32 sysid);
     QList<SharedLinkConfigurationPtr> _configs;
     QList<QPointer<MockLink>> _links;
     QTemporaryDir _directory;

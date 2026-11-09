@@ -1,94 +1,95 @@
-#include "GStreamerTest.h"
+#include "HwBuffers/GstHwBuffersPipelineTest.h"
+#include "HwBuffers/GstHwBuffersTest.h"
 
 #ifdef QGC_GST_STREAMING
 
-#include <QtCore/QDir>
-#include <QtCore/QFileInfo>
+#include <atomic>
+#include <gst/gst.h>
+#include <memory>
+#include <rhi/qrhi.h>
+#include <vector>
+#if defined(QGC_HAS_GST_DMABUF_GPU_PATH)
+#include <gst/allocators/gstdmabuf.h>
+#include <unistd.h>
+#endif
+
 #include <QtCore/QRegularExpression>
 #include <QtCore/QScopeGuard>
-#include <QtCore/QStandardPaths>
-#include <atomic>
-#include <cstring>
-#include <gst/gst.h>
-#include <iterator>
-#include <memory>
-#include <vector>
+#include <QtMultimedia/QVideoFrameFormat>
+#include <QtMultimedia/QVideoSink>
 
 #include "Fixtures/RAIIFixtures.h"
-#include "Fact.h"
 #include "GStreamer.h"
-#include "GStreamerHelpers.h"
-#include "GStreamerLogging.h"
-#include "GstVideoReceiver.h"
-
-#include <QtMultimedia/QVideoFrame>
-#include <QtMultimedia/QVideoSink>
-#include <gst/video/gstvideometa.h>
-
-#include "GStreamer.h"
-#include "GStreamerFrameMap.h"
-#include "CpuVideoFramePool.h"
+#include "GStreamerTestHelpers.h"
 #include "GstHwPathTelemetry.h"
 #include "GstHwVideoBufferFactory.h"
-#include "GstSourceFactory.h"
-#include "QGCQVideoSinkController.h"
+#include "GstQgcFrameMap.h"
+#include "HwBuffers/common/HwBuffers.h"
 #include "HwBuffers/dmabuf/GstDmaDrmCaps.h"
-#include "gstqgc/GstQgcAllocation.h"
 #include "gstqgc/GstQgcCaps.h"
+#include "gstqgc/GstQgcRenderTarget.h"
+#include "gstqgc/GstQgcSinkStats.h"
+#include "gstqgc/GstQgcTestSupport.h"
 #include "gstqgc/GstQgcVideoFormats.h"
-
 #if defined(QGC_HAS_GST_DMABUF_GPU_PATH)
 #include "GstDmaBufVideoBuffer.h"
+#include "GstQtDmaBufImport.h"
 #endif
-#if defined(QGC_HAS_GST_GLMEMORY_GPU_PATH)
-#include <gst/gl/gl.h>
-
-#include "GstGlContextBridge.h"
-#endif
-#if defined(QGC_HAS_GST_D3D11_GPU_PATH)
-#include "GstD3D11ContextBridge.h"
-#endif
-#if defined(QGC_HAS_GST_D3D12_GPU_PATH)
-#include "GstD3D12ContextBridge.h"
-#endif
-#include "GstContextBridgeRegistry.h"
-#include "GstHwVideoBuffer.h"
-#include "GstHwVideoBufferFactory.h"
-#include "gstqgc/gstqgcvideosinkbin.h"
 #if defined(QGC_HAS_ANY_GPU_PATH)
 #include "QGCRhiCapture.h"
 #endif
-#include <QtCore/QCoreApplication>
-#include <QtCore/QElapsedTimer>
-#include <QtCore/QEventLoop>
-#include <QtQuick/QQuickWindow>
-#include <QtTest/QSignalSpy>
-#include <string_view>
 
-void GStreamerTest::_testDmaBufDispatch()
+#if defined(QGC_HAS_GST_DMABUF_GPU_PATH)
+namespace {
+
+// Single-memory 64x64 DMABuf sample backed by a memfd: enough for the streaming-thread gates and CPU map. @p capsString
+// replaces the system-memory caps (e.g. DMA_DRM caps).
+GstSample* makeMemfdDmaBufSample(GstVideoFormat format, GstVideoInfo& info, const char* capsString = nullptr)
 {
-    GStreamer::redirectGLibLogging();
-    QVERIFY2(GStreamer::completeInit(), "GStreamer::completeInit() failed");
+    gst_video_info_set_format(&info, format, 64, 64);
+    const int fd = GstTest::makeMemfd(QByteArray(static_cast<qsizetype>(GST_VIDEO_INFO_SIZE(&info)), '\0'));
+    if (fd < 0) {
+        return nullptr;
+    }
+    GstAllocator* allocator = gst_dmabuf_allocator_new();
+    GstMemory* memory = gst_dmabuf_allocator_alloc(allocator, fd, GST_VIDEO_INFO_SIZE(&info));
+    gst_object_unref(allocator);
+    if (!memory) {
+        ::close(fd);
+        return nullptr;
+    }
+    GstBuffer* buffer = gst_buffer_new();
+    gst_buffer_append_memory(buffer, memory);
+    GstCaps* caps = capsString ? gst_caps_from_string(capsString) : gst_video_info_to_caps(&info);
+    GstSample* sample = gst_sample_new(buffer, caps, nullptr, nullptr);
+    gst_buffer_unref(buffer);
+    gst_caps_unref(caps);
+    return sample;
+}
 
-#if defined(QGC_GST_BIN_USE_GLUPLOAD)
-    QSKIP("Direct-DMABuf dispatch not exercised when the GPU bin routes through glupload (GLMemory path)");
+}  // namespace
 #endif
 
-    for (const char* name : {"vah264enc", "vah264dec", "vapostproc"}) {
-        GstElementFactory* f = gst_element_factory_find(name);
-        if (!f) {
-            QSKIP(qPrintable(QStringLiteral("VA-API not available: missing %1").arg(QString::fromUtf8(name))));
-        }
-        gst_object_unref(f);
+void GstHwBuffersPipelineTest::_testDmaBufDispatch()
+{
+#if !defined(QGC_GST_BIN_HAS_DIRECT_DMABUF)
+    QSKIP("Direct-DMABuf bin not compiled in this build");
+#else
+    // The DMABuf path and its DMA_DRM caps both need the EGLDisplay Qt renders with.
+    if (!QGCRhiCapture::qtEglDisplay()) {
+        QSKIP("Qt renders without EGL here (offscreen QPA, GLX)");
     }
+    // The sink offers DMABuf only to Qt's OpenGL over EGL.
+    constexpr GstQgc::RenderTarget kDmaBufTarget{.backend = GstQgc::RenderBackend::OpenGL, .egl = true};
+    const GstQgc::ScopedSinkEnvironmentForTest environment({.target = kDmaBufTarget,
+                                                            .gpuBin = {.mode = GstQgc::GpuBinMode::DirectDmaBuf},
+                                                            .dmaBufDisplay = QGCRhiCapture::qtEglDisplay()});
 
-    const auto onlyDmaBufCaps = [](GstCaps* caps) -> GstCaps* {
+    GSTTEST_SKIP_UNLESS_FACTORIES("vah264enc", "vah264dec", "vapostproc");
+
+    const auto onlyDmaBufCaps = [](GstCaps* caps) {
         GstCaps* out = gst_caps_new_empty();
-        if (!caps) {
-            return out;
-        }
-        const guint n = gst_caps_get_size(caps);
-        for (guint i = 0; i < n; ++i) {
+        for (guint i = 0; caps && (i < gst_caps_get_size(caps)); ++i) {
             GstCapsFeatures* features = gst_caps_get_features(caps, i);
             if (!features || !gst_caps_features_contains(features, "memory:DMABuf")) {
                 continue;
@@ -96,125 +97,65 @@ void GStreamerTest::_testDmaBufDispatch()
             gst_caps_append_structure_full(out, gst_structure_copy(gst_caps_get_structure(caps, i)),
                                            gst_caps_features_copy(features));
         }
-        return out;
+        return GStreamer::adoptCaps(out);
     };
 
-    GstCaps* qgcGpuCaps = gst_caps_from_string(GstQgc::buildGpuCapsString().c_str());
+    const GstQgc::SinkCapsPolicy dmaBufPolicy{.gpuZeroCopy = true,
+                                              .gpuBin = GstQgc::GpuBinMode::DirectDmaBuf,
+                                              .target = kDmaBufTarget,
+                                              .dmaBufDisplay = QGCRhiCapture::qtEglDisplay()};
+    const GStreamer::GstCapsPtr qgcGpuCaps =
+        GStreamer::adoptCaps(gst_caps_from_string(GstQgc::buildSinkCaps(dmaBufPolicy).c_str()));
     QVERIFY2(qgcGpuCaps, "QGC GPU caps did not parse");
-    auto qgcGpuCapsGuard = qScopeGuard([&] { gst_caps_unref(qgcGpuCaps); });
-
-    GstCaps* qgcDmaBufCaps = onlyDmaBufCaps(qgcGpuCaps);
-    QVERIFY2(qgcDmaBufCaps, "QGC DMABuf caps did not parse");
-    auto qgcDmaBufCapsGuard = qScopeGuard([&] { gst_caps_unref(qgcDmaBufCaps); });
-    QVERIFY2(!gst_caps_is_empty(qgcDmaBufCaps), "QGC GPU caps did not include a DMABuf structure");
+    const GStreamer::GstCapsPtr qgcDmaBufCaps = onlyDmaBufCaps(qgcGpuCaps.get());
+    QVERIFY2(!gst_caps_is_empty(qgcDmaBufCaps.get()), "QGC GPU caps did not include a DMABuf structure");
 
     {
-        GError* preflightError = nullptr;
-        GstElement* preflight = gst_parse_launch(
-            "videotestsrc num-buffers=2 ! "
-            "video/x-raw,format=NV12,width=320,height=240,framerate=30/1 ! "
-            "vah264enc ! h264parse ! vah264dec ! vapostproc ! "
-            "capsfilter name=qgccaps ! fakesink sync=false",
-            &preflightError);
-        if (preflightError) {
-            const QString msg = QString::fromUtf8(preflightError->message);
-            g_clear_error(&preflightError);
-            QSKIP(qPrintable(QStringLiteral("DMABuf preflight parse skipped: %1").arg(msg)));
+        GstTest::TestPipeline preflight;
+        if (!preflight.launch(QStringLiteral("videotestsrc num-buffers=2 ! "
+                                             "video/x-raw,format=NV12,width=320,height=240,framerate=30/1 ! "
+                                             "vah264enc ! h264parse ! vah264dec ! vapostproc ! "
+                                             "capsfilter name=qgccaps ! fakesink sync=false"))) {
+            QSKIP(qPrintable(QStringLiteral("DMABuf preflight parse skipped: %1").arg(preflight.error())));
         }
-        QVERIFY2(preflight, "Failed to create DMABuf preflight pipeline");
-        auto preflightGuard = qScopeGuard([&] {
-            gst_element_set_state(preflight, GST_STATE_NULL);
-            gst_object_unref(preflight);
-        });
+        g_object_set(preflight.element("qgccaps").get(), "caps", qgcDmaBufCaps.get(), nullptr);
 
-        GstElement* capsFilter = gst_bin_get_by_name(GST_BIN(preflight), "qgccaps");
-        QVERIFY2(capsFilter, "Could not find DMABuf preflight capsfilter");
-        g_object_set(capsFilter, "caps", qgcDmaBufCaps, nullptr);
-        gst_object_unref(capsFilter);
-
-        const GstStateChangeReturn preflightRet = gst_element_set_state(preflight, GST_STATE_PLAYING);
-        if (preflightRet == GST_STATE_CHANGE_FAILURE) {
+        if (!preflight.play()) {
             QSKIP("DMABuf preflight failed to PLAY (no VA driver / DRI device?)");
         }
-
-        GstBus* bus = gst_element_get_bus(preflight);
-        GstMessage* msg = gst_bus_timed_pop_filtered(bus, 5 * GST_SECOND,
-                                                     static_cast<GstMessageType>(GST_MESSAGE_EOS | GST_MESSAGE_ERROR));
-        gst_object_unref(bus);
-
-        bool sawPreflightError = false;
-        QString errMsg;
-        if (msg && GST_MESSAGE_TYPE(msg) == GST_MESSAGE_ERROR) {
-            GError* err = nullptr;
-            gchar* debug = nullptr;
-            gst_message_parse_error(msg, &err, &debug);
-            errMsg = QStringLiteral("%1 (%2)")
-                         .arg(err ? QString::fromUtf8(err->message) : QStringLiteral("?"))
-                         .arg(debug ? QString::fromUtf8(debug) : QString());
-            g_clear_error(&err);
-            g_free(debug);
-            sawPreflightError = true;
-        }
-        if (msg) {
-            gst_message_unref(msg);
-        }
-
-        if (!msg || sawPreflightError) {
-            gchar* qgcCapsStr = gst_caps_to_string(qgcDmaBufCaps);
-            const QString reason = !msg ? QStringLiteral("timed out waiting for EOS")
-                                        : QStringLiteral("negotiation failed: %1").arg(errMsg);
-            const QString message =
-                QStringLiteral("VA driver cannot produce QGC-compatible direct DMABuf caps (%1). QGC: %2")
-                    .arg(reason, QString::fromUtf8(qgcCapsStr ? qgcCapsStr : ""));
-            g_free(qgcCapsStr);
-            QSKIP(qPrintable(message));
+        const QString failure = preflight.runToEos();
+        if (!failure.isEmpty()) {
+            const GStreamer::GCharPtr qgcCapsStr = GStreamer::adoptGChar(gst_caps_to_string(qgcDmaBufCaps.get()));
+            QSKIP(qPrintable(QStringLiteral("VA driver cannot produce QGC-compatible direct DMABuf caps (%1). QGC: %2")
+                                 .arg(failure, QString::fromUtf8(qgcCapsStr ? qgcCapsStr.get() : ""))));
         }
     }
 
     QVideoSink videoSink;
-
-    GError* error = nullptr;
-    GstElement* pipeline = gst_parse_launch(
-        "videotestsrc num-buffers=10 ! "
-        "video/x-raw,format=NV12,width=320,height=240,framerate=30/1 ! "
-        "vah264enc ! h264parse ! vah264dec ! vapostproc ! "
-        "capsfilter name=qgccaps ! "
-        "qgcvideosinkbin name=sink gpu-zerocopy=true",
-        &error);
-    if (error) {
-        const QString msg = QString::fromUtf8(error->message);
-        g_clear_error(&error);
-        QSKIP(qPrintable(QStringLiteral("DMABuf pipeline parse skipped: %1").arg(msg)));
+    GstTest::TestPipeline pipeline;
+    if (!pipeline.launch(QStringLiteral("videotestsrc num-buffers=10 ! "
+                                        "video/x-raw,format=NV12,width=320,height=240,framerate=30/1 ! "
+                                        "vah264enc ! h264parse ! vah264dec ! vapostproc ! "
+                                        "capsfilter name=qgccaps ! "
+                                        "qgcvideosinkbin name=sink gpu-zerocopy=true"))) {
+        QSKIP(qPrintable(QStringLiteral("DMABuf pipeline parse skipped: %1").arg(pipeline.error())));
     }
-    QVERIFY2(pipeline, "Failed to create DMABuf test pipeline");
-    auto pipelineGuard = qScopeGuard([&] {
-        gst_element_set_state(pipeline, GST_STATE_NULL);
-        gst_object_unref(pipeline);
-    });
+    g_object_set(pipeline.element("qgccaps").get(), "caps", qgcDmaBufCaps.get(), nullptr);
 
-    GstElement* capsFilter = gst_bin_get_by_name(GST_BIN(pipeline), "qgccaps");
-    QVERIFY2(capsFilter, "Could not find DMABuf capsfilter");
-    g_object_set(capsFilter, "caps", qgcDmaBufCaps, nullptr);
-    gst_object_unref(capsFilter);
-
-    GstElement* sinkBin = gst_bin_get_by_name(GST_BIN(pipeline), "sink");
+    const GStreamer::GstElementPtr sinkBin = pipeline.element("sink");
     QVERIFY2(sinkBin, "Could not find 'sink' element");
-    auto sinkBinGuard = qScopeGuard([&] { gst_object_unref(sinkBin); });
 
     // Without a real QVideoSink, makeAdapterContext(true) never sets gpuEnabled / resolves the
     // EGLDisplay, so show_frame's HwVideoBufferContext stays CPU-only and the DmaBuf counter never moves.
     auto owner = std::make_unique<QObject>();
-    if (!GStreamer::setupQVideoSinkElement(sinkBin, &videoSink, owner.get())) {
+    if (!GStreamer::setupQVideoSinkElement(sinkBin.get(), &videoSink, owner.get())) {
         QSKIP("setupQVideoSinkElement() failed (no GPU context for DMABuf)");
     }
 
-    GstElement* qvideosink = gst_bin_get_by_name(GST_BIN(sinkBin), "qgcqvideosink");
+    const GStreamer::GstElementPtr qvideosink = GstQgcTest::qvideosink(sinkBin.get());
     QVERIFY2(qvideosink, "Could not find 'qgcqvideosink' inside sink bin");
-    auto qvideosinkGuard = qScopeGuard([&] { gst_object_unref(qvideosink); });
-
-    GstPad* appsinkPad = gst_element_get_static_pad(qvideosink, "sink");
-    QVERIFY2(appsinkPad, "qgcqvideosink has no sink pad");
-    auto appsinkPadGuard = qScopeGuard([&] { gst_object_unref(appsinkPad); });
+    const GStreamer::GstPadPtr sinkPad = GStreamer::adoptPad(gst_element_get_static_pad(qvideosink.get(), "sink"));
+    QVERIFY2(sinkPad, "qgcqvideosink has no sink pad");
 
     struct ProbeState
     {
@@ -228,70 +169,46 @@ void GStreamerTest::_testDmaBufDispatch()
         if (buf) {
             st->bufferCount.fetch_add(1, std::memory_order_relaxed);
             GstMemory* mem = gst_buffer_peek_memory(buf, 0);
-            if (mem && mem->allocator && mem->allocator->mem_type &&
-                g_str_has_prefix(mem->allocator->mem_type, "DMABuf")) {
+            if (mem && gst_is_dmabuf_memory(mem)) {
                 st->dmaBufCount.fetch_add(1, std::memory_order_relaxed);
             }
         }
         return GST_PAD_PROBE_OK;
     };
-    const gulong probeId = gst_pad_add_probe(appsinkPad, GST_PAD_PROBE_TYPE_BUFFER, probeCb, &probe, nullptr);
-    QVERIFY(probeId);
-    auto probeGuard = qScopeGuard([&] { gst_pad_remove_probe(appsinkPad, probeId); });
+    GStreamer::PadProbe bufferProbe;
+    QVERIFY(bufferProbe.add(sinkPad.get(), GST_PAD_PROBE_TYPE_BUFFER, probeCb, &probe));
 
-    const quint64 deliveredBefore = GstHwPathTelemetry::peekDeliveredCount(HwVideoBufferPath::DmaBuf);
-
-    GstStateChangeReturn ret = gst_element_set_state(pipeline, GST_STATE_PLAYING);
-    if (ret == GST_STATE_CHANGE_FAILURE) {
+    if (!pipeline.play()) {
         QSKIP("DMABuf pipeline failed to PLAY (no VA driver / DRI device?)");
     }
 
-    GstBus* bus = gst_element_get_bus(pipeline);
-    GstMessage* msg = gst_bus_timed_pop_filtered(bus, 10 * GST_SECOND,
-                                                 static_cast<GstMessageType>(GST_MESSAGE_EOS | GST_MESSAGE_ERROR));
-
-    QString errMsg;
-    bool sawError = false;
-    if (msg && GST_MESSAGE_TYPE(msg) == GST_MESSAGE_ERROR) {
-        GError* err = nullptr;
-        gchar* debug = nullptr;
-        gst_message_parse_error(msg, &err, &debug);
-        errMsg = QStringLiteral("%1 (%2)")
-                     .arg(err ? QString::fromUtf8(err->message) : QStringLiteral("?"))
-                     .arg(debug ? QString::fromUtf8(debug) : QString());
-        g_clear_error(&err);
-        g_free(debug);
-        sawError = true;
-    }
-    if (msg)
-        gst_message_unref(msg);
-    gst_object_unref(bus);
-
-    // Settle drain so queued videoFrameChanged deliveries land before telemetry is read.
-    {
-        QElapsedTimer drain;
-        drain.start();
-        while (drain.elapsed() < 100) {
-            QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    const GStreamer::GstMessagePtr msg = pipeline.waitForEosOrError();
+    const QString negotiatedStr = GstTest::currentCapsString(sinkPad.get());
+    if (msg && (GST_MESSAGE_TYPE(msg.get()) == GST_MESSAGE_ERROR)) {
+        // GST_ELEMENT_FLOW_ERROR carries the streaming thread's GstFlowReturn as "flow-return".
+        const GstStructure* details = nullptr;
+        gst_message_parse_error_details(msg.get(), &details);
+        gint flowReturn = GST_FLOW_OK;
+        const bool notNegotiated = details && gst_structure_get_int(details, "flow-return", &flowReturn) &&
+                                   (flowReturn == GST_FLOW_NOT_NEGOTIATED);
+        // The preflight already ran the VA elements. The sink holding the direct bin's DMABuf caps when the source
+        // stops with not-negotiated means the driver can't allocate any layout the sink offered (iHD: "driver set a
+        // modifier different from allowed list").
+        if (notNegotiated && negotiatedStr.contains(QStringLiteral("memory:DMABuf"))) {
+            QSKIP(qPrintable(QStringLiteral("VA driver exports no DMABuf layout Qt's EGL display can import. Agreed "
+                                            "caps: %1")
+                                 .arg(negotiatedStr)));
         }
+        QSKIP(qPrintable(
+            QStringLiteral("VA pipeline into the direct DMABuf bin failed: %1").arg(GstTest::errorText(msg.get()))));
     }
 
-    GstCaps* negotiated = gst_pad_get_current_caps(appsinkPad);
-    QString negotiatedStr;
-    if (negotiated) {
-        gchar* s = gst_caps_to_string(negotiated);
-        negotiatedStr = QString::fromUtf8(s ? s : "");
-        g_free(s);
-        gst_caps_unref(negotiated);
-    }
-
-    const quint64 deliveredAfter = GstHwPathTelemetry::peekDeliveredCount(HwVideoBufferPath::DmaBuf);
+    const auto dmaBufFrames = [&qvideosink] {
+        return GstQgc::frameStatsField(GstQgc::frameStats(qvideosink.get()).get(),
+                                       GstQgc::sinkFramesField(HwVideoBufferPath::DmaBuf));
+    };
     const int bufferCount = probe.bufferCount.load();
     const int dmaBufCount = probe.dmaBufCount.load();
-
-    if (sawError) {
-        QSKIP(qPrintable(QStringLiteral("DMABuf pipeline error (likely no VA driver): %1").arg(errMsg)));
-    }
     QVERIFY2(bufferCount > 0, "No buffers reached qgcqvideosink under DMABuf caps");
     if (dmaBufCount == 0 || !negotiatedStr.contains(QStringLiteral("memory:DMABuf"))) {
         QSKIP(qPrintable(QStringLiteral("VA driver chose system memory, not DMABuf. Buffers: %1, "
@@ -299,120 +216,125 @@ void GStreamerTest::_testDmaBufDispatch()
                              .arg(bufferCount)
                              .arg(negotiatedStr)));
     }
-    QVERIFY2(deliveredAfter > deliveredBefore,
-             qPrintable(QStringLiteral("DMABuf negotiated but DmaBuf delivered-count did not advance "
-                                       "(before=%1 after=%2). Buffers: %3, caps: %4")
-                            .arg(deliveredBefore)
-                            .arg(deliveredAfter)
-                            .arg(bufferCount)
-                            .arg(negotiatedStr)));
+    QVERIFY2(
+        QTest::qWaitFor([&] { return dmaBufFrames() > 0; }, TestTimeout::shortDuration()),
+        qPrintable(QStringLiteral("DMABuf negotiated but the sink delivered no DmaBuf frames. Buffers: %1, caps: %2")
+                       .arg(bufferCount)
+                       .arg(negotiatedStr)));
+#endif
 }
 
-void GStreamerTest::_testDmaDrmCapsRejectNonLinearModifiers()
+void GstHwBuffersTest::_testDmaDrmModifierPolicy_data()
+{
+    QTest::addColumn<quint64>("modifier");
+    QTest::addColumn<bool>("importable");
+
+    constexpr quint64 kIntel = 0x01ULL << 56;
+    constexpr quint64 kAmd = 0x02ULL << 56;
+    constexpr quint64 kAmdGfx9Swizzle = (0x19ULL << 8) | 0x1ULL;  // TILE=64K_R_X, TILE_VERSION=GFX9
+    QTest::newRow("linear") << quint64(0) << true;
+    QTest::newRow("intel-x-tiled") << (kIntel | 1) << true;
+    QTest::newRow("intel-y-tiled") << (kIntel | 2) << true;
+    QTest::newRow("intel-4-tiled") << (kIntel | 9) << true;
+    QTest::newRow("intel-y-tiled-ccs") << (kIntel | 4) << false;
+    QTest::newRow("intel-gen12-rc-ccs") << (kIntel | 6) << false;
+    QTest::newRow("intel-4-tiled-mtl-rc-ccs") << (kIntel | 13) << false;
+    QTest::newRow("amd-swizzle") << (kAmd | kAmdGfx9Swizzle) << true;
+    QTest::newRow("amd-swizzle-dcc") << (kAmd | kAmdGfx9Swizzle | (1ULL << 13)) << false;
+    QTest::newRow("arm-afbc") << ((0x08ULL << 56) | 0x1) << false;
+    QTest::newRow("qcom-ubwc") << ((0x05ULL << 56) | 0x1) << false;
+    QTest::newRow("invalid") << quint64(0x00ffffffffffffffULL) << false;
+}
+
+void GstHwBuffersTest::_testDmaDrmModifierPolicy()
 {
 #if defined(QGC_HAS_GST_DMABUF_GPU_PATH) && GST_CHECK_VERSION(1, 24, 0)
-    constexpr quint64 kIntelTileYModifier = 0x0100000000000009ULL;
-    QVERIFY2(!GstHw::dmaDrmModifierAdvertisedForTest(kIntelTileYModifier),
-             "Direct QGC DMABuf caps must not advertise tiled VA modifiers; Mesa/Gallium can segfault while "
-             "binding the resulting EGLImage on Qt's render thread");
+    QFETCH(quint64, modifier);
+    QFETCH(bool, importable);
+
+    // Qt imports each plane as its own EGLImage: compression and auxiliary (CCS/DCC) planes can't survive that.
+    QCOMPARE(GstHw::dmaDrmModifierImportableForTest(modifier), importable);
 #else
     QSKIP("DMABuf DMA_DRM caps unavailable in this build");
 #endif
 }
 
-void GStreamerTest::_testDmaBufRejectsNonLinearDirectImport()
+void GstHwBuffersTest::_testDmaDrmPlaneFourccsMatchQtImporter()
 {
-#if defined(QGC_HAS_GST_DMABUF_GPU_PATH)
-    constexpr guint64 kLinearModifier = 0;
-    constexpr guint64 kIntelTileYModifier = 0x0100000000000009ULL;
-
-    QVERIFY(GstDmaBufVideoBuffer::directGlImportAllowedForTest(false, kLinearModifier));
-    QVERIFY(GstDmaBufVideoBuffer::directGlImportAllowedForTest(true, kLinearModifier));
-    QVERIFY2(!GstDmaBufVideoBuffer::directGlImportAllowedForTest(false, kIntelTileYModifier),
-             "Non-LINEAR DMABuf cannot be imported without EGL_EXT_image_dma_buf_import_modifiers");
-    QVERIFY2(!GstDmaBufVideoBuffer::directGlImportAllowedForTest(true, kIntelTileYModifier),
-             "Direct QGC DMABuf must reject tiled VA modifiers even when EGL advertises modifier support; binding "
-             "the resulting EGLImage can segfault in Mesa/Gallium");
+#if defined(QGC_HAS_GST_DMABUF_GPU_PATH) && GST_CHECK_VERSION(1, 24, 0)
+    // The caps only offer a modifier every plane can be sampled with, as the importer will sample it.
+    for (const GstQgc::VideoFormatEntry& entry : GstQgc::kVideoFormatTable) {
+        if (!entry.capsToken || !(entry.offers & GstQgc::kOfferDmaDrm)) {
+            continue;
+        }
+        const GstQtDmaBufImport::PlaneFourccs imported = GstQtDmaBufImport::planeFourccs(entry.qt);
+        const guint planes = GST_VIDEO_FORMAT_INFO_N_PLANES(gst_video_format_get_info(entry.gst));
+        QCOMPARE(imported.count, int(planes));
+        for (guint plane = 0; plane < planes; ++plane) {
+            QCOMPARE(GstHw::dmaDrmPlaneImportFourccForTest(entry.gst, plane), imported.fourcc[plane]);
+        }
+    }
+    // BGRA's bytes are B,G,R,A: DRM ARGB8888, which samples red as red.
+    QCOMPARE(GstQtDmaBufImport::planeFourccs(QVideoFrameFormat::Format_BGRA8888).fourcc[0],
+             quint32(GST_MAKE_FOURCC('A', 'R', '2', '4')));
 #else
-    QSKIP("DMABuf unavailable in this build");
+    QSKIP("DMABuf DMA_DRM caps unavailable in this build");
 #endif
 }
 
-void GStreamerTest::_testDmaBufTiledImportAvoidsTexStorage()
-{
-#if defined(QGC_HAS_GST_DMABUF_GPU_PATH)
-    constexpr guint64 kLinearModifier = 0;
-    constexpr guint64 kIntelTileYModifier = 0x0100000000000009ULL;
-
-    QVERIFY(GstDmaBufVideoBuffer::texStorageImportAllowedForTest(false, true, kLinearModifier));
-    QVERIFY2(!GstDmaBufVideoBuffer::texStorageImportAllowedForTest(false, true, kIntelTileYModifier),
-             "Tiled DMABuf EGLImages must avoid GL_EXT_EGL_image_storage; Mesa/Gallium can segfault while "
-             "binding a tiled VA image through glEGLImageTargetTexStorageEXT");
-    QVERIFY(!GstDmaBufVideoBuffer::texStorageImportAllowedForTest(true, true, kLinearModifier));
-    QVERIFY(!GstDmaBufVideoBuffer::texStorageImportAllowedForTest(false, false, kLinearModifier));
-#else
-    QSKIP("DMABuf unavailable in this build");
-#endif
-}
-
-void GStreamerTest::_testHwBufferMapTexturesGuard()
+void GstHwBuffersTest::_testDmaBufPathNeedsQtEglDisplay()
 {
 #if !defined(QGC_HAS_GST_DMABUF_GPU_PATH)
     QSKIP("DMABuf GPU path not compiled in this build");
 #else
-    GStreamer::redirectGLibLogging();
-
-    const quint64 failsBefore = GstHwPathTelemetry::peekMapFailureCount(HwVideoBufferPath::DmaBuf);
-
-    GstElement* pipeline = gst_parse_launch(
-        "videotestsrc num-buffers=1 ! "
-        R"(capsfilter caps="video/x-raw(memory:DMABuf),format=NV12,width=64,height=64" ! )"
-        "fakesink name=sink sync=false",
-        nullptr);
-    if (!pipeline) {
-        QSKIP("Could not construct DMABuf test pipeline (element missing)");
+    if (QGCRhiCapture::qtEglDisplay()) {
+        QSKIP("Qt renders with EGL on this platform");
     }
+    HwVideoBufferContext context = HwBuffers::makeAdapterContext(true);
+    context.dmaBufEglDisplay = HwBuffers::dmaBufImportDisplay();
+    QVERIFY(!context.dmaBufEglDisplay);
 
-    GstStateChangeReturn ret = gst_element_set_state(pipeline, GST_STATE_PAUSED);
-    if (ret == GST_STATE_CHANGE_FAILURE) {
-        gst_object_unref(pipeline);
-        QSKIP("DMABuf pipeline failed to reach PAUSED (no DMABuf source on this machine)");
-    }
-    gst_element_get_state(pipeline, nullptr, nullptr, 2 * GST_SECOND);
-
-    GstElement* fakesink = gst_bin_get_by_name(GST_BIN(pipeline), "sink");
-    GstSample* sample = nullptr;
-    if (fakesink) {
-        g_object_get(fakesink, "last-sample", &sample, nullptr);
-        gst_object_unref(fakesink);
-    }
-
-    if (!sample) {
-        gst_element_set_state(pipeline, GST_STATE_NULL);
-        gst_object_unref(pipeline);
-        QSKIP("No DMABuf sample produced (caps negotiation failed on this machine)");
-    }
-
+    // Without Qt's EGLDisplay no import can succeed: DMABuf memory must take the CPU path before any import attempt.
     GstVideoInfo info;
-    GstCaps* caps = gst_sample_get_caps(sample);
-    gst_video_info_from_caps(&info, caps);
-    QVideoFrameFormat fmt(QSize(64, 64), QVideoFrameFormat::Format_NV12);
-
-    GstDmaBufVideoBuffer buf(sample, info, fmt, EGL_NO_DISPLAY);
-    QVideoFrameTexturesUPtr old;
-    QVideoFrameTexturesUPtr result = buf.mapTextures(*reinterpret_cast<QRhi*>(1), old);
-    QVERIFY(!result);
-
-    const quint64 failsAfter = GstHwPathTelemetry::peekMapFailureCount(HwVideoBufferPath::DmaBuf);
-    QVERIFY(failsAfter > failsBefore);
-
-    gst_sample_unref(sample);
-    gst_element_set_state(pipeline, GST_STATE_NULL);
-    gst_object_unref(pipeline);
+    GstSample* sample = makeMemfdDmaBufSample(GST_VIDEO_FORMAT_NV12, info);
+    QVERIFY(sample);
+    const auto sampleGuard = qScopeGuard([sample] { gst_sample_unref(sample); });
+    HwVideoBufferPath path = HwVideoBufferPath::DmaBuf;
+    const auto hwBuffer =
+        makeHwVideoBuffer(gst_sample_get_buffer(sample), gst_sample_get_caps(sample), info,
+                          QVideoFrameFormat(QSize(64, 64), QVideoFrameFormat::Format_NV12), context, path, nullptr);
+    QVERIFY(!hwBuffer);
+    QCOMPARE(path, HwVideoBufferPath::None);
 #endif
 }
 
-void GStreamerTest::_testHwBufferFactoryCacheRejectsMemoryTypeChange()
+void GstHwBuffersTest::_testDmaBufMapTexturesRejectsForeignRhi()
+{
+#if !defined(QGC_HAS_GST_DMABUF_GPU_PATH)
+    QSKIP("DMABuf GPU path not compiled in this build");
+#else
+    const std::unique_ptr<QRhi> rhi = GstTest::makeNullRhi();
+    QVERIFY(rhi);
+    GstVideoInfo info;
+    GstSample* sample = makeMemfdDmaBufSample(GST_VIDEO_FORMAT_NV12, info);
+    QVERIFY(sample);
+    GstDmaBufVideoBuffer frame(sample, info, QVideoFrameFormat(QSize(64, 64), QVideoFrameFormat::Format_NV12),
+                               EGL_NO_DISPLAY);
+    gst_sample_unref(sample);
+    const quint64 failuresBefore =
+        GstHwPathTelemetry::peek(HwVideoBufferPath::DmaBuf, GstHwPathTelemetry::Counter::MapFailures);
+
+    // Warned once per process.
+    ignoreLogMessage("Video.GStreamer.HwBuffers.GstDmaBuf", QtWarningMsg,
+                     QRegularExpression(QStringLiteral("QRhi backend is")));
+    QVideoFrameTexturesUPtr none;
+    QVERIFY2(!frame.mapTextures(*rhi, none), "Only a GL or Vulkan QRhi can import a DMABuf frame");
+    QCOMPARE(GstHwPathTelemetry::peek(HwVideoBufferPath::DmaBuf, GstHwPathTelemetry::Counter::MapFailures),
+             failuresBefore + 1);
+#endif
+}
+
+void GstHwBuffersTest::_testHwBufferFactoryCacheRejectsMemoryTypeChange()
 {
 #if !defined(QGC_HAS_GST_DMABUF_GPU_PATH)
     QSKIP("DMABuf GPU path not compiled in this build");
@@ -425,13 +347,8 @@ void GStreamerTest::_testHwBufferFactoryCacheRejectsMemoryTypeChange()
     QVERIFY(buffer);
     const auto bufferGuard = qScopeGuard([&] { gst_buffer_unref(buffer); });
 
-    GstCaps* caps = gst_video_info_to_caps(&info);
+    const GStreamer::GstCapsPtr caps = GStreamer::adoptCaps(gst_video_info_to_caps(&info));
     QVERIFY(caps);
-    const auto capsGuard = qScopeGuard([&] { gst_caps_unref(caps); });
-
-    GstSample* sample = gst_sample_new(buffer, caps, nullptr, nullptr);
-    QVERIFY(sample);
-    const auto sampleGuard = qScopeGuard([&] { gst_sample_unref(sample); });
 
     HwVideoBufferContext context;
     context.gpuEnabled = true;
@@ -444,37 +361,185 @@ void GStreamerTest::_testHwBufferFactoryCacheRejectsMemoryTypeChange()
     HwVideoBufferPath path = HwVideoBufferPath::None;
     QVideoFrameFormat format(QSize(4, 4), QVideoFrameFormat::Format_BGRA8888);
 
-    auto hwBuffer = makeHwVideoBuffer(sample, info, format, context, path, &cache);
+    auto hwBuffer = makeHwVideoBuffer(buffer, caps.get(), info, format, context, path, &cache);
     QVERIFY2(!hwBuffer, "Cached DMABuf path must reject a system-memory buffer and fall back to CPU mapping");
     QCOMPARE(path, HwVideoBufferPath::None);
     QVERIFY(!cache.validated);
 #endif
 }
 
-void GStreamerTest::_testDmaBufSingleFdImportEnvGate()
+void GstHwBuffersTest::_testDmaBufTiledFrameRefusesCpuMap()
+{
+#if !defined(QGC_HAS_GST_DMABUF_GPU_PATH) || !GST_CHECK_VERSION(1, 24, 0)
+    QSKIP("DMABuf DMA_DRM import not compiled in this build");
+#else
+    GstDmaBufVideoBuffer::resetCachedState();
+    const QVideoFrameFormat format(QSize(64, 64), QVideoFrameFormat::Format_NV12);
+    GstVideoInfo info;
+
+    GstSample* linearSample = makeMemfdDmaBufSample(
+        GST_VIDEO_FORMAT_NV12, info, "video/x-raw(memory:DMABuf),format=DMA_DRM,drm-format=NV12,width=64,height=64");
+    QVERIFY(linearSample);
+    GstDmaBufVideoBuffer linear(linearSample, info, format, EGL_NO_DISPLAY);
+    gst_sample_unref(linearSample);
+    QCOMPARE(linear.map(QVideoFrame::ReadOnly).planeCount, 2);
+    linear.unmap();
+
+    // Reading Y-tiled memory as rows would show scrambled pixels.
+    GstSample* tiledSample =
+        makeMemfdDmaBufSample(GST_VIDEO_FORMAT_NV12, info,
+                              "video/x-raw(memory:DMABuf),format=DMA_DRM,drm-format=NV12:0x0100000000000002,"
+                              "width=64,height=64");
+    QVERIFY(tiledSample);
+    GstDmaBufVideoBuffer tiled(tiledSample, info, format, EGL_NO_DISPLAY);
+    gst_sample_unref(tiledSample);
+    expectLogMessage("Video.GStreamer.HwBuffers.GstDmaBuf", QtWarningMsg,
+                     QRegularExpression(QStringLiteral("tiled DMABuf frame has no CPU layout")));
+    QCOMPARE(tiled.map(QVideoFrame::ReadOnly).planeCount, 0);
+    verifyExpectedLogMessage();
+    QVERIFY2(!tiled.validatePlaneHandles(), "A tiled frame imports only through EGL modifier attributes");
+#endif
+}
+
+void GstHwBuffersTest::_testDmaBufTiledFrameDroppedWithoutImport_data()
+{
+    QTest::addColumn<QString>("drmFormat");
+    QTest::addColumn<bool>("qtDisplay");
+    QTest::addColumn<bool>("importDisabled");
+    QTest::addColumn<bool>("cpuFrame");
+
+    // DMA_DRM caps negotiated before the import was disabled, or while the sink's GPU context had no Qt EGLDisplay.
+    const QString yTiled = QStringLiteral("NV12:0x0100000000000002");
+    QTest::newRow("tiled, import disabled") << yTiled << true << true << false;
+    QTest::newRow("tiled, no EGL display") << yTiled << false << false << false;
+    QTest::newRow("linear, no EGL display") << QStringLiteral("NV12") << false << false << true;
+}
+
+void GstHwBuffersTest::_testDmaBufTiledFrameDroppedWithoutImport()
+{
+#if !defined(QGC_HAS_GST_DMABUF_GPU_PATH) || !GST_CHECK_VERSION(1, 24, 0)
+    QSKIP("DMABuf DMA_DRM import not compiled in this build");
+#else
+    QFETCH(QString, drmFormat);
+    QFETCH(bool, qtDisplay);
+    QFETCH(bool, importDisabled);
+    QFETCH(bool, cpuFrame);
+
+    GstDmaBufVideoBuffer::resetCachedState();
+    const auto resetLatch = qScopeGuard([] { GstDmaBufVideoBuffer::resetCachedState(); });
+    if (importDisabled) {
+        expectLogMessage("Video.GStreamer.HwBuffers.GstDmaBuf", QtWarningMsg,
+                         QRegularExpression(QStringLiteral("EGL_BAD_MATCH")));
+        GstDmaBufVideoBuffer::recordImportFailureForTest(/*unrecoverable=*/true);
+        verifyExpectedLogMessage();
+        ignoreLogMessage("Video.GStreamer.HwBuffers.Factory", QtWarningMsg,
+                         QRegularExpression(QStringLiteral("plane-handle validation")));
+    }
+
+    GstVideoInfo info;
+    const QByteArray caps = QStringLiteral("video/x-raw(memory:DMABuf),format=DMA_DRM,drm-format=%1,width=64,height=64")
+                                .arg(drmFormat)
+                                .toLatin1();
+    GstSample* sample = makeMemfdDmaBufSample(GST_VIDEO_FORMAT_NV12, info, caps.constData());
+    QVERIFY(sample);
+    const auto sampleGuard = qScopeGuard([sample] { gst_sample_unref(sample); });
+
+    HwVideoBufferContext context;
+    context.gpuEnabled = true;
+    // Never reaches EGL: the disabled importer refuses the frame first.
+    context.dmaBufEglDisplay = qtDisplay ? reinterpret_cast<EGLDisplay>(quintptr(1)) : EGL_NO_DISPLAY;
+    const MappedFrame mapped = mapSampleToFrame(gst_sample_get_buffer(sample), gst_sample_get_caps(sample), info,
+                                                QVideoFrameFormat(QSize(64, 64), QVideoFrameFormat::Format_NV12),
+                                                context, std::make_shared<std::atomic<int>>(0));
+
+    QCOMPARE(mapped.gpuPath, HwVideoBufferPath::None);
+    QCOMPARE(mapped.frame.isValid(), cpuFrame);
+    QVERIFY2(mapped.noCpuLayout != cpuFrame, "a tiled frame must be dropped rather than read as linear rows");
+#endif
+}
+
+void GstHwBuffersTest::_testDmaBufImportFailureLatch_data()
+{
+    QTest::addColumn<bool>("unrecoverable");
+    QTest::addColumn<int>("failuresToDisable");
+    QTest::addColumn<QString>("warning");
+
+    QTest::newRow("EGL_BAD_MATCH disables at once") << true << 1 << QStringLiteral("EGL_BAD_MATCH");
+#if defined(QGC_HAS_GST_DMABUF_GPU_PATH)
+    QTest::newRow("a run of rejected imports disables")
+        << false << GstDmaBufVideoBuffer::kMaxConsecutiveImportFailures << QStringLiteral("rejected every recent");
+#endif
+}
+
+void GstHwBuffersTest::_testDmaBufImportFailureLatch()
 {
 #if !defined(QGC_HAS_GST_DMABUF_GPU_PATH)
     QSKIP("DMABuf GPU path not compiled in this build");
 #else
-    TestFixtures::EnvVarFixture gate("QGC_GST_DMABUF_SINGLE_EGLIMAGE");
+    QFETCH(bool, unrecoverable);
+    QFETCH(int, failuresToDisable);
+    QFETCH(QString, warning);
 
-    qunsetenv("QGC_GST_DMABUF_SINGLE_EGLIMAGE");
-    QVERIFY(GstDmaBufVideoBuffer::singleFdImportEnabledForTest());
+    GstDmaBufVideoBuffer::resetCachedState();
+    const auto resetGuard = qScopeGuard([] { GstDmaBufVideoBuffer::resetCachedState(); });
 
-    qputenv("QGC_GST_DMABUF_SINGLE_EGLIMAGE", "0");
-    QVERIFY(!GstDmaBufVideoBuffer::singleFdImportEnabledForTest());
+    GstVideoInfo info;
+    GstSample* sample = makeMemfdDmaBufSample(GST_VIDEO_FORMAT_NV12, info);
+    QVERIFY(sample);
+    GstDmaBufVideoBuffer frame(sample, info, QVideoFrameFormat(QSize(64, 64), QVideoFrameFormat::Format_NV12),
+                               EGL_NO_DISPLAY);
+    gst_sample_unref(sample);
+    QVERIFY(frame.validatePlaneHandles());
 
-    qputenv("QGC_GST_DMABUF_SINGLE_EGLIMAGE", "false");
-    QVERIFY(!GstDmaBufVideoBuffer::singleFdImportEnabledForTest());
+    for (int i = 1; i < failuresToDisable; ++i) {
+        GstDmaBufVideoBuffer::recordImportFailureForTest(unrecoverable);
+    }
+    QVERIFY(frame.validatePlaneHandles());
 
-    qputenv("QGC_GST_DMABUF_SINGLE_EGLIMAGE", "off");
-    QVERIFY(!GstDmaBufVideoBuffer::singleFdImportEnabledForTest());
+    expectLogMessage("Video.GStreamer.HwBuffers.GstDmaBuf", QtWarningMsg, QRegularExpression(warning));
+    GstDmaBufVideoBuffer::recordImportFailureForTest(unrecoverable);
+    verifyExpectedLogMessage();
+    QVERIFY(GstDmaBufVideoBuffer::importDisabled());
+    QVERIFY2(!frame.validatePlaneHandles(), "A disabled importer must send frames to the CPU path");
+#endif
+}
 
-    qputenv("QGC_GST_DMABUF_SINGLE_EGLIMAGE", "1");
-    QVERIFY(GstDmaBufVideoBuffer::singleFdImportEnabledForTest());
+void GstHwBuffersTest::_testDmaBufVulkanImportRejectsMultiPlanar_data()
+{
+    QTest::addColumn<int>("format");
+    QTest::addColumn<int>("rhiBackend");
+    QTest::addColumn<bool>("expectAccepted");
 
-    qputenv("QGC_GST_DMABUF_SINGLE_EGLIMAGE", "force");
-    QVERIFY(GstDmaBufVideoBuffer::singleFdImportEnabledForTest());
+    QTest::newRow("NV12 under Vulkan") << int(GST_VIDEO_FORMAT_NV12) << int(QRhi::Vulkan) << false;
+    QTest::newRow("P010 under Vulkan") << int(GST_VIDEO_FORMAT_P010_10LE) << int(QRhi::Vulkan) << false;
+    QTest::newRow("I420 under Vulkan") << int(GST_VIDEO_FORMAT_I420) << int(QRhi::Vulkan) << false;
+    QTest::newRow("RGBA under Vulkan") << int(GST_VIDEO_FORMAT_RGBA) << int(QRhi::Vulkan) << true;
+    QTest::newRow("BGRA under Vulkan") << int(GST_VIDEO_FORMAT_BGRA) << int(QRhi::Vulkan) << true;
+    QTest::newRow("NV12 under OpenGL") << int(GST_VIDEO_FORMAT_NV12) << int(QRhi::OpenGLES2) << true;
+}
+
+void GstHwBuffersTest::_testDmaBufVulkanImportRejectsMultiPlanar()
+{
+#if !defined(QGC_HAS_GST_DMABUF_GPU_PATH) || !defined(QGC_HAS_GST_VULKAN_GPU_PATH)
+    QSKIP("DMABuf->Vulkan import not compiled in this build");
+#else
+    QFETCH(int, format);
+    QFETCH(int, rhiBackend);
+    QFETCH(bool, expectAccepted);
+
+    auto& snapshotBackend = QGCRhiCapture::deviceSnapshot().backend;
+    const int previousBackend = snapshotBackend.load();
+    const auto restoreBackend = qScopeGuard([&] { snapshotBackend.store(previousBackend); });
+    snapshotBackend.store(rhiBackend);
+
+    GstVideoInfo info;
+    GstSample* sample = makeMemfdDmaBufSample(static_cast<GstVideoFormat>(format), info);
+    QVERIFY(sample);
+    const GstDmaBufVideoBuffer frame(sample, info, QVideoFrameFormat(QSize(64, 64), QVideoFrameFormat::Format_NV12),
+                                     EGL_NO_DISPLAY);
+    gst_sample_unref(sample);
+
+    QCOMPARE(frame.validatePlaneHandles(), expectAccepted);
 #endif
 }
 

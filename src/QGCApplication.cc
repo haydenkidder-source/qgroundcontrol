@@ -27,18 +27,18 @@
 #include "MAVLinkProtocol.h"
 #include "MavlinkSettings.h"
 #include "MultiVehicleManager.h"
-#include "NTRIPManager.h"
 #include "ParameterManager.h"
-#include "PositionManager.h"
 #include "QGCCommandLineParser.h"
 #include "QGCCorePlugin.h"
 #include "QGCImageProvider.h"
 #include "QGCLoggingCategory.h"
 #include "QGCLoggingCategoryManager.h"
+#include "QGCMapEngine.h"
 #include "QGCNetworkHelper.h"
 #include "QGCVersionCheck.h"
 #include "SettingsManager.h"
 #include "Vehicle.h"
+#include "VideoBackend.h"
 #include "VideoManager.h"
 #include "qgc_version.h"
 
@@ -79,6 +79,10 @@ QGCApplication::QGCApplication(int& argc, char* argv[], const QGCCommandLinePars
         // Include test name or PID to prevent settings file conflicts when tests run in parallel
         if (!cli.unitTests.isEmpty()) {
             applicationName = QStringLiteral("%1_unittest_%2").arg(QGC_APP_NAME, cli.unitTests.first());
+            if (cli.unitTestShardIndex > 0) {
+                // Shards of one test also run in parallel
+                applicationName += QStringLiteral("_%1").arg(cli.unitTestShardIndex);
+            }
         } else {
             applicationName =
                 QStringLiteral("%1_unittest_%2").arg(QGC_APP_NAME).arg(QCoreApplication::applicationPid());
@@ -242,9 +246,9 @@ void QGCApplication::init()
     }
 
     if (_simpleBootTest) {
-        // Since GStream builds are so problematic we initialize video during the simple boot test
-        // to make sure it works and verfies plugin availability.
-        const bool videoInitialized = _initVideo();
+        // Since GStreamer builds are so problematic, the simple boot test initializes video and proves that the
+        // packaged runtime decodes and records.
+        const bool videoInitialized = _initVideo() && VideoBackend::instance().selfTest();
         const bool qmlRootLoaded = _initQmlRootWindow();
         _bootTestPassed = videoInitialized && qmlRootLoaded;
     } else if (!_runningUnitTests) {
@@ -254,10 +258,6 @@ void QGCApplication::init()
 
 bool QGCApplication::_initVideo()
 {
-#ifdef QGC_GST_STREAMING
-    qCDebug(QGCApplicationLog) << "Using default graphics API for appsink → VideoOutput video path";
-#endif
-
     QGCCorePlugin::instance();  // CorePlugin must be initialized before VideoManager for Video Cleanup
     VideoManager* videoManager = VideoManager::instance();
     videoManager->startVideoBackendInit();
@@ -281,11 +281,10 @@ bool QGCApplication::_initQmlRootWindow()
     _qmlAppEngine->addImageProvider(_qgcImageProviderId, new QGCImageProvider());
     _qmlAppEngine->addImageProvider(QLatin1String(ColoredSvgImageProvider::ProviderId), new ColoredSvgImageProvider());
 
+    // RHI graphics config / forced device must be applied before the root window's scene graph initializes. Android
+    // exposes the window synchronously when the root QML shows it, so configure it as soon as its surface exists.
+    GraphicsSetup::configureMainWindowOnCreation();
     QGCCorePlugin::instance()->createRootWindow(_qmlAppEngine);
-
-    // The root QQuickWindow exists now (load() is synchronous) but its scene graph has not been
-    // initialized yet -- the only safe point to apply RHI graphics config / forced device.
-    GraphicsSetup::configureMainWindow(mainRootWindow());
 
     return mainRootWindow() != nullptr;
 }
@@ -299,10 +298,8 @@ void QGCApplication::_initForNormalAppBoot()
     AudioOutput::instance()->init(SettingsManager::instance()->appSettings()->audioVolume(),
                                   SettingsManager::instance()->appSettings()->audioMuted());
     FollowMe::instance()->init();
-    QGCPositionManager::instance()->init();
     LinkManager::instance()->init();
     GPSManager::instance()->init();
-    NTRIPManager::instance()->init();
     VideoManager::instance()->init(mainRootWindow());
 
     // Set the window icon now that custom plugin has a chance to override it
@@ -591,12 +588,6 @@ bool QGCApplication::compressEvent(QEvent* event, QObject* receiver, QPostEventL
         return QGuiApplication::compressEvent(event, receiver, postedEvents);
     }
 
-    // QMetaCallEvent::id() was removed in 6.11; its protected Data is reachable from a derived helper.
-    struct MetaCallHelper : public QMetaCallEvent {
-        int id() const { return d.method_offset_ + d.method_relative_; }
-    };
-    const auto methodId = [](const QMetaCallEvent *e) { return static_cast<const MetaCallHelper*>(e)->id(); };
-
     for (QPostEventList::iterator it = postedEvents->begin(); it != postedEvents->end(); ++it) {
         QPostEvent& cur = *it;
         if (cur.receiver != receiver || cur.event == 0 || cur.event->type() != event->type()) {
@@ -604,7 +595,7 @@ bool QGCApplication::compressEvent(QEvent* event, QObject* receiver, QPostEventL
         }
         const QMetaCallEvent* cur_mce = static_cast<QMetaCallEvent*>(cur.event);
         if (cur_mce->sender() != mce->sender() || cur_mce->signalId() != mce->signalId() ||
-            methodId(cur_mce) != methodId(mce)) {
+            cur_mce->id() != mce->id()) {
             continue;
         }
 
@@ -682,6 +673,10 @@ void QGCApplication::shutdown()
 
     QGCCorePlugin::instance()->cleanup();
 
+    // Close the tile cache database while the application object exists (the map engine is otherwise
+    // destroyed after it) and before test runs remove the cache directory holding it.
+    QGCMapEngine::closeInstance();
+
     if (_runningUnitTests || _simpleBootTest) {
         const QSettings settings;
         const QString settingsFile = settings.fileName();
@@ -693,15 +688,14 @@ void QGCApplication::shutdown()
             }
         }
 
-        // Remove the app-specific settings directory (parent of ParamCache)
-        QDir settingsAppDir(ParameterManager::parameterCacheDir());
-        settingsAppDir.cdUp();
-        if (settingsAppDir.exists()) {
-            if (settingsAppDir.removeRecursively()) {
-                qCDebug(QGCApplicationLog) << "Removed test run settings directory:" << settingsAppDir.absolutePath();
-            } else {
-                qCWarning(QGCApplicationLog)
-                    << "Failed to remove test run settings directory:" << settingsAppDir.absolutePath();
+        for (const auto location : {QStandardPaths::AppConfigLocation, QStandardPaths::CacheLocation}) {
+            QDir dir(QStandardPaths::writableLocation(location));
+            if (dir.exists()) {
+                if (dir.removeRecursively()) {
+                    qCDebug(QGCApplicationLog) << "Removed test run directory:" << dir.absolutePath();
+                } else {
+                    qCWarning(QGCApplicationLog) << "Failed to remove test run directory:" << dir.absolutePath();
+                }
             }
         }
 

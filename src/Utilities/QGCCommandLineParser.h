@@ -1,6 +1,7 @@
 #pragma once
 
 #include <optional>
+#include <utility>
 
 #include <QtCore/QCommandLineParser>
 #include <QtCore/QStringList>
@@ -31,7 +32,7 @@ struct CommandLineParseResult
     QStringList unknownOptions;
 
     // --- Core options ---
-    std::optional<quint8> systemId;
+    std::optional<quint32> systemId;
     bool clearSettingsOptions = false;
     bool clearCache = false;
     std::optional<QString> loggingOptions;
@@ -44,6 +45,8 @@ struct CommandLineParseResult
     bool stressUnitTests = false;
     uint stressUnitTestsCount = 0;
     std::optional<QString> unitTestOutput;  ///< Output file for test results (JUnit XML)
+    uint unitTestShardIndex = 0;            ///< 1-based shard of the test's functions to run (0 = all functions)
+    uint unitTestShardCount = 0;            ///< Number of shards the test's functions are split into
     std::optional<QString> labelFilter;     ///< Filter tests by label (comma-separated)
     bool listTests = false;                 ///< List available tests and exit
     bool onscreen = false;                  ///< Show test windows on screen (skip offscreen override)
@@ -88,6 +91,14 @@ enum class AppMode {
 /// @param args Parsed command line arguments
 /// @return The mode the application should run in
 AppMode determineAppMode(const CommandLineParseResult& args);
+
+/// @brief Validate a --system-id value
+/// @return The MAVLink system id (1-4294967295), or std::nullopt if the value is invalid
+std::optional<quint32> parseSystemId(const QString& value);
+
+/// @brief Validate a --unittest-shard value of the form <index>/<count>
+/// @return The 1-based shard index and shard count, or std::nullopt unless 1 <= index <= count
+std::optional<std::pair<uint, uint>> parseUnitTestShard(const QString& value);
 
 #ifdef QGC_UNITTEST_BUILD
 QStringList normalizeArgs(const QStringList &args);

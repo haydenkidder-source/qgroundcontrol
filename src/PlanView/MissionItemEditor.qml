@@ -20,16 +20,16 @@ Rectangle {
 
     id:             _root
     height:         _currentItem ? (editorLoader.y + editorLoader.height + _innerMargin) : (topRowLayout.y + topRowLayout.height + _margin)
-    color:          _currentItem ? qgcPal.buttonHighlight : qgcPal.windowShade
+    color:          _currentItem ? qgcPal.accent : qgcPal.windowCard
     radius:         _radius
     opacity:        _currentItem ? 1.0 : 0.7
     border.width:   _readyForSave ? 0 : 2
-    border.color:   qgcPal.warningText
+    border.color:   qgcPal.errorText
 
     property var    _masterController:          missionItem.masterController
     property var    _missionController:         _masterController.missionController
     property bool   _currentItem:               missionItem.isCurrentItem
-    property color  _outerTextColor:            _currentItem ? qgcPal.buttonHighlightText : qgcPal.text
+    property color  _outerTextColor:            _currentItem ? qgcPal.accentText : qgcPal.textPrimary
     property bool   _noMissionItemsAdded:       _missionController.visualItems ? _missionController.visualItems.count <= 1 : true
     property real   _sectionSpacer:             ScreenTools.defaultFontPixelWidth / 2  // spacing between section headings
     property bool   _singleComplexItem:         _missionController.complexMissionItems.length === 1
@@ -42,23 +42,6 @@ Rectangle {
     readonly property real  _hamburgerSize:     commandPicker.height * 0.75
     readonly property real  _trashSize:         commandPicker.height * 0.75
     readonly property bool  _waypointsOnlyMode: QGroundControl.corePlugin.options.missionWaypointsOnly
-
-    // setSource() injects missionItem before internal bindings activate
-    function _loadEditor() {
-        if (missionItem.isCurrentItem) {
-            editorLoader.setSource(missionItem.editorQml, {
-                missionItem:    _root.missionItem,
-                availableWidth: _root.width - (editorLoader.anchors.margins * 2)
-            })
-        } else {
-            editorLoader.setSource("")
-        }
-    }
-
-    Connections {
-        target: missionItem
-        function onIsCurrentItemChanged() { _root._loadEditor() }
-    }
 
     QGCPalette {
         id: qgcPal
@@ -80,25 +63,9 @@ Rectangle {
         }
     }
 
-    QGCPopupDialogFactory {
-        id: editPositionDialogFactory
-
-        dialogComponent: editPositionDialog
-    }
-
-    Component {
-        id: editPositionDialog
-
-        EditPositionDialog {
-            property bool _editCenterCoordinate: false
-
-            onCoordinateChanged: {
-                if (_editCenterCoordinate)
-                    missionItem.centerCoordinate = coordinate
-                else
-                    missionItem.coordinate = coordinate
-            }
-        }
+    MissionItemMenu {
+        id:          itemMenu
+        missionItem: _root.missionItem
     }
 
     Row {
@@ -113,9 +80,7 @@ Rectangle {
             anchors.verticalCenter: parent.verticalCenter
             width:                  _hamburgerSize
             height:                 width
-            border.width:           1
-            border.color:           qgcPal.warningText
-            color:                  "white"
+            color:                  qgcPal.errorIndicator
             radius:                 width / 2
             visible:                !_readyForSave
 
@@ -124,7 +89,7 @@ Rectangle {
                 anchors.centerIn:   parent
                 //: Indicator in Plan view to show mission item is not ready for save/send
                 text:               qsTr("?")
-                color:              qgcPal.warningText
+                color:              qgcPal.indicatorText
                 font.pointSize:     ScreenTools.smallFontPointSize
             }
         }
@@ -138,7 +103,7 @@ Rectangle {
             fillMode:               Image.PreserveAspectFit
             mipmap:                 true
             smooth:                 true
-            color:                  qgcPal.buttonHighlightText
+            color:                  qgcPal.accentText
             visible:                _currentItem && missionItem.sequenceNumber !== 0
             source:                 "/res/TrashDelete.svg"
 
@@ -170,7 +135,7 @@ Rectangle {
                     fillMode:           Image.PreserveAspectFit
                     smooth:             true
                     antialiasing:       true
-                    color:              qgcPal.text
+                    color:              qgcPal.textPrimary
                     source:             "/qmlimages/arrow-down.png"
                 }
             }
@@ -211,95 +176,6 @@ Rectangle {
         }
     }
 
-    Component {
-        id: hamburgerMenuDropPanelComponent
-
-        DropPanel {
-            id: hamburgerMenuDropPanel
-            onClosed: destroy()
-
-            sourceComponent: Component {
-                ColumnLayout {
-                    spacing: ScreenTools.defaultFontPixelHeight / 2
-
-                    QGCButton {
-                        Layout.fillWidth:   true
-                        text:               qsTr("Move to vehicle position")
-                        enabled:            _activeVehicle && missionItem.specifiesCoordinate && _activeVehicle.coordinate.isValid
-
-                        onClicked: {
-                            missionItem.coordinate = _activeVehicle.coordinate
-                            hamburgerMenuDropPanel.close()
-                        }
-
-                        property var _activeVehicle: QGroundControl.multiVehicleManager.activeVehicle
-                    }
-
-                    QGCButton {
-                        Layout.fillWidth:   true
-                        text:               qsTr("Move to previous item position")
-                        enabled:            _missionController.previousCoordinate.isValid
-                        onClicked: {
-                            missionItem.coordinate = _missionController.previousCoordinate
-                            hamburgerMenuDropPanel.close()
-                        }
-                    }
-
-                    QGCButton {
-                        Layout.fillWidth:   true
-                        text:               qsTr("Edit position...")
-                        enabled:            missionItem.specifiesCoordinate
-                        onClicked: {
-                            const editCenterCoordinate = missionItem.isSurveyItem
-                            editPositionDialogFactory.open({
-                                _editCenterCoordinate:   editCenterCoordinate,
-                                coordinate:              editCenterCoordinate ? missionItem.centerCoordinate : missionItem.coordinate,
-                                altitudeFact:            !editCenterCoordinate && missionItem.specifiesAltitude ? missionItem.altitude : null,
-                                altitudeFrame:           !editCenterCoordinate && missionItem.specifiesAltitude ? missionItem.altitudeFrame : QGroundControl.AltitudeFrameNone,
-                            })
-                            hamburgerMenuDropPanel.close()
-                        }
-                    }
-
-                    Rectangle {
-                        Layout.fillWidth:       true
-                        Layout.preferredHeight: 1
-                        color:                  qgcPal.groupBorder
-                    }
-
-                    QGCCheckBoxSlider {
-                        Layout.fillWidth:   true
-                        text:               qsTr("Show all values")
-                        visible:            QGroundControl.corePlugin.showAdvancedUI
-                        checked:            missionItem.isSimpleItem ? missionItem.rawEdit : false
-                        enabled:            missionItem.isSimpleItem && !_waypointsOnlyMode
-
-                        onClicked: {
-                            missionItem.rawEdit = checked
-                            if (missionItem.rawEdit && !missionItem.friendlyEditAllowed) {
-                                missionItem.rawEdit = false
-                                checked = false
-                                QGroundControl.showMessageDialog(_root, qsTr("Mission Edit"), qsTr("You have made changes to the mission item which cannot be shown in Simple Mode"))
-                            }
-                            hamburgerMenuDropPanel.close()
-                        }
-                    }
-
-                    Rectangle {
-                        Layout.fillWidth:       true
-                        Layout.preferredHeight: 1
-                        color:                  qgcPal.groupBorder
-                    }
-
-                    QGCLabel {
-                        text:       qsTr("Item #%1").arg(missionItem.sequenceNumber)
-                        enabled:    false
-                    }
-                }
-            }
-        }
-    }
-
     QGCColoredImage {
         id:                     hamburger
         anchors.margins:        _margin
@@ -310,18 +186,13 @@ Rectangle {
         sourceSize.height:      _hamburgerSize
         source:                 "qrc:/qmlimages/Hamburger.svg"
         visible:                missionItem.isCurrentItem && missionItem.sequenceNumber !== 0
-        color:                  qgcPal.buttonHighlightText
+        color:                  qgcPal.accentText
 
         QGCMouseArea {
             fillItem:   hamburger
             onClicked: (position) => {
                 currentItemScope.focus = true
-                position = Qt.point(position.x, position.y)
-                // For some strange reason using mainWindow in mapToItem doesn't work, so we use globals.parent instead which also gets us mainWindow
-                position = mapToItem(globals.parent, position)
-
-                var dropPanel = hamburgerMenuDropPanelComponent.createObject(mainWindow, { clickRect: Qt.rect(position.x, position.y, 0, 0) })
-                dropPanel.open()
+                itemMenu.openAt(hamburger, position)
             }
         }
     }
@@ -339,24 +210,19 @@ Rectangle {
                                     qsTr("Incomplete: Item not fully specified.")
         wrapMode:               Text.WordWrap
         horizontalAlignment:    Text.AlignHCenter
-        color:                  qgcPal.warningText
+        color:                  qgcPal.errorText
     }
 
 */
 
-    Loader {
+    MissionItemEditorLoader {
         id:                 editorLoader
         anchors.margins:    _innerMargin
         anchors.left:       parent.left
         anchors.top:        topRowLayout.bottom
-
-        // Deliberately not asynchronous. With asynchronous: true the editor is built
-        // incrementally over later event-loop ticks. If the user switches layers before
-        // that finishes, the TreeView collapses the mission group and destroys this
-        // delegate, and the still-running load then warns "Cannot create a component in
-        // an invalid context". Synchronous loading closes that window: the editor is
-        // fully built before control returns to the event loop.
-        Component.onCompleted: _root._loadEditor()
+        missionItem:        _root.missionItem
+        availableWidth:     _root.width - (anchors.margins * 2)
+        active:             _currentItem
     }
 
     onHeightChanged: {

@@ -70,15 +70,21 @@ qgc_set_qt_resource_alias(${CUSTOM_IMAGE_RESOURCES})
 qt_add_resources(
     ${CMAKE_PROJECT_NAME} custom_images
     PREFIX "/custom/img"
-    FILES ${CUSTOM_IMAGE_RESOURCES}
+    FILES
+        ${CUSTOM_IMAGE_RESOURCES}
 )
 
 set(CUSTOM_VEHICLE_ICON "${CMAKE_CURRENT_SOURCE_DIR}/res/Images/CustomVehicleIcon.svg")
-set_source_files_properties("${CUSTOM_VEHICLE_ICON}" PROPERTIES QT_RESOURCE_ALIAS "PaperPlane.svg")
+set_source_files_properties(
+    "${CUSTOM_VEHICLE_ICON}"
+    PROPERTIES
+        QT_RESOURCE_ALIAS "PaperPlane.svg"
+)
 qt_add_resources(
     ${CMAKE_PROJECT_NAME} custom_vehicle_icon
     PREFIX "/Custom/qmlimages"
-    FILES "${CUSTOM_VEHICLE_ICON}"
+    FILES
+        "${CUSTOM_VEHICLE_ICON}"
 )
 
 set(CUSTOM_QML_OVERRIDES
@@ -86,42 +92,59 @@ set(CUSTOM_QML_OVERRIDES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/FlyViewCustomLayer.qml"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/FlyViewToolStripActionList.qml"
 )
-set_source_files_properties("${CMAKE_CURRENT_SOURCE_DIR}/src/CustomGuidedActionsController.qml"
-                            PROPERTIES QT_RESOURCE_ALIAS "QGroundControl/FlyView/CustomGuidedActionsController.qml"
+set_source_files_properties(
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/CustomGuidedActionsController.qml"
+    PROPERTIES
+        QT_RESOURCE_ALIAS "QGroundControl/FlyView/CustomGuidedActionsController.qml"
 )
-set_source_files_properties("${CMAKE_CURRENT_SOURCE_DIR}/src/FlyViewCustomLayer.qml"
-                            PROPERTIES QT_RESOURCE_ALIAS "QGroundControl/FlyView/FlyViewCustomLayer.qml"
+set_source_files_properties(
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/FlyViewCustomLayer.qml"
+    PROPERTIES
+        QT_RESOURCE_ALIAS "QGroundControl/FlyView/FlyViewCustomLayer.qml"
 )
-set_source_files_properties("${CMAKE_CURRENT_SOURCE_DIR}/src/FlyViewToolStripActionList.qml"
-                            PROPERTIES QT_RESOURCE_ALIAS "QGroundControl/FlyView/FlyViewToolStripActionList.qml"
+set_source_files_properties(
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/FlyViewToolStripActionList.qml"
+    PROPERTIES
+        QT_RESOURCE_ALIAS "QGroundControl/FlyView/FlyViewToolStripActionList.qml"
 )
 qt_add_resources(
     ${CMAKE_PROJECT_NAME} custom_qml_overrides
     PREFIX "/Custom/qml"
-    FILES ${CUSTOM_QML_OVERRIDES}
+    FILES
+        ${CUSTOM_QML_OVERRIDES}
 )
 
 set(CUSTOM_BRAND_RESOURCES "${CMAKE_CURRENT_SOURCE_DIR}/res/Images/QGCLogoFull.svg"
                            "${CMAKE_CURRENT_SOURCE_DIR}/res/icons/custom_qgroundcontrol.ico"
 )
-set_source_files_properties("${CMAKE_CURRENT_SOURCE_DIR}/res/Images/QGCLogoFull.svg" PROPERTIES QT_RESOURCE_ALIAS
-                                                                                                "QGCLogoFull.svg"
+set_source_files_properties(
+    "${CMAKE_CURRENT_SOURCE_DIR}/res/Images/QGCLogoFull.svg"
+    PROPERTIES
+        QT_RESOURCE_ALIAS "QGCLogoFull.svg"
 )
-set_source_files_properties("${CMAKE_CURRENT_SOURCE_DIR}/res/icons/custom_qgroundcontrol.ico"
-                            PROPERTIES QT_RESOURCE_ALIAS "qgroundcontrol.ico"
+set_source_files_properties(
+    "${CMAKE_CURRENT_SOURCE_DIR}/res/icons/custom_qgroundcontrol.ico"
+    PROPERTIES
+        QT_RESOURCE_ALIAS "qgroundcontrol.ico"
 )
 qt_add_resources(
     ${CMAKE_PROJECT_NAME} custom_brand
     PREFIX "/Custom/res"
-    FILES ${CUSTOM_BRAND_RESOURCES}
+    FILES
+        ${CUSTOM_BRAND_RESOURCES}
 )
 
 set(CUSTOM_SHARED_GEAR "${CMAKE_SOURCE_DIR}/resources/gear-white.svg")
-set_source_files_properties("${CUSTOM_SHARED_GEAR}" PROPERTIES QT_RESOURCE_ALIAS "gear-white.svg")
+set_source_files_properties(
+    "${CUSTOM_SHARED_GEAR}"
+    PROPERTIES
+        QT_RESOURCE_ALIAS "gear-white.svg"
+)
 qt_add_resources(
     ${CMAKE_PROJECT_NAME} custom_shared_resources
     PREFIX "/res"
-    FILES "${CUSTOM_SHARED_GEAR}"
+    FILES
+        "${CUSTOM_SHARED_GEAR}"
 )
 
 set(CUSTOM_JSON_RESOURCE "${CMAKE_CURRENT_SOURCE_DIR}/res/json/PerimeterScan.SettingsGroup.json")
@@ -129,7 +152,8 @@ qgc_set_qt_resource_alias("${CUSTOM_JSON_RESOURCE}")
 qt_add_resources(
     ${CMAKE_PROJECT_NAME} custom_json
     PREFIX "/json"
-    FILES "${CUSTOM_JSON_RESOURCE}"
+    FILES
+        "${CUSTOM_JSON_RESOURCE}"
 )
 
 # CustomSettings group metadata: SettingsGroup loads it from :/json at runtime and
@@ -139,7 +163,8 @@ qgc_set_qt_resource_alias("${CUSTOM_SETTINGS_JSON_RESOURCE}")
 qt_add_resources(
     ${CMAKE_PROJECT_NAME} custom_settings_json
     PREFIX "/json"
-    FILES "${CUSTOM_SETTINGS_JSON_RESOURCE}"
+    FILES
+        "${CUSTOM_SETTINGS_JSON_RESOURCE}"
 )
 
 list(APPEND QML_IMPORT_PATH "${CMAKE_CURRENT_SOURCE_DIR}/res")
@@ -155,8 +180,10 @@ set(QML_IMPORT_PATH
 qt_add_library(CustomModule STATIC)
 qgc_configure_target(CustomModule)
 
-set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/res/Custom/Widgets/CustomArtificialHorizon.qml
-                            PROPERTIES QT_RESOURCE_ALIAS CustomArtificialHorizon.qml
+set_source_files_properties(
+    ${CMAKE_CURRENT_SOURCE_DIR}/res/Custom/Widgets/CustomArtificialHorizon.qml
+    PROPERTIES
+        QT_RESOURCE_ALIAS CustomArtificialHorizon.qml
 )
 qgc_set_qt_resource_alias(
     ${CMAKE_CURRENT_SOURCE_DIR}/res/Custom/Widgets/CustomAttitudeWidget.qml
@@ -173,14 +200,15 @@ qt_add_qml_module(
     URI Custom.Widgets
     VERSION 1.0
     RESOURCE_PREFIX /qml
-    QML_FILES ${CMAKE_CURRENT_SOURCE_DIR}/res/Custom/Widgets/CustomArtificialHorizon.qml
-              ${CMAKE_CURRENT_SOURCE_DIR}/res/Custom/Widgets/CustomAttitudeWidget.qml
-              ${CMAKE_CURRENT_SOURCE_DIR}/res/Custom/Widgets/CustomIconButton.qml
-              ${CMAKE_CURRENT_SOURCE_DIR}/res/Custom/Widgets/CustomOnOffSwitch.qml
-              ${CMAKE_CURRENT_SOURCE_DIR}/res/Custom/Widgets/CustomQuickButton.qml
-              ${CMAKE_CURRENT_SOURCE_DIR}/res/Custom/Widgets/CustomSignalStrength.qml
-              ${CMAKE_CURRENT_SOURCE_DIR}/res/Custom/Widgets/CustomToolBarButton.qml
-              ${CMAKE_CURRENT_SOURCE_DIR}/res/Custom/Widgets/CustomVehicleButton.qml
+    QML_FILES
+        ${CMAKE_CURRENT_SOURCE_DIR}/res/Custom/Widgets/CustomArtificialHorizon.qml
+        ${CMAKE_CURRENT_SOURCE_DIR}/res/Custom/Widgets/CustomAttitudeWidget.qml
+        ${CMAKE_CURRENT_SOURCE_DIR}/res/Custom/Widgets/CustomIconButton.qml
+        ${CMAKE_CURRENT_SOURCE_DIR}/res/Custom/Widgets/CustomOnOffSwitch.qml
+        ${CMAKE_CURRENT_SOURCE_DIR}/res/Custom/Widgets/CustomQuickButton.qml
+        ${CMAKE_CURRENT_SOURCE_DIR}/res/Custom/Widgets/CustomSignalStrength.qml
+        ${CMAKE_CURRENT_SOURCE_DIR}/res/Custom/Widgets/CustomToolBarButton.qml
+        ${CMAKE_CURRENT_SOURCE_DIR}/res/Custom/Widgets/CustomVehicleButton.qml
     NO_PLUGIN
 )
 
@@ -191,8 +219,9 @@ qt_add_qml_module(
 qt_add_library(CustomPlanModule STATIC)
 qgc_configure_target(CustomPlanModule)
 
-qgc_set_qt_resource_alias(${CMAKE_CURRENT_SOURCE_DIR}/src/PlanView/PerimeterScanMapVisual.qml
-                          ${CMAKE_CURRENT_SOURCE_DIR}/src/PlanView/PerimeterScanEditor.qml
+qgc_set_qt_resource_alias(
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/PlanView/PerimeterScanMapVisual.qml
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/PlanView/PerimeterScanEditor.qml
 )
 
 qt_add_qml_module(
@@ -200,8 +229,9 @@ qt_add_qml_module(
     URI Custom.Plan
     VERSION 1.0
     RESOURCE_PREFIX /qml
-    QML_FILES ${CMAKE_CURRENT_SOURCE_DIR}/src/PlanView/PerimeterScanMapVisual.qml
-              ${CMAKE_CURRENT_SOURCE_DIR}/src/PlanView/PerimeterScanEditor.qml
+    QML_FILES
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/PlanView/PerimeterScanMapVisual.qml
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/PlanView/PerimeterScanEditor.qml
     NO_PLUGIN
 )
 
@@ -221,14 +251,16 @@ qgc_set_qt_resource_alias(${CMAKE_CURRENT_SOURCE_DIR}/src/ExclusionZone/Exclusio
 qt_add_resources(
     ${CMAKE_PROJECT_NAME} custom_exclusion_zone_qml
     PREFIX "/qml/Custom/ExclusionZone"
-    FILES ${CMAKE_CURRENT_SOURCE_DIR}/src/ExclusionZone/ExclusionZoneReviewPage.qml
+    FILES
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/ExclusionZone/ExclusionZoneReviewPage.qml
 )
 
 qgc_set_qt_resource_alias(${CMAKE_CURRENT_SOURCE_DIR}/src/AnalyzeView/AppLogViewerAnalyzePage.qml)
 qt_add_resources(
     ${CMAKE_PROJECT_NAME} custom_app_log_viewer_qml
     PREFIX "/qml/Custom/AnalyzeView"
-    FILES ${CMAKE_CURRENT_SOURCE_DIR}/src/AnalyzeView/AppLogViewerAnalyzePage.qml
+    FILES
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/AnalyzeView/AppLogViewerAnalyzePage.qml
 )
 
 # ============================================================================
@@ -243,7 +275,8 @@ qgc_set_qt_resource_alias(${VEHICLE_ROLES_QML_FILES})
 qt_add_resources(
     ${CMAKE_PROJECT_NAME} custom_vehicle_roles_qml
     PREFIX "/qml/Custom/VehicleRoles"
-    FILES ${VEHICLE_ROLES_QML_FILES}
+    FILES
+        ${VEHICLE_ROLES_QML_FILES}
 )
 
 # ============================================================================
@@ -269,6 +302,10 @@ set(CUSTOM_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/MissionManager/PerimeterScanPlanCreator.h
     ${CMAKE_CURRENT_SOURCE_DIR}/src/Settings/CustomSettings.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/src/Settings/CustomSettings.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/VehicleRoles/LinkPreferenceController.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/VehicleRoles/LinkPreferenceController.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/VehicleRoles/LinkPreferencePolicy.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/VehicleRoles/LinkPreferencePolicy.h
     ${CMAKE_CURRENT_SOURCE_DIR}/src/VehicleRoles/VehicleRoleController.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/src/VehicleRoles/VehicleRoleController.h
     PARENT_SCOPE
@@ -309,10 +346,33 @@ qgc_set_qt_resource_alias(${COP_QML_FILES})
 qt_add_resources(
     ${CMAKE_PROJECT_NAME} custom_cop_qml
     PREFIX "/qml/Custom/COP"
-    FILES ${COP_QML_FILES}
+    FILES
+        ${COP_QML_FILES}
 )
 
 if(QGC_BUILD_TESTING)
+    # The test object library is created after this custom overlay is added.
+    cmake_language(
+        DEFER
+        DIRECTORY
+        "${CMAKE_SOURCE_DIR}"
+        CALL
+        target_sources
+        QGCUnitTests
+        PRIVATE
+        "${CMAKE_SOURCE_DIR}/${QGC_CUSTOM_DIR}/test/CustomPaletteTest.cc"
+        "${CMAKE_SOURCE_DIR}/${QGC_CUSTOM_DIR}/test/CustomPaletteTest.h"
+    )
+    cmake_language(
+        DEFER
+        DIRECTORY
+        "${CMAKE_SOURCE_DIR}"
+        CALL
+        add_qgc_test
+        CustomPaletteTest
+        LABELS
+        Unit
+    )
     cmake_language(
         DEFER
         DIRECTORY
@@ -324,22 +384,41 @@ if(QGC_BUILD_TESTING)
         Integration
         NoSanitizer
     )
+    cmake_language(
+        DEFER
+        DIRECTORY
+        "${CMAKE_SOURCE_DIR}"
+        CALL
+        add_qgc_test
+        ExclusionZoneControllerTest
+        LABELS
+        Integration
+        Vehicle
+    )
     target_sources(
         ${CMAKE_PROJECT_NAME}
-        PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/test/AppLogViewerUITest.cc
-                ${CMAKE_CURRENT_SOURCE_DIR}/test/AppLogViewerUITest.h
-                ${CMAKE_CURRENT_SOURCE_DIR}/test/COPControllerTest.cc
-                ${CMAKE_CURRENT_SOURCE_DIR}/test/COPControllerTest.h
-                ${CMAKE_CURRENT_SOURCE_DIR}/test/COPStressTest.cc
-                ${CMAKE_CURRENT_SOURCE_DIR}/test/COPStressTest.h
-                ${CMAKE_CURRENT_SOURCE_DIR}/test/GuidedActionTargetUITest.cc
-                ${CMAKE_CURRENT_SOURCE_DIR}/test/GuidedActionTargetUITest.h
-                ${CMAKE_CURRENT_SOURCE_DIR}/test/VehicleLinksPageUITest.cc
-                ${CMAKE_CURRENT_SOURCE_DIR}/test/VehicleLinksPageUITest.h
-                ${CMAKE_CURRENT_SOURCE_DIR}/test/VehicleRoleControllerTest.cc
-                ${CMAKE_CURRENT_SOURCE_DIR}/test/VehicleRoleControllerTest.h
-                ${CMAKE_CURRENT_SOURCE_DIR}/test/VehicleRoleLinksTest.cc
-                ${CMAKE_CURRENT_SOURCE_DIR}/test/VehicleRoleLinksTest.h
+        PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/VehicleSystemIdTestData.h
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/AppLogViewerUITest.cc
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/AppLogViewerUITest.h
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/COPControllerTest.cc
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/COPControllerTest.h
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/ExclusionZoneControllerTest.cc
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/ExclusionZoneControllerTest.h
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/COPStressTest.cc
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/COPStressTest.h
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/GuidedActionTargetUITest.cc
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/GuidedActionTargetUITest.h
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/VehicleLinksPageUITest.cc
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/VehicleLinksPageUITest.h
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/VehicleRoleControllerTest.cc
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/VehicleRoleControllerTest.h
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/VehicleRoleLinksTest.cc
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/VehicleRoleLinksTest.h
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/LinkPreferencePolicyTest.cc
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/LinkPreferencePolicyTest.h
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/LinkPreferenceControllerTest.cc
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/LinkPreferenceControllerTest.h
     )
     cmake_language(
         DEFER
@@ -429,5 +508,72 @@ if(QGC_BUILD_TESTING)
         Comms
         RESOURCE_LOCK
         Settings
+    )
+    cmake_language(
+        DEFER
+        DIRECTORY
+        "${CMAKE_SOURCE_DIR}"
+        CALL
+        add_qgc_test
+        LinkPreferencePolicyTest
+        LABELS
+        Unit
+    )
+    cmake_language(
+        DEFER
+        DIRECTORY
+        "${CMAKE_SOURCE_DIR}"
+        CALL
+        add_qgc_test
+        LinkPreferenceControllerTest
+        LABELS
+        Integration
+        Vehicle
+        RESOURCE_LOCK
+        Settings
+    )
+    # COP video sessions and the standard-receiver gate are tested against upstream's fake receiver.
+    cmake_language(
+        DEFER
+        DIRECTORY
+        "${CMAKE_SOURCE_DIR}"
+        CALL
+        target_sources
+        QGCUnitTests
+        PRIVATE
+        "${CMAKE_SOURCE_DIR}/${QGC_CUSTOM_DIR}/test/COPVideoSessionTest.cc"
+        "${CMAKE_SOURCE_DIR}/${QGC_CUSTOM_DIR}/test/COPVideoSessionTest.h"
+        "${CMAKE_SOURCE_DIR}/test/VideoManager/VideoManagerPortTest.cc"
+        "${CMAKE_SOURCE_DIR}/test/VideoManager/VideoManagerPortTest.h"
+    )
+    cmake_language(
+        DEFER
+        DIRECTORY
+        "${CMAKE_SOURCE_DIR}"
+        CALL
+        target_include_directories
+        QGCUnitTests
+        PRIVATE
+        "${CMAKE_SOURCE_DIR}/test/VideoManager"
+    )
+    cmake_language(
+        DEFER
+        DIRECTORY
+        "${CMAKE_SOURCE_DIR}"
+        CALL
+        add_qgc_test
+        COPVideoSessionTest
+        LABELS
+        Unit
+    )
+    cmake_language(
+        DEFER
+        DIRECTORY
+        "${CMAKE_SOURCE_DIR}"
+        CALL
+        add_qgc_test
+        VideoManagerPortTest
+        LABELS
+        Unit
     )
 endif()

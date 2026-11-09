@@ -25,7 +25,7 @@ Rectangle {
 
     width:  parent ? parent.width : 0
     height: mainColumn.height + ScreenTools.defaultFontPixelHeight
-    color:  qgcPal.windowShadeDark
+    color:  qgcPal.windowPanel
 
     QGCPalette { id: qgcPal; colorGroupEnabled: _root.enabled }
 
@@ -85,8 +85,27 @@ Rectangle {
 
         FactTextFieldSlider {
             Layout.fillWidth: true
-            label: qsTr("Waypoints Altitude")
+            label: qsTr("Altitude")
             fact: QGroundControl.settingsManager.appSettings.defaultMissionItemAltitude
+        }
+
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: ScreenTools.defaultFontPixelWidth
+            visible: _root.missionController.applyDefaultMissionAltitudeAvailable
+
+            QGCLabel {
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+                font.pointSize: ScreenTools.smallFontPointSize
+                text: qsTr("Apply new altitude to all mission items?")
+            }
+
+            QGCButton {
+                small: true
+                text: qsTr("Apply")
+                onClicked: _root.missionController.applyDefaultMissionAltitude()
+            }
         }
 
         FactTextFieldSlider {

@@ -54,6 +54,7 @@ public:
         OptionAPMStartFreshParams = 1 << 6,
         OptionFtpCapability       = 1 << 7,
         OptionNoRadioStatus       = 1 << 8,
+        OptionCompanionParams = 1 << 9,
     };
     Q_DECLARE_FLAGS(Options, Option)
     Q_FLAG(Options)
@@ -214,6 +215,10 @@ public:
 
     // Test-only: when true, outgoing traffic never upgrades from MAVLink v1 to v2,
     // simulating a vehicle which only supports MAVLink v1. Not persisted.
+    quint32 systemId() const { return _systemId; }
+
+    void setSystemId(quint32 systemId) { _systemId = systemId; }
+
     bool stayMavlinkV1() const { return _stayMavlinkV1; }
     void setStayMavlinkV1(bool stayV1) { _stayMavlinkV1 = stayV1; }
 
@@ -225,6 +230,12 @@ public:
     // Test-only: when false, RADIO_STATUS is not streamed, so the link is not detected as a radio link. Not persisted.
     bool sendRadioStatus() const { return _sendRadioStatus; }
     void setSendRadioStatus(bool sendRadioStatus) { _sendRadioStatus = sendRadioStatus; }
+
+    // Test-only: when true, an onboard computer component sends its own HEARTBEAT and serves its own params
+    // over the parameter protocol only, as companion software does. Not persisted.
+    bool companionParams() const { return _companionParams; }
+
+    void setCompanionParams(bool companionParams) { _companionParams = companionParams; }
 
 signals:
     void firmwareChanged();
@@ -271,9 +282,11 @@ private:
     uint16_t _boardProductId = 0;
     bool _startArmed = false;
     bool _preloadMission = false;
+    quint32 _systemId = 0;  ///< Test override; zero allocates the next mock vehicle ID.
     bool _stayMavlinkV1 = false;
     bool _ftpCapability = false;
     bool _sendRadioStatus = true;
+    bool _companionParams = false;
 
     // Camera capability flags (defaults match current Camera 1 configuration)
     bool _cameraCaptureVideo = true;

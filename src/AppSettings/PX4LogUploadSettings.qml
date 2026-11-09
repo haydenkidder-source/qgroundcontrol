@@ -6,7 +6,7 @@ import QtQuick.Layouts
 import QGroundControl
 import QGroundControl.Controls
 
-SettingsGroupLayout {
+QGCGroupBox {
     Layout.fillWidth: true
     heading:          qsTr("MAVLink 2.0 Log Uploads (PX4 Pro Only)")
     visible:          QGroundControl.corePlugin.options.showPX4LogTransferOptions && _isPX4
@@ -177,8 +177,8 @@ SettingsGroupLayout {
             font.pointSize:   ScreenTools.defaultFontPointSize
             text:             _mavlinkLogManager ? _mavlinkLogManager.feedback : ""
             enabled:          !_disableDataPersistence
-            color:            qgcPal.textFieldText
-            background:       Rectangle { color: qgcPal.textField }
+            color:            qgcPal.textPrimary
+            background:       Rectangle { color: qgcPal.windowInset }
         }
     }
 

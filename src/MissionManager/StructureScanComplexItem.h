@@ -75,6 +75,7 @@ public:
     void                appendMissionItems          (QList<MissionItem*>& items, QObject* missionItemParent) final;
     void                setMissionFlightStatus      (MissionFlightStatus_t& missionFlightStatus) final;
     void                applyNewAltitude            (double newAltitude) final;
+    bool usesAltitudeFrame(QGroundControlQmlGlobal::AltitudeFrame altitudeFrame) const final;
     double              additionalTimeDelay         (void) const final { return 0; }
     ReadyForSaveState   readyForSaveState           (void) const final;
     bool                exitCoordinateSameAsEntry   (void) const final { return true; }
@@ -126,6 +127,10 @@ private slots:
 private:
     void    _setCameraShots                 (int cameraShots);
     double  _triggerDistance                (void) const;
+    bool _wpNextOffsetROISupported(void) const;
+    MissionItem* _createGimbalPitchItem(int seqNum, double pitch, QObject* missionItemParent) const;
+    void _appendLegCameraItems(QList<MissionItem*>& items, int& seqNum, const QGeoCoordinate& legStart,
+                               const QGeoCoordinate& legEnd, QObject* missionItemParent) const;
 
     QMap<QString, FactMetaData*> _metaDataMap;
 
@@ -133,6 +138,7 @@ private:
     QGCMapPolygon   _structurePolygon;
     QGCMapPolygon   _flightPolygon;
     int             _entryVertex;       // Polygon vertex which is used as the mission entry point
+    bool _flightPolygonOffsetFailed = false;
     bool            _ignoreRecalc;
     double          _scanDistance;
     int             _cameraShots;

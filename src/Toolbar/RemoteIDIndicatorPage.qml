@@ -57,7 +57,7 @@ ToolIndicatorPage {
             height:         remoteIDCol.height + ScreenTools.defaultFontPixelHeight * 2 + (emergencyButtonItem.visible ? emergencyButtonItem.height : 0)
             radius:         ScreenTools.defaultFontPixelHeight * 0.5
             color:          qgcPal.window
-            border.color:   qgcPal.text
+            border.color:   qgcPal.textPrimary
 
             Column {
                 id:                         remoteIDCol
@@ -303,7 +303,7 @@ ToolIndicatorPage {
                 Layout.alignment:   Qt.AlignTop
 
 
-                SettingsGroupLayout {
+                QGCGroupBox {
                     visible:            armStatusLabel.labelText !== ""
                     LabelledLabel {
                         id :                armStatusLabel
@@ -313,7 +313,7 @@ ToolIndicatorPage {
                     }
                 }
 
-                SettingsGroupLayout {
+                QGCGroupBox {
                     heading:            qsTr("Self ID")
                     Layout.fillWidth:       true
 
@@ -388,7 +388,7 @@ ToolIndicatorPage {
                     }
                 }
 
-                SettingsGroupLayout {
+                QGCGroupBox {
                     Layout.fillWidth:   true
                     visible:            QGroundControl.corePlugin.showAdvancedUI
 

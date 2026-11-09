@@ -89,10 +89,11 @@ private:
     bool    _ridDeviceCommsGood;
     bool    _gcsPositionUsable;
     QString _gcsPositionError;
+    bool _gcsAltitudeNotGeodeticReported = false;
     bool    _vehicleReportsBasicIDMissing;
 
     bool        _emergencyDeclared;
-    int         _targetSystem;
+    quint32 _targetSystem;
     int         _targetComponent;
 
     // After emergency cleared, this makes sure the non emergency selfID message makes it to the vehicle

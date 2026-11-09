@@ -3,13 +3,18 @@ name: Mirror GStreamer
 # Mirror official upstream GStreamer release artifacts into the QGC S3 bucket
 # (s3://qgroundcontrol/dependencies/gstreamer/<platform>/<filename>) — the
 # fallback mirror the build reads when the upstream download is unavailable.
-# Run this after bumping gstreamer.version in build-config.json.
+# Every master push that changes build-config.json, where
+# gstreamer.version.<platform> is bumped, mirrors each platform's version;
+# packages already in the bucket are skipped before downloading.
 
 on:
+  push:
+    branches: [master]
+    paths: ['.github/build-config.json']
   workflow_dispatch:
     inputs:
       version:
-        description: 'GStreamer version (empty = build-config default)'
+        description: "GStreamer version (empty = each platform's gstreamer.version.<platform>)"
         required: false
         default: ''
         type: string
@@ -39,7 +44,9 @@ permissions:
 
 jobs:
   mirror:
-    name: Mirror GStreamer ${{ inputs.version || 'default' }}
+    name: Mirror GStreamer ${{ inputs.version || 'build-config versions' }}
+    # Forks have no AWS credentials; they can still dispatch a dry run.
+    if: github.event_name == 'workflow_dispatch' || github.repository == 'mavlink/qgroundcontrol'
     runs-on: ubuntu-24.04
     timeout-minutes: 60
 
@@ -58,10 +65,7 @@ jobs:
             tools
           sparse-checkout-cone-mode: false
 
-      - name: Build Config
-        id: buildconfig
-        uses: ./.github/actions/build-config
-
+      # Exports AWS_REGION and AWS_DEFAULT_REGION (us-west-2) for the upload.
       - name: Configure AWS Credentials
         if: ${{ !inputs.dry_run }}
         uses: ./.github/actions/aws-credentials
@@ -70,22 +74,11 @@ jobs:
           aws-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
 
+      # An empty version mirrors each platform's gstreamer.version.<platform> in build-config.json.
       - name: Mirror artifacts
-        shell: bash
         env:
-          VERSION: ${{ inputs.version || steps.buildconfig.outputs.gstreamer_version }}
-          PLATFORMS: ${{ inputs.platforms }}
-          DRY_RUN: ${{ inputs.dry_run && 'true' || 'false' }}
-          FORCE: ${{ inputs.force && 'true' || 'false' }}
-          WORK_DIR: ${{ runner.temp }}
-          AWS_DEFAULT_REGION: us-west-2
-        run: |
-          set -euo pipefail
-          args=(
-            --version "$VERSION"
-            --platforms "$PLATFORMS"
-            --work-dir "$WORK_DIR"
-          )
-          [[ "$DRY_RUN" == "true" ]] && args+=(--dry-run)
-          [[ "$FORCE" == "true" ]] && args+=(--force)
-          python3 "${GITHUB_WORKSPACE}/.github/scripts/mirror_gstreamer.py" "${args[@]}"
+          MIRROR_VERSION: ${{ inputs.version }}
+          MIRROR_PLATFORMS: ${{ inputs.platforms }}
+          MIRROR_DRY_RUN: ${{ inputs.dry_run }}
+          MIRROR_FORCE: ${{ inputs.force }}
+        run: python3 "${GITHUB_WORKSPACE}/tools/ci/gstreamer/mirror_gstreamer.py"

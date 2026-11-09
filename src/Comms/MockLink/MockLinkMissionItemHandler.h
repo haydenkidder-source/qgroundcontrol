@@ -24,31 +24,40 @@ public:
     ///     @return true: message handled
     bool handleMavlinkMessage(const mavlink_message_t &msg);
 
-    enum FailureMode_t {
-        FailNone,                           // No failures
-        FailReadRequestListNoResponse,      // Don't send MISSION_COUNT in response to MISSION_REQUEST_LIST
-        FailReadRequestListFirstResponse,   // Don't send MISSION_COUNT in response to first MISSION_REQUEST_LIST, allow subsequent to go through
-        FailReadRequest0NoResponse,         // Don't send MISSION_ITEM in response to MISSION_REQUEST item 0
-        FailReadRequest1NoResponse,         // Don't send MISSION_ITEM in response to MISSION_REQUEST item 1
-        FailReadRequest1FirstResponse,      // Don't send MISSION_ITEM in response to MISSION_REQUEST item 1 on first try, allow subsequent request to go through
-        FailReadRequest0IncorrectSequence,  // Respond to MISSION_REQUEST 0 with incorrect sequence number in  MISSION_ITEM
-        FailReadRequest1IncorrectSequence,  // Respond to MISSION_REQUEST 1 with incorrect sequence number in  MISSION_ITEM
-        FailReadRequest0ErrorAck,           // Respond to MISSION_REQUEST 0 with MISSION_ACK error
-        FailReadRequest1ErrorAck,           // Respond to MISSION_REQUEST 1 bogus MISSION_ACK error
-        FailWriteMissionCountNoResponse,    // Don't respond to MISSION_COUNT with MISSION_REQUEST 0
-        FailWriteMissionCountFirstResponse, // Don't respond to first MISSION_COUNT with MISSION_REQUEST 0, respond to subsequent MISSION_COUNT requests
-        FailWriteRequest1NoResponse,        // Don't respond to MISSION_ITEM 0 with MISSION_REQUEST 1
-        FailWriteRequest1FirstResponse,     // Don't respond to first MISSION_ITEM 0 with MISSION_REQUEST 1, respond on
-                                            // subsequent attempts (simulates a dropped request mid-upload)
-        FailWriteRequest0IncorrectSequence, // Item 0 MISSION_REQUEST sent has wrong sequence number
-        FailWriteRequest1IncorrectSequence, // Item 1 MISSION_REQUEST sent has wrong sequence number
-        FailWriteRequest0ErrorAck,          // Instead of sending MISSION_REQUEST 0, send MISSION_ACK error
-        FailWriteRequest1ErrorAck,          // Instead of sending MISSION_REQUEST 1, send MISSION_ACK error
-        FailWriteFinalAckNoResponse,        // Don't send the final MISSION_ACK
-        FailWriteFinalAckFirstResponse,     // Don't send the final MISSION_ACK on the first attempt, send it on a
-                                            // subsequent restart (simulates a dropped final ack)
-        FailWriteFinalAckErrorAck,          // Send an error as the final MISSION_ACK
-        FailWriteFinalAckMissingRequests,   // Send the MISSION_ACK before all items have been requested
+    enum FailureMode_t
+    {
+        FailNone,                          // No failures
+        FailReadRequestListNoResponse,     // Don't send MISSION_COUNT in response to MISSION_REQUEST_LIST
+        FailReadRequestListFirstResponse,  // Don't send MISSION_COUNT in response to first MISSION_REQUEST_LIST, allow
+                                           // subsequent to go through
+        FailReadRequest0NoResponse,        // Don't send MISSION_ITEM in response to MISSION_REQUEST item 0
+        FailReadRequest1NoResponse,        // Don't send MISSION_ITEM in response to MISSION_REQUEST item 1
+        FailReadRequest1FirstResponse,  // Don't send MISSION_ITEM in response to MISSION_REQUEST item 1 on first try,
+                                        // allow subsequent request to go through
+        FailReadRequest0IncorrectSequence,   // Respond to MISSION_REQUEST 0 with incorrect sequence number in
+                                             // MISSION_ITEM
+        FailReadRequest1IncorrectSequence,   // Respond to MISSION_REQUEST 1 with incorrect sequence number in
+                                             // MISSION_ITEM
+        FailReadRequest0ErrorAck,            // Respond to MISSION_REQUEST 0 with MISSION_ACK error
+        FailReadRequest1ErrorAck,            // Respond to MISSION_REQUEST 1 bogus MISSION_ACK error
+        FailWriteMissionCountNoResponse,     // Don't respond to MISSION_COUNT with MISSION_REQUEST 0
+        FailWriteMissionCountFirstResponse,  // Don't respond to first MISSION_COUNT with MISSION_REQUEST 0, respond to
+                                             // subsequent MISSION_COUNT requests
+        FailWriteRequest1NoResponse,         // Don't respond to MISSION_ITEM 0 with MISSION_REQUEST 1
+        FailWriteRequest1FirstResponse,      // Don't respond to first MISSION_ITEM 0 with MISSION_REQUEST 1, respond on
+                                             // subsequent attempts (simulates a dropped request mid-upload)
+        FailWriteRequest0IncorrectSequence,  // Item 0 MISSION_REQUEST sent has wrong sequence number
+        FailWriteRequest1IncorrectSequence,  // Item 1 MISSION_REQUEST sent has wrong sequence number
+        FailWriteRequest0ErrorAck,           // Instead of sending MISSION_REQUEST 0, send MISSION_ACK error
+        FailWriteRequest1ErrorAck,           // Instead of sending MISSION_REQUEST 1, send MISSION_ACK error
+        FailWriteFinalAckNoResponse,         // Don't send the final MISSION_ACK
+        FailWriteFinalAckFirstResponse,      // Drop final ACK once; accept a full restart, reject duplicate items
+        FailWriteFinalAckDuplicateAccepted,  // Drop final ACK per upload; accept only a duplicate last item
+        FailWriteFinalAckErrorOnResend,      // Drop final ACK per upload; reject duplicate items
+        FailWriteRequest1ThenFinalAckNoResponse,  // Drop one mid-upload request, then all final ACKs
+        FailWriteRestartEarlyAck,                 // Drop a mid-upload request, then ACK the restart before any items
+        FailWriteFinalAckErrorAck,                // Send an error as the final MISSION_ACK
+        FailWriteFinalAckMissingRequests,         // Send the MISSION_ACK before all items have been requested
     };
 
     /// Sets a failure mode for unit testing
@@ -69,7 +78,14 @@ public:
     void reset()
     {
         _missionItems.clear();
+        _fenceItems.clear();
+        _rallyItems.clear();
+        _writeSequenceCount = 0;
+        _writeSequenceIndex = 0;
         _requestListCounts.clear();
+        _failReadRequestListFirstResponse = true;
+        _failReadRequest1FirstResponse = true;
+        _failWriteMissionCountFirstResponse = true;
         _failWriteRequest1FirstResponse = true;
         _failWriteFinalAckFirstResponse = true;
     }

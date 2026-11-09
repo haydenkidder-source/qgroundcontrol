@@ -2,7 +2,7 @@
 # QGroundControl CMake Build Configuration
 # ============================================================================
 
-cmake_minimum_required(VERSION 3.25)
+cmake_minimum_required(VERSION 3.28)
 
 # ----------------------------------------------------------------------------
 # CMake Module Paths
@@ -11,7 +11,6 @@ list(
     APPEND
     CMAKE_MODULE_PATH
     "${CMAKE_SOURCE_DIR}/cmake"
-    "${CMAKE_SOURCE_DIR}/cmake/find-modules"
     "${CMAKE_SOURCE_DIR}/cmake/install"
     "${CMAKE_SOURCE_DIR}/cmake/install/CPack"
     "${CMAKE_SOURCE_DIR}/cmake/modules"
@@ -36,6 +35,8 @@ endif()
 # ----------------------------------------------------------------------------
 set(CMAKE_REQUIRED_QUIET ON)
 set(CMAKE_POLICY_VERSION_MINIMUM ${CMAKE_MINIMUM_REQUIRED_VERSION})
+# QGC does not use C++20 modules; skip the import scanning CMP0155 enables for C++20 targets.
+set(CMAKE_CXX_SCAN_FOR_MODULES OFF)
 
 # ============================================================================
 # Custom Build Configuration
@@ -48,8 +49,9 @@ if(NOT QGC_CUSTOM_DIR
    OR IS_ABSOLUTE "${QGC_CUSTOM_DIR}"
    OR QGC_CUSTOM_DIR MATCHES "(^|[/\\\\])[.][.]([/\\\\]|$)"
 )
-    message(FATAL_ERROR "QGC_CUSTOM_DIR must be a non-empty path relative to the source root without '..': "
-                        "'${QGC_CUSTOM_DIR}'"
+    message(
+        FATAL_ERROR "QGC_CUSTOM_DIR must be a non-empty path relative to the source root without '..': "
+                    "'${QGC_CUSTOM_DIR}'"
     )
 endif()
 
@@ -66,8 +68,9 @@ if(IS_DIRECTORY "${CMAKE_SOURCE_DIR}/${QGC_CUSTOM_DIR}")
     message(STATUS "QGC: Custom build directory detected: ${QGC_CUSTOM_DIR}")
     set(_qgc_custom_overrides "${CMAKE_SOURCE_DIR}/${QGC_CUSTOM_DIR}/cmake/CustomOverrides.cmake")
     if(NOT EXISTS "${_qgc_custom_overrides}" OR NOT EXISTS "${CMAKE_SOURCE_DIR}/${QGC_CUSTOM_DIR}/CMakeLists.txt")
-        message(FATAL_ERROR "QGC custom overlay '${QGC_CUSTOM_DIR}' must contain CMakeLists.txt and "
-                            "cmake/CustomOverrides.cmake"
+        message(
+            FATAL_ERROR "QGC custom overlay '${QGC_CUSTOM_DIR}' must contain CMakeLists.txt and "
+                        "cmake/CustomOverrides.cmake"
         )
     endif()
     set(QGC_CUSTOM_BUILD ON)
@@ -130,6 +133,14 @@ project(
     HOMEPAGE_URL "https://${QGC_ORG_DOMAIN}"
     LANGUAGES C CXX
 )
+
+# Ninja otherwise makes each custom command (rcc, Qt metatypes and type registration) wait for every target its
+# target links, which runs the libraries, the tests and the application one after another. Commands must therefore
+# list the files they read in DEPENDS: a target name alone no longer orders them. Android keeps the default: Qt's
+# APK step orders itself after the binary copy only through a utility target, so it would package a partial copy.
+if(NOT ANDROID)
+    set(CMAKE_ADD_CUSTOM_COMMAND_DEPENDS_EXPLICIT_ONLY ON)
+endif()
 
 # ============================================================================
 # CMake & Build System Configuration
@@ -203,10 +214,11 @@ set(CMAKE_POLICY_DEFAULT_CMP0141 NEW)
 cmake_policy(SET CMP0075 NEW)
 set(CMAKE_POLICY_DEFAULT_CMP0075 NEW)
 
-# CMP0194: MSVC is not an assembler for language ASM (zstd)
+# CMP0194: zstd enables ASM unconditionally but adds no assembler sources under MSVC; OLD lets cl
+# stand in instead of failing on runner images without a GNU assembler on PATH
 if(POLICY CMP0194)
-    cmake_policy(SET CMP0194 NEW)
-    set(CMAKE_POLICY_DEFAULT_CMP0194 NEW)
+    cmake_policy(SET CMP0194 OLD)
+    set(CMAKE_POLICY_DEFAULT_CMP0194 OLD)
 endif()
 
 # ============================================================================
@@ -241,40 +253,40 @@ set(QT_NO_PRIVATE_MODULE_WARNING ON)
 find_package(Qt6 ${QGC_QT_MINIMUM_VERSION} QUIET COMPONENTS Core)
 if(NOT Qt6_FOUND)
     message(
-        FATAL_ERROR "Qt6 ${QGC_QT_MINIMUM_VERSION}+ not found.\n"
-                    "Set CMAKE_PREFIX_PATH to your Qt installation, e.g.:\n"
-                    "  cmake -DCMAKE_PREFIX_PATH=~/Qt/6.8.3/gcc_64 ..\n"
-                    "  (or use qt-cmake which sets this automatically)\n"
-                    "Searched: ${CMAKE_PREFIX_PATH}"
+        FATAL_ERROR
+            "Qt6 ${QGC_QT_MINIMUM_VERSION}+ not found.\n" "Set CMAKE_PREFIX_PATH to your Qt installation, e.g.:\n"
+            "  cmake -DCMAKE_PREFIX_PATH=~/Qt/6.8.3/gcc_64 ..\n" "  (or use qt-cmake which sets this automatically)\n"
+            "Searched: ${CMAKE_PREFIX_PATH}"
     )
 endif()
 
 find_package(
     Qt6 ${QGC_QT_MINIMUM_VERSION}...${QGC_QT_MAXIMUM_VERSION} REQUIRED
-    COMPONENTS Graphs
-               Concurrent
-               Core
-               Gui
-               HttpServer
-               LinguistTools
-               Location
-               LocationPrivate
-               Multimedia
-               Network
-               Positioning
-               Qml
-               QmlIntegration
-               Quick
-               QuickControls2
-               QuickVectorImage
-               QuickWidgets
-               Sensors
-               Sql
-               Svg
-               TextToSpeech
-               Xml
-               Quick3D
-               StateMachine
+    COMPONENTS
+        Graphs
+        Concurrent
+        Core
+        Gui
+        HttpServer
+        LinguistTools
+        Location
+        LocationPrivate
+        Multimedia
+        Network
+        Positioning
+        Qml
+        QmlIntegration
+        Quick
+        QuickControls2
+        QuickVectorImage
+        QuickWidgets
+        Sensors
+        Sql
+        Svg
+        TextToSpeech
+        Xml
+        Quick3D
+        StateMachine
     OPTIONAL_COMPONENTS Bluetooth MultimediaQuickPrivate OpenGL QuickTest SerialPort Test
 )
 
@@ -286,8 +298,10 @@ if(QGC_USE_MOCCACHE)
     qgc_config_moccache()
 endif()
 
-qt_standard_project_setup(REQUIRES ${QGC_QT_MINIMUM_VERSION} SUPPORTS_UP_TO ${QGC_QT_MAXIMUM_VERSION}
-                          I18N_SOURCE_LANGUAGE en
+qgc_config_rcc_launcher()
+
+qt_standard_project_setup(
+    REQUIRES ${QGC_QT_MINIMUM_VERSION} SUPPORTS_UP_TO ${QGC_QT_MAXIMUM_VERSION} I18N_SOURCE_LANGUAGE en
 )
 
 # ----------------------------------------------------------------------------
@@ -334,12 +348,15 @@ set(QGC_APP_RESOURCES
     "${CMAKE_SOURCE_DIR}/resources/takeoff.svg"
     "${CMAKE_SOURCE_DIR}/resources/TrashCan.svg"
     "${CMAKE_SOURCE_DIR}/resources/TrashDelete.svg"
+    "${CMAKE_SOURCE_DIR}/resources/WarningEmergency.svg"
     "${CMAKE_SOURCE_DIR}/resources/XDelete.svg"
     "${CMAKE_SOURCE_DIR}/resources/icons/qgroundcontrol.ico"
 )
 qgc_set_qt_resource_alias(${QGC_APP_RESOURCES})
-set_source_files_properties("${CMAKE_SOURCE_DIR}/resources/SplashScreen.png" PROPERTIES QT_RESOURCE_ALIAS
-                                                                                        "SplashScreen"
+set_source_files_properties(
+    "${CMAKE_SOURCE_DIR}/resources/SplashScreen.png"
+    PROPERTIES
+        QT_RESOURCE_ALIAS "SplashScreen"
 )
 
 set(QGC_FONT_RESOURCES
@@ -348,17 +365,25 @@ set(QGC_FONT_RESOURCES
     "${CMAKE_SOURCE_DIR}/resources/fonts/NanumGothic-Regular.ttf"
     "${CMAKE_SOURCE_DIR}/resources/fonts/NanumGothic-Bold.ttf"
 )
-set_source_files_properties("${CMAKE_SOURCE_DIR}/resources/fonts/OpenSans-Regular.ttf" PROPERTIES QT_RESOURCE_ALIAS
-                                                                                                  "opensans"
+set_source_files_properties(
+    "${CMAKE_SOURCE_DIR}/resources/fonts/OpenSans-Regular.ttf"
+    PROPERTIES
+        QT_RESOURCE_ALIAS "opensans"
 )
-set_source_files_properties("${CMAKE_SOURCE_DIR}/resources/fonts/OpenSans-Semibold.ttf" PROPERTIES QT_RESOURCE_ALIAS
-                                                                                                   "opensans-demibold"
+set_source_files_properties(
+    "${CMAKE_SOURCE_DIR}/resources/fonts/OpenSans-Semibold.ttf"
+    PROPERTIES
+        QT_RESOURCE_ALIAS "opensans-demibold"
 )
-set_source_files_properties("${CMAKE_SOURCE_DIR}/resources/fonts/NanumGothic-Regular.ttf"
-                            PROPERTIES QT_RESOURCE_ALIAS "NanumGothic-Regular"
+set_source_files_properties(
+    "${CMAKE_SOURCE_DIR}/resources/fonts/NanumGothic-Regular.ttf"
+    PROPERTIES
+        QT_RESOURCE_ALIAS "NanumGothic-Regular"
 )
-set_source_files_properties("${CMAKE_SOURCE_DIR}/resources/fonts/NanumGothic-Bold.ttf" PROPERTIES QT_RESOURCE_ALIAS
-                                                                                                  "NanumGothic-Bold"
+set_source_files_properties(
+    "${CMAKE_SOURCE_DIR}/resources/fonts/NanumGothic-Bold.ttf"
+    PROPERTIES
+        QT_RESOURCE_ALIAS "NanumGothic-Bold"
 )
 
 # ============================================================================
@@ -368,25 +393,32 @@ set_source_files_properties("${CMAKE_SOURCE_DIR}/resources/fonts/NanumGothic-Bol
 include(Hardening)
 qgc_apply_global_hardening()
 
-qt_add_executable(${CMAKE_PROJECT_NAME} WIN32 # Windows GUI application
-                  MACOSX_BUNDLE # macOS application bundle
+qt_add_executable(
+    ${CMAKE_PROJECT_NAME} WIN32 # Windows GUI application
+    MACOSX_BUNDLE # macOS application bundle
 )
 
-qt_add_resources(
+qgc_add_big_resources(
     ${CMAKE_PROJECT_NAME} qgc_fonts
     PREFIX "/fonts"
     BASE "${CMAKE_SOURCE_DIR}/resources/fonts"
-    FILES ${QGC_FONT_RESOURCES}
+    FILES
+        ${QGC_FONT_RESOURCES}
 )
 
 qt_add_resources(
     ${CMAKE_PROJECT_NAME} qgc_app_resources
     PREFIX "/res"
     BASE "${CMAKE_SOURCE_DIR}/resources"
-    FILES ${QGC_APP_RESOURCES}
+    FILES
+        ${QGC_APP_RESOURCES}
 )
 
-set_target_properties(${CMAKE_PROJECT_NAME} PROPERTIES ADDITIONAL_CLEAN_FILES "${CMAKE_BINARY_DIR}/ccache-launcher")
+set_target_properties(
+    ${CMAKE_PROJECT_NAME}
+    PROPERTIES
+        ADDITIONAL_CLEAN_FILES "${CMAKE_BINARY_DIR}/ccache-launcher"
+)
 
 include(Sanitizers)
 
@@ -424,7 +456,14 @@ qt_add_qml_module(
     URI QGC
     VERSION 1.0
     RESOURCE_PREFIX /qml
-    IMPORTS QtQuick QtQuick.Controls QtQuick.Dialogs QtQuick.Layouts
+    IMPORTS
+        QtQuick
+        QtQuick.Controls
+        QtQuick.Dialogs
+        QtQuick.Layouts
+    # Application types expose GPS library types registered by the GPS module.
+    DEPENDENCIES
+        QGroundControl.GPS
 )
 
 # ----------------------------------------------------------------------------
@@ -438,6 +477,10 @@ if(QGC_BUILD_TESTING)
     # target-scoped definition would not cover them all.
     add_compile_definitions(QGC_UNITTEST_BUILD)
 endif()
+
+# Global flags are final here, and the dependencies under src/ run most configure checks.
+include(CheckResultCache)
+qgc_restore_check_results()
 
 add_subdirectory(src)
 
@@ -504,14 +547,33 @@ endif()
 
 set(QT_NO_MISSING_CATALOG_LANGUAGE_WARNING ON)
 
+# Embed the catalogs as big resources at the same :/i18n/ paths. Qt's own embedding stays for Xcode,
+# which needs its lrelease ordering workaround and cannot use two-pass resources for iOS.
+if(CMAKE_GENERATOR STREQUAL "Xcode")
+    set(_qgc_translation_embedding RESOURCE_PREFIX "/")
+else()
+    set(_qgc_translation_embedding QM_FILES_OUTPUT_VARIABLE _qgc_qm_files)
+endif()
+
 qt_add_translations(
     ${CMAKE_PROJECT_NAME}
-    TS_FILES ${TS_SOURCES}
-    RESOURCE_PREFIX "/"
+    TS_FILES
+        ${TS_SOURCES}
+        ${_qgc_translation_embedding}
     LUPDATE_OPTIONS -no-obsolete
     TS_FILE_DIR "${CMAKE_SOURCE_DIR}/translations"
     TS_FILE_BASE ${CMAKE_PROJECT_NAME} QM_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/i18n" MERGE_QT_TRANSLATIONS
 )
+
+if(_qgc_qm_files)
+    qgc_add_big_resources(
+        ${CMAKE_PROJECT_NAME} ${CMAKE_PROJECT_NAME}_translations
+        PREFIX "/"
+        BASE "${CMAKE_BINARY_DIR}"
+        FILES
+            ${_qgc_qm_files}
+    )
+endif()
 
 # ----------------------------------------------------------------------------
 # Qt Quick Controls Configuration
@@ -521,7 +583,8 @@ qgc_set_qt_resource_alias("${CMAKE_SOURCE_DIR}/resources/qtquickcontrols2.conf")
 qt_add_resources(
     ${CMAKE_PROJECT_NAME} "qgcresources_cmake"
     PREFIX "/"
-    FILES "${CMAKE_SOURCE_DIR}/resources/qtquickcontrols2.conf"
+    FILES
+        "${CMAKE_SOURCE_DIR}/resources/qtquickcontrols2.conf"
 )
 
 # ----------------------------------------------------------------------------
@@ -529,21 +592,19 @@ qt_add_resources(
 # ----------------------------------------------------------------------------
 qt_import_plugins(
     ${CMAKE_PROJECT_NAME}
-    INCLUDE
-    Qt6::QSvgPlugin
-    Qt6::QOffscreenIntegrationPlugin
-    EXCLUDE_BY_TYPE
-    geoservices # Use built-in location plugins
-    INCLUDE_BY_TYPE
-    sqldrivers
-    Qt6::QSQLiteDriverPlugin
+    INCLUDE Qt6::QSvgPlugin Qt6::QOffscreenIntegrationPlugin
+    EXCLUDE_BY_TYPE geoservices # Use built-in location plugins
+    INCLUDE_BY_TYPE sqldrivers Qt6::QSQLiteDriverPlugin
 )
 
 # Linux-specific Qt platform plugins
 if(LINUX)
-    qt_import_plugins(${CMAKE_PROJECT_NAME} INCLUDE Qt6::QWaylandIntegrationPlugin # Wayland support (libqwayland.so)
-                      Qt6::QXcbIntegrationPlugin # X11 support
-                      Qt6::QEglFSIntegrationPlugin # Embedded GL support
+    qt_import_plugins(
+        ${CMAKE_PROJECT_NAME}
+        INCLUDE
+            Qt6::QWaylandIntegrationPlugin # Wayland support (libqwayland.so)
+            Qt6::QXcbIntegrationPlugin # X11 support
+            Qt6::QEglFSIntegrationPlugin # Embedded GL support
     )
 endif()
 

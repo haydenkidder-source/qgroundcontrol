@@ -16,9 +16,10 @@ CheckBox {
         }
     }
 
-    property color  textColor:          qgcPal.buttonText
+    property color  textColor:          qgcPal.textPrimary
     property bool   textBold:           false
     property real   textFontPointSize:  ScreenTools.defaultFontPointSize
+    property int    wrapMode:           Text.NoWrap
     property ButtonGroup buttonGroup: null
 
     property bool _noText: text === ""
@@ -41,6 +42,7 @@ CheckBox {
         font.bold:          control.textBold
         font.family:        ScreenTools.normalFontFamily
         color:              control.textColor
+        wrapMode:           control.wrapMode
     }
 
     indicator:  Rectangle {
@@ -49,21 +51,21 @@ CheckBox {
         x:              control.leftPadding
         y:              parent.height / 2 - height / 2
         color:          control.enabled ? "white" : "transparent"
-        border.color:   qgcPal.buttonBorder
+        border.color:   control.enabled ? qgcPal.textSecondary : qgcPal.borderSubtle
         border.width:   1
         radius:         ScreenTools.defaultBorderRadius
         opacity:        control.checkedState === Qt.PartiallyChecked ? 0.5 : 1
 
         Rectangle {
             anchors.fill:   parent
-            color:          qgcPal.buttonHighlight
+            color:          qgcPal.accent
             opacity:        control.hovered ? .2 : 0
             radius:         parent.radius
         }
 
         QGCColoredImage {
             source:             "/qmlimages/checkbox-check.svg"
-            color:              qgcPal.buttonHighlight
+            color:              qgcPal.accent
             mipmap:             true
             fillMode:           Image.PreserveAspectFit
             width:              parent.implicitWidth * 0.75

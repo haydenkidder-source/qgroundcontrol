@@ -19,6 +19,7 @@ class FactMetaData;
 class MavlinkCameraControlInterface;
 class QGCCameraManager;
 class Autotune;
+class VehicleReadiness;
 class LinkInterface;
 class FactGroup;
 class ParameterMetaData;
@@ -305,6 +306,17 @@ public:
     ///     false: Do not send first item to vehicle, sequence numbers must be adjusted
     virtual bool sendHomePositionToVehicle() const { return false; }
 
+    enum class MissionUploadRecoveryPolicy
+    {
+        NoRecovery,
+        ResendLastItem,
+        RestartUpload,
+    };
+
+    /// Recovery after all items were sent but the final MISSION_ACK timed out.
+    /// Only non-empty uploads can be recovered. Completion confirms transfer, not stored contents.
+    virtual MissionUploadRecoveryPolicy missionUploadRecoveryPolicy(MAV_MISSION_TYPE missionType) const;
+
     /// List of supported mission commands. Empty list for all commands supported.
     virtual QList<MAV_CMD> supportedMissionCommands(QGCMAVLinkTypes::VehicleClass_t /*vehicleClass*/) const { return QList<MAV_CMD>(); }
 
@@ -398,6 +410,10 @@ public:
 
     /// Creates Autotune object.
     virtual Autotune *createAutotune(Vehicle *vehicle) const;
+
+    /// Creates the vehicle's guided action readiness. The base readiness does not know which flight modes the guided
+    /// actions use, so firmware with takeoff or mission modes returns a subclass that declares them.
+    virtual VehicleReadiness* createVehicleReadiness(Vehicle* vehicle) const;
 
     /// Update Available flight modes received from vehicle
     virtual void updateAvailableFlightModes(FlightModeList &flightModeList) { _updateFlightModeList(flightModeList); }

@@ -16,9 +16,9 @@ Rectangle {
     width: implicitWidth
     height: implicitHeight
     clip: true
-    color: QGroundControl.globalPalette.windowShade
+    color: QGroundControl.globalPalette.windowCard
     border.color: COPController.unacknowledged ? QGroundControl.globalPalette.colorOrange
-                                               : QGroundControl.globalPalette.windowShadeDark
+                                               : QGroundControl.globalPalette.windowPanel
     border.width: ScreenTools.defaultFontPixelWidth / 3
     property var hostWindow
     property bool _minimized: false

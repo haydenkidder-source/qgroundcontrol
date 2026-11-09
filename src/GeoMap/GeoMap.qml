@@ -55,6 +55,7 @@ Item {
     property alias positionTracker: _positionTracker
     property rect followViewportRect: Qt.rect(0, 0, width, height)   ///< Map area the followed vehicle is kept within
     property var followOccluders: []                                ///< Rects within the viewport covered by host UI
+    property bool followOffscreenVehicle: true                      ///< false: the map is not recentered when the vehicle leaves the viewport
 
     // Live SurfaceModel stats for debug overlays
     property alias patchCount: patchModel.patchCount
@@ -204,7 +205,7 @@ Item {
     MapPositionTracker {
         id: _positionTracker
 
-        gcsPosition: QGroundControl.qgcPositionManger.gcsPosition
+        gcsPosition: QGroundControl.positionManager.gcsPosition
         vehicleCoordinate: root._activeVehicleCoordinate
         centerGCSWhenVehicleValid: QGroundControl.settingsManager.flyViewSettings.keepMapCenteredOnVehicle.rawValue
         userInteracting: panHandler.active || orbitHandler.active || shiftOrbitHandler.active
@@ -235,7 +236,7 @@ Item {
 
     Timer {
         interval: 500
-        running: root.visible
+        running: root.visible && root.followOffscreenVehicle
         repeat: true
         onTriggered: {
             const screenPos = geoScene.screenPositionFor(root._trackedVehicleCoordinate)
@@ -579,8 +580,8 @@ Item {
         height: gcsImage.height
         visible: gcsIndicator._gcsPosition.isValid
 
-        readonly property var _gcsPosition: QGroundControl.qgcPositionManger.gcsPosition
-        readonly property real _gcsHeading: QGroundControl.qgcPositionManger.gcsHeading
+        readonly property var _gcsPosition: QGroundControl.positionManager.gcsPosition
+        readonly property real _gcsHeading: QGroundControl.positionManager.gcsHeading
 
         Image {
             id: gcsImage

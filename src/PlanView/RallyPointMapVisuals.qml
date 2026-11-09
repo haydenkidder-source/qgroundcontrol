@@ -40,7 +40,16 @@ Item {
 
             property var rallyPointObject
 
-            onItemCoordinateChanged: rallyPointObject.coordinate = itemCoordinate
+            // The drag only moves the point. Its altitude is read live because the drag breaks the itemCoordinate binding
+            onItemCoordinateChanged: rallyPointObject.coordinate = QtPositioning.coordinate(itemCoordinate.latitude, itemCoordinate.longitude, rallyPointObject.coordinate.altitude)
+
+            // A PX4 AMSL altitude is the ground height under the point, so it is read again where the point lands
+            onDragStop: {
+                const vehicle = myRallyPointController.masterController.controllerVehicle
+                if (vehicle && vehicle.px4Firmware && rallyPointObject.altitudeFrame === QGroundControl.AltitudeFrameAbsolute) {
+                    rallyPointObject.useTerrainAltitude()
+                }
+            }
         }
     }
 
@@ -61,7 +70,11 @@ Item {
                 label:              qsTr("R", "rally point map item label")
                 checked:            _editingLayer == _layerRally ? rallyPointObject === myRallyPointController.currentRallyPoint : false
                 highlightSelected:  true
-                onClicked:          myRallyPointController.currentRallyPoint = rallyPointObject
+                onClicked: {
+                    if (mainWindow.allowViewSwitch()) {
+                        myRallyPointController.currentRallyPoint = rallyPointObject
+                    }
+                }
             }
         }
     }

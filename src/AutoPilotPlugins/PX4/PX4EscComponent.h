@@ -1,0 +1,36 @@
+#pragma once
+
+#include "VehicleComponent.h"
+
+class PX4EscComponent : public VehicleComponent
+{
+    Q_OBJECT
+
+public:
+    PX4EscComponent(Vehicle* vehicle, AutoPilotPlugin* autopilot, QObject* parent = nullptr);
+
+    // Virtuals from VehicleComponent
+    QStringList setupCompleteChangedTriggerList() const final { return QStringList(); }
+
+    QString name() const final { return _name; }
+
+    QString description() const final;
+    QString iconResource() const final;
+    QStringList searchKeywords() const final;
+
+    bool requiresSetup() const final { return false; }
+
+    bool setupComplete() const final { return true; }
+
+    QUrl setupSource() const final;
+
+    QUrl summaryQmlSource() const final { return QUrl(); }
+
+    QList<VehicleSummaryItem> summaryItems() const final;
+    QStringList summaryChangedTriggerList() const final;
+
+    bool allowSetupWhileArmed() const final { return true; }
+
+private:
+    const QString _name;
+};

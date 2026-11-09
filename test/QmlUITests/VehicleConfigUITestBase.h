@@ -16,6 +16,10 @@ class VehicleConfigUITestBase : public QmlUITestBase
     Q_OBJECT
 
 protected:
+    /// objectName of an item with a text property on the Sensors page, whose text is a QML qsTr string so it
+    /// retranslates when the language changes. Used by clickThroughAllComponentsAllLocales() to verify the switch.
+    virtual QString languageAnchorObjectName() const;
+
     /// Navigate from the Fly view to the Configure view and wait for
     /// vehicleConfig_root to appear.
     void navigateToConfigureView();
@@ -60,6 +64,10 @@ protected:
     /// strict mode). Fails the test if traffic is still active after 10s;
     /// callers must check QTest::currentTestFailed() after calling.
     void waitForParamRefreshQuiet(Vehicle *vehicle);
+
+    /// Counts the items in the window whose objectName starts with \a prefix, leaving out the names in \a excluded.
+    /// Returns {visible, total}, for checking a filtered page's row count.
+    QPair<int, int> countRows(const QString& prefix, const QStringList& excluded = {}) const;
 
     /// Navigate from the Fly view to the APM Sensors page and wait for the
     /// calibration indicator buttons to appear.

@@ -5,7 +5,8 @@
 
 qt_add_library(FlyViewModule STATIC)
 
-qt_add_qml_module(FlyViewModule
+qt_add_qml_module(
+    FlyViewModule
     URI QGroundControl.FlyView
     VERSION 1.0
     RESOURCE_PREFIX /qml
@@ -13,11 +14,6 @@ qt_add_qml_module(FlyViewModule
         CustomGuidedActionsController.qml
         DefaultChecklist.qml
         FixedWingChecklist.qml
-        FlightDisplayViewDummy.qml
-        FlightDisplayViewVideoOutput.qml
-        FlightDisplayViewQtMultimedia.qml
-        FlightDisplayViewUVC.qml
-        FlightDisplayViewVideo.qml
         FlyView.qml
         FlyViewAdditionalActionsButton.qml
         FlyViewAdditionalActionsList.qml
@@ -28,7 +24,6 @@ qt_add_qml_module(FlyViewModule
         FlyViewGeoMap.qml
         FlyViewGeoMapAdapter.qml
         FlyViewGeoMapChrome.qml
-        FlyViewGeoMapControls.qml
         FlyViewGeoProximityRadar.qml
         FlyViewInstrumentPanel.qml
         FlyViewGripperButton.qml
@@ -38,10 +33,8 @@ qt_add_qml_module(FlyViewModule
         FlyViewMissionCompleteDialog.qml
         FlyViewOccluders.qml
         FlyViewOccluderViewer.qml
-        FlyViewPreFlightChecklistPopup.qml
         FlyViewToolStrip.qml
         FlyViewToolStripActionList.qml
-
         FlyViewTopRightColumnLayout.qml
         FlyViewTopRightPanel.qml
         FlyViewVideo.qml
@@ -63,11 +56,12 @@ qt_add_qml_module(FlyViewModule
         OnScreenGimbalController.qml
         PreFlightBatteryCheck.qml
         PreFlightCheckList.qml
-        PreFlightCheckListShowAction.qml
         PreFlightGPSCheck.qml
         PreFlightRCCheck.qml
         PreFlightSensorsHealthCheck.qml
         PreFlightSoundCheck.qml
+        PreVehicleCheckList.qml
+        PreVehicleChecks.qml
         ProximityRadarValues.qml
         ProximityRadarVideoView.qml
         RoverChecklist.qml
@@ -80,7 +74,8 @@ qt_add_qml_module(FlyViewModule
     NO_PLUGIN
 )
 
-qt_add_resources(FlyViewModule flyview_resources
+qt_add_resources(
+    FlyViewModule flyview_resources
     PREFIX "/res"
     BASE "${CMAKE_SOURCE_DIR}/resources"
     FILES
@@ -90,7 +85,8 @@ qt_add_resources(FlyViewModule flyview_resources
         "${CMAKE_SOURCE_DIR}/resources/pause-mission.svg"
 )
 
-qt_add_resources(FlyViewModule flyview_qmlimages
+qt_add_resources(
+    FlyViewModule flyview_qmlimages
     PREFIX "/qmlimages"
     BASE "${CMAKE_SOURCE_DIR}/resources"
     FILES

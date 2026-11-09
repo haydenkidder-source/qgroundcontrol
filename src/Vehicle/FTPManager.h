@@ -17,20 +17,24 @@ class FTPManager : public QObject
 public:
     FTPManager(Vehicle* vehicle);
 
-	/// Downloads the specified file.
-    ///     @param fromCompId Component id of the component to download from. If fromCompId is MAV_COMP_ID_ALL, then MAV_COMP_ID_AUTOPILOT1 is used.
-    ///     @param fromURI    File to download from component, fully qualified path. May be in the format "mftp://[;comp=<id>]..." where the component id
-    ///                       is specified. If component id is not specified, then the id set via fromCompId is used.
-    ///     @param toDir      Local directory to download file to
+    /// Downloads the specified file.
+    ///     @param fromCompId Component id of the component to download from. If fromCompId is MAV_COMP_ID_ALL,
+    ///                       then MAV_COMP_ID_AUTOPILOT1 is used.
+    ///     @param fromURI    File to download from component, fully qualified path. May be in the format
+    ///                       "mftp://[;comp=<id>]..." where the component id is specified. If component id is not
+    ///                       specified, then the id set via fromCompId is used.
+    ///     @param toDir      Local directory to download file to. Must be non-empty and already exist;
+    ///                       otherwise download() returns false without starting.
     ///     @param filename   (optional)
     ///     @param checksize  (optional, default true) If true compare the filesize indicated in the open
     ///                       response with the transmitted filesize. If false the transmission is tftp style
     ///                       and the indicated filesize from MAVFTP fileopen response is ignored.
     ///                       This is used for the APM parameter download where the filesize is wrong due to
     ///                       a dynamic file creation on the vehicle.
-    /// @return true: download has started, false: error, no download
+    /// @return true: download has started, false: error, no download and no downloadComplete signal
     /// Signals downloadComplete, commandProgress
-    bool download(uint8_t fromCompId, const QString& fromURI, const QString& toDir, const QString& fileName="", bool checksize = true);
+    bool download(uint8_t fromCompId, const QString& fromURI, const QString& toDir, const QString& fileName = "",
+                  bool checksize = true);
 
     /// Uploads a local file to the specified URI on the vehicle.
     ///     @param toCompId Component id of the component to upload to. If toCompId is MAV_COMP_ID_ALL, then MAV_COMP_ID_AUTOPILOT1 is used.
@@ -288,14 +292,16 @@ private:
 public:
     /// Bytes requested per ReadFile/BurstReadFile chunk on non-radio links: the full FTP payload.
     static constexpr uint8_t kFullReadChunkSize = sizeof(MavlinkFTP::Request::data);
-    /// Chunk size on SiK/RFD radio links. Keeps each FTP packet inside one ~252 byte air frame; a full payload
-    /// spans two frames and is lost if either is. On the wire: 12 MAVLink v2 + 15 FTP fixed + 110 = 137 bytes
-    /// (150 signed), leaving room for the radio to coalesce a telemetry packet into the same frame.
-    static constexpr uint8_t kRadioReadChunkSize = 110;
+    /// Chunk size on SiK/RFD radio links, so each FTP packet fits in one radio packet. A SiK radio's limit
+    /// (max_data_packet_length, reported by ATI6) is 250 bytes, but only 118 with error correction enabled,
+    /// which we cannot detect. On the wire: 12 MAVLink v2 + 15 FTP fixed + 91 = 118 bytes.
+    static constexpr uint8_t kRadioReadChunkSize = 91;
+    /// Chunk size on a signed radio link, where every packet carries a 13 byte signature.
+    static constexpr uint8_t kRadioReadChunkSizeSigned = kRadioReadChunkSize - 13;
     /// Max times a download re-opens after the server expires the session (PX4 idle timer fires mid-burst)
     static constexpr int kMaxDownloadSessionReopens = 2;
-    /// Ack timeout used in unit tests (much shorter for faster tests)
-    static constexpr int kTestAckTimeoutMs = 10;
+    /// Keep timeout tests fast while allowing queued MockLink replies during UI startup.
+    static constexpr int kTestAckTimeoutMs = 100;
     /// Maximum wait time for FTP operations in unit tests (generous for multi-packet transfers)
     static constexpr int kTestOperationMaxWaitMs = 5000;
 };

@@ -6,42 +6,10 @@
 #include <QtCore/QJniObject>
 #include <QtCore/QLoggingCategory>
 
-#include <atomic>
-
 #include "QGCLoggingCategory.h"
+#include "VideoBackend.h"
 
 QGC_LOGGING_CATEGORY(AndroidInitLog, "Android.AndroidInit");
-
-static std::atomic<jobject> _context{nullptr};
-static std::atomic<jobject> _class_loader{nullptr};
-static std::atomic<JavaVM*> _java_vm{nullptr};
-
-#ifdef QGC_GST_STREAMING
-
-#define QGC_JNI_EXPORT __attribute__((visibility("default")))
-
-extern "C"
-{
-    // Exported for GStreamer plugins (e.g. androidmedia) that are statically
-    // linked into the main binary and need Android platform access at runtime.
-
-    QGC_JNI_EXPORT jobject gst_android_get_application_context(void)
-    {
-        return _context.load(std::memory_order_acquire);
-    }
-
-    QGC_JNI_EXPORT jobject gst_android_get_application_class_loader(void)
-    {
-        return _class_loader.load(std::memory_order_acquire);
-    }
-
-    QGC_JNI_EXPORT JavaVM *gst_android_get_java_vm(void)
-    {
-        return _java_vm.load(std::memory_order_acquire);
-    }
-}
-
-#endif
 
 static jboolean jniInit(JNIEnv *env, jobject thiz)
 {
@@ -82,30 +50,15 @@ static jboolean jniInit(JNIEnv *env, jobject thiz)
         return JNI_FALSE;
     }
 
-    const jobject app_context_global = env->NewGlobalRef(app_context);
-    const jobject class_loader_global = env->NewGlobalRef(class_loader);
+    JavaVM* javaVm = nullptr;
+    if (env->GetJavaVM(&javaVm) == JNI_OK) {
+        VideoBackend::instance().setAndroidJniState(javaVm, app_context, class_loader);
+    }
 
     env->DeleteLocalRef(app_context);
     env->DeleteLocalRef(class_loader);
 
-    if (!app_context_global || !class_loader_global || QJniEnvironment::checkAndClearExceptions(env)) {
-        if (app_context_global) {
-            env->DeleteGlobalRef(app_context_global);
-        }
-        if (class_loader_global) {
-            env->DeleteGlobalRef(class_loader_global);
-        }
-        return JNI_FALSE;
-    }
-
-    if (jobject old_context = _context.exchange(app_context_global, std::memory_order_acq_rel)) {
-        env->DeleteGlobalRef(old_context);
-    }
-    if (jobject old_class_loader = _class_loader.exchange(class_loader_global, std::memory_order_acq_rel)) {
-        env->DeleteGlobalRef(old_class_loader);
-    }
-
-    return JNI_TRUE;
+    return QJniEnvironment::checkAndClearExceptions(env) ? JNI_FALSE : JNI_TRUE;
 }
 
 static jint jniSetNativeMethods()
@@ -145,7 +98,7 @@ jint JNI_OnLoad(JavaVM* vm, void*)
 {
     qCDebug(AndroidInitLog) << Q_FUNC_INFO;
 
-    _java_vm.store(vm, std::memory_order_release);
+    VideoBackend::instance().setAndroidJniState(vm, nullptr, nullptr);
 
     JNIEnv *env;
     if (vm->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_6) != JNI_OK) {
@@ -171,17 +124,7 @@ void JNI_OnUnload(JavaVM* vm, void*)
 {
     qCDebug(AndroidInitLog) << Q_FUNC_INFO;
 
-    JNIEnv* env = nullptr;
-    if (vm->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_6) == JNI_OK) {
-        if (jobject ctx = _context.exchange(nullptr, std::memory_order_acq_rel)) {
-            env->DeleteGlobalRef(ctx);
-        }
-        if (jobject cl = _class_loader.exchange(nullptr, std::memory_order_acq_rel)) {
-            env->DeleteGlobalRef(cl);
-        }
-    }
-
-    _java_vm.store(nullptr, std::memory_order_release);
+    VideoBackend::instance().setAndroidJniState(vm, nullptr, nullptr);
 
 #ifndef QGC_NO_SERIAL_LINK
     AndroidSerial::cleanupJniCache();

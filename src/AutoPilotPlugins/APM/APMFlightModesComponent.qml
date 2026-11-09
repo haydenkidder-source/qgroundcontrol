@@ -39,7 +39,7 @@ SetupPage {
             spacing:     _margins
 
             QGCGroupBox {
-                title: qsTr("Flight Mode Settings") + (_fltmodeChExists ? "" : qsTr(" (Channel 5)"))
+                heading: qsTr("Flight Mode Settings") + (_fltmodeChExists ? "" : qsTr(" (Channel 5)"))
 
                 ColumnLayout {
                     spacing: ScreenTools.defaultFontPixelHeight
@@ -77,7 +77,7 @@ SetupPage {
 
                                 QGCLabel {
                                     text:   qsTr("Flight Mode ") + index
-                                    color:  controller.activeFlightMode == index ? "yellow" : qgcPal.text
+                                    color:  controller.activeFlightMode == index ? "yellow" : qgcPal.textPrimary
 
                                     property int index: modelData + 1
                                 }
@@ -151,7 +151,7 @@ SetupPage {
             } // QGCGroupBox - Flight Modes
 
             QGCGroupBox {
-                title: qsTr("Switch Options")
+                heading: qsTr("Switch Options")
 
                 ColumnLayout {
                     spacing: ScreenTools.defaultFontPixelHeight
@@ -168,7 +168,7 @@ SetupPage {
                                 QGCLabel {
                                     anchors.baseline:   optCombo.baseline
                                     text:               qsTr("Channel option %1 :").arg(index)
-                                    color:              controller.channelOptionEnabled[modelData + (_ch7OptAvailable ? 1 : 0)] ? "yellow" : qgcPal.text
+                                    color:              controller.channelOptionEnabled[modelData + (_ch7OptAvailable ? 1 : 0)] ? "yellow" : qgcPal.textPrimary
                                 }
 
                                 FactComboBox {

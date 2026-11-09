@@ -45,6 +45,8 @@ private slots:
     void _testReadChunkSizeShrinksWhenRadioDetectedMidDownload();
     void _testFillMissingBlockSurvivesRepeatedTimeouts();
     void _testFillMissingBlockGivesUpBeyondRetryBudget();
+    void _testDownloadExplicitFileNameIsBasename();
+    void _testDownloadRejectsMissingDestination();
 
     // Overrides from UnitTest
     void cleanup() override;

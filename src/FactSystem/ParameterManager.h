@@ -4,6 +4,7 @@
 #include <QtCore/QMap>
 #include <QtCore/QObject>
 #include <QtCore/QPair>
+#include <QtCore/QSet>
 #include <QtCore/QString>
 #include <QtCore/QTimer>
 #include <QtQmlIntegration/QtQmlIntegration>
@@ -45,7 +46,7 @@ public:
     static QDir parameterCacheDir();
 
     /// @return Location of parameter cache file
-    static QString parameterCacheFile(int vehicleId, int componentId);
+    static QString parameterCacheFile(quint32 vehicleId, int componentId);
 
     void mavlinkMessageReceived(const mavlink_message_t &message);
 
@@ -59,8 +60,10 @@ public:
     /// vehicle is not PX4, cacheCheckOnlyFailed() is emitted.
     void tryHashCheckCacheLoad();
 
-    /// Request a refresh on the specific parameter
-    void refreshParameter(int componentId, const QString &paramName);
+    /// Request a refresh on the specific parameter. The parameter does not need to be known yet: a response
+    /// for an unknown name adds it.
+    ///     @param notifyFailure: true to show a message to the user if the read fails
+    void refreshParameter(int componentId, const QString& paramName, bool notifyFailure = true);
 
     /// Request a refresh on all parameters that begin with the specified prefix
     void refreshParametersPrefix(int componentId, const QString &namePrefix);
@@ -93,6 +96,11 @@ public:
     void writeParametersToStream(QTextStream &stream) const;
 
     bool pendingWrites() const;
+
+    /// While suppressed, writes to reboot-required parameters still latch Vehicle::rebootRequired but skip the
+    /// reboot notice, so a page can present the reboot state itself. Calls nest and must be balanced.
+    void suppressRebootMessage();
+    void unsuppressRebootMessage();
 
 #ifdef QGC_UNITTEST_BUILD
     /// Test-only: deterministically force the pendingWrites state on or off,
@@ -136,7 +144,7 @@ signals:
     void factAdded(int componentId, Fact *fact);
 
     // Internal signals — emitted by PARAM_SET / PARAM_REQUEST_READ state machines.
-    // Also consumed by BulkRefreshJob and unit tests.
+    // Also consumed by BulkRefreshJob, PX4SerialPortsController (to end loading for an unanswered read) and unit tests.
     void _paramSetSuccess(int componentId, const QString &paramName);
     void _paramSetFailure(int componentId, const QString &paramName);
     void _paramRequestReadSuccess(int componentId, const QString &paramName, int paramIndex);
@@ -162,8 +170,8 @@ private:
     /// Single PARAM_REQUEST_READ by index with no ack wait. Used by the initial-load re-read loop, which does its own retries.
     void _sendParamRequestReadIndex(int componentId, int paramIndex);
     void _requestHashCheck(uint8_t componentId);
-    void _writeLocalParamCache(int vehicleId, int componentId);
-    void _tryCacheHashLoad(int vehicleId, int componentId, const QVariant &hashValue);
+    void _writeLocalParamCache(quint32 vehicleId, int componentId);
+    void _tryCacheHashLoad(quint32 vehicleId, int componentId, const QVariant& hashValue);
     void _loadMetaData();
     void _clearMetaData();
     /// Remap a parameter name from the newest firmware version to the version running on the vehicle.
@@ -194,6 +202,9 @@ private:
     void _checkOtherComponentsLoadComplete();
     bool _anyComponentWaiting() const;
     void _ftpDownloadComplete(const QString &fileName, const QString &errorMsg);
+    /// param.pck only carries the autopilot's params, so other components are asked over the parameter protocol
+    void _handleHeartbeat(int componentId);
+    void _sendParamRequestList(uint8_t componentId);
     void _ftpDownloadProgress(float progress);
     /// Parse the binary parameter file and inject the parameters in the qgc fact system.
     /// See: https://github.com/ArduPilot/ardupilot/tree/master/libraries/AP_Filesystem
@@ -219,6 +230,7 @@ private:
     bool _logReplay = false;                    ///< true: running with log replay link
     bool _hashCheckDone = false;                ///< true: _HASH_CHECK has been attempted, go straight to PARAM_REQUEST_LIST
     bool _cacheOnlyHashCheck = false;           ///< true: current hash check is cache-only, don't fall back to full download
+    int _rebootMessageSuppressCount = 0;        ///< > 0: skip the reboot notice for reboot-required writes
 
     typedef QPair<int /* FactMetaData::ValueType_t */, QVariant /* Fact::rawValue */> ParamTypeVal;
     typedef QMap<QString /* parameter name */, ParamTypeVal> CacheMapName2ParamTypeVal;
@@ -259,4 +271,6 @@ private:
 
     bool _tryftp = false;
     bool _ftpDownloadInProgress = false;        ///< true: @PARAM/param.pck transfer in flight
+    bool _ftpParamsLoaded = false;              ///< true: autopilot params came from param.pck
+    QSet<int> _heartbeatComponentIds;           ///< Non-autopilot components heard via HEARTBEAT
 };

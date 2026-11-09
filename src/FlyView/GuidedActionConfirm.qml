@@ -16,6 +16,7 @@ Item {
     property string title
     property string message
     property var    vehicle             // Vehicle the confirmation was opened for
+    property bool   pending:            false   // From show() until the confirmation is cancelled or acted on
     property int    action
     property var    actionData
     property bool   hideTrigger:        false
@@ -35,6 +36,7 @@ Item {
     }
 
     function show(immediate) {
+        pending = true
         if (immediate) {
             _reallyShow()
         } else {
@@ -45,6 +47,7 @@ Item {
     }
 
     function reset() {
+        pending = false
         visible = false
         guidedValueSlider.visible = false
         hideTrigger = false
@@ -93,14 +96,17 @@ Item {
             objectName:         "guidedActionConfirmButton"
             text:               control.title
             enabled:            true
+            primary:            true
 
             onActivated: {
                 control.visible = false
-                if (guidedController._activeVehicle !== control.vehicle) {
-                    // Never run the action on a vehicle that became active while the confirmation was held
+                if (!control.pending || guidedController._activeVehicle !== control.vehicle) {
+                    // Never run an action whose confirmation was cancelled (for example because the action stopped
+                    // being available) or on a vehicle that became active while the confirmation was held
                     confirmCancelled()
                     return
                 }
+                control.pending = false
                 var sliderOutputValue = 0
                 if (guidedValueSlider.visible) {
                     sliderOutputValue = guidedValueSlider.getOutputValue()
@@ -124,14 +130,20 @@ Item {
             visible:            text !== ""
         }
 
-        QGCColoredImage {
-            id:                 closeButton
-            Layout.alignment:   Qt.AlignTop
-            width:              height
-            height:             ScreenTools.defaultFontPixelHeight * 0.5
-            source:             "/res/XDelete.svg"
-            fillMode:           Image.PreserveAspectFit
-            color:              qgcPal.text
+        Item {
+            id:                     closeButton
+            Layout.alignment:       Qt.AlignTop
+            Layout.preferredWidth:  ScreenTools.minTouchPixels
+            Layout.preferredHeight: ScreenTools.minTouchPixels
+
+            QGCColoredImage {
+                anchors.centerIn:   parent
+                width:              height
+                height:             ScreenTools.defaultFontPixelHeight * 0.5
+                source:             "/res/XDelete.svg"
+                fillMode:           Image.PreserveAspectFit
+                color:              qgcPal.textPrimary
+            }
 
             QGCMouseArea {
                 fillItem:   parent

@@ -6,7 +6,7 @@ import QGroundControl
 import QGroundControl.Controls
 import QGroundControl.FactControls
 
-SettingsGroupLayout {
+QGCGroupBox {
     id: _root
     heading: qsTr("Links")
 
@@ -30,7 +30,7 @@ SettingsGroupLayout {
                 fillMode:               Image.PreserveAspectFit
                 mipmap:                 true
                 smooth:                 true
-                color:                  qgcPalEdit.text
+                color:                  qgcPalEdit.textPrimary
                 source:                 "/res/pencil.svg"
                 enabled:                !object.link
 
@@ -54,7 +54,7 @@ SettingsGroupLayout {
                 fillMode:               Image.PreserveAspectFit
                 mipmap:                 true
                 smooth:                 true
-                color:                  qgcPalDelete.text
+                color:                  qgcPalDelete.textPrimary
                 source:                 "/res/TrashDelete.svg"
 
                 QGCPalette {

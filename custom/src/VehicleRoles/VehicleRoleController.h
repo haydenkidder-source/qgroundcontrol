@@ -27,6 +27,7 @@ class VehicleRoleLinkEntry : public QObject
 
     Q_PROPERTY(QString label READ label NOTIFY labelChanged)
     Q_PROPERTY(QString linkConfigName READ linkConfigName NOTIFY linkConfigNameChanged)
+    Q_PROPERTY(bool preferred READ preferred NOTIFY preferredChanged)
 
 public:
     VehicleRoleLinkEntry(const QString& label, const QString& linkConfigName, QObject* parent = nullptr);
@@ -35,14 +36,19 @@ public:
 
     QString linkConfigName() const { return _linkConfigName; }
 
+    bool preferred() const { return _preferred; }
+
+    void setPreferred(bool preferred);
     void setLabel(const QString& label);
     void setLinkConfigName(const QString& linkConfigName);
 
 signals:
+    void preferredChanged(bool preferred);
     void labelChanged(QString label);
     void linkConfigNameChanged(QString linkConfigName);
 
 private:
+    bool _preferred = false;
     QString _label;
     QString _linkConfigName;
 };
@@ -58,16 +64,16 @@ class VehicleRoleEntry : public QObject
     QML_UNCREATABLE("Created by VehicleRoleController")
     Q_MOC_INCLUDE("QmlObjectListModel.h")
 
-    Q_PROPERTY(int sysid READ sysid CONSTANT)
+    Q_PROPERTY(quint32 sysid READ sysid CONSTANT)
     Q_PROPERTY(QString role READ role NOTIFY roleChanged)
     Q_PROPERTY(QString name READ name NOTIFY nameChanged)
     Q_PROPERTY(int port READ port NOTIFY portChanged)
     Q_PROPERTY(QmlObjectListModel* links READ links CONSTANT)
 
 public:
-    VehicleRoleEntry(int sysid, const QString& role, const QString& name, int port, QObject* parent = nullptr);
+    VehicleRoleEntry(quint32 sysid, const QString& role, const QString& name, int port, QObject* parent = nullptr);
 
-    int sysid() const { return _sysid; }
+    quint32 sysid() const { return _sysid; }
 
     QString role() const { return _role; }
 
@@ -94,7 +100,7 @@ signals:
     void portChanged(int port);
 
 private:
-    int _sysid = 0;
+    quint32 _sysid = 0;
     QString _role;
     QString _name;
     int _port = 0;
@@ -121,9 +127,15 @@ class VehicleRoleController : public QObject
 
     Q_PROPERTY(QmlObjectListModel* roleEntries READ roleEntries CONSTANT)
     Q_PROPERTY(QStringList availableRoles READ availableRoles CONSTANT)
+    Q_PROPERTY(
+        int failbackHoldSeconds READ failbackHoldSeconds WRITE setFailbackHoldSeconds NOTIFY failbackHoldSecondsChanged)
 
 public:
     explicit VehicleRoleController(QObject* parent = nullptr);
+
+    int failbackHoldSeconds() const { return _failbackHoldSeconds; }
+
+    void setFailbackHoldSeconds(int seconds);
 
     QmlObjectListModel* roleEntries() const { return _roleEntries; }
 
@@ -137,10 +149,10 @@ public:
     }
 
     /// Adds a new sysid/role/name/port assignment, or updates the existing entry for that sysid if
-    /// one is already present. Ignored if sysid is outside the valid MAVLink range [1,255], role
+    /// one is already present. Ignored if sysid is outside the valid system ID range [1,4294967295], role
     /// isn't one of availableRoles(), port is outside [0,65535] (0 means unassigned), or name is
     /// already another vehicle's nickname (see isNicknameTaken()).
-    Q_INVOKABLE void addEntry(int sysid, const QString& role, const QString& name, int port);
+    Q_INVOKABLE void addEntry(quint32 sysid, const QString& role, const QString& name, int port);
 
     Q_INVOKABLE void removeEntry(int index);
     Q_INVOKABLE void setRole(int index, const QString& role);
@@ -159,19 +171,19 @@ public:
     /// surrounding whitespace. Nicknames identify vehicles to the operator, so each must be
     /// distinct. An empty nickname is never taken. Callers editing a vehicle's own nickname pass
     /// its sysid as exceptSysid.
-    Q_INVOKABLE bool isNicknameTaken(const QString& name, int exceptSysid) const;
+    Q_INVOKABLE bool isNicknameTaken(const QString& name, quint32 exceptSysid) const;
 
     /// Returns the assigned name for sysid, or an empty string if unassigned. Callers should fall
     /// back to a generic label.
-    Q_INVOKABLE QString nameForSysid(int sysid) const;
+    Q_INVOKABLE QString nameForSysid(quint32 sysid) const;
     /// Returns the assigned role for sysid, or an empty string if unassigned.
-    Q_INVOKABLE QString roleForSysid(int sysid) const;
+    Q_INVOKABLE QString roleForSysid(quint32 sysid) const;
 
     /// Returns the assigned port for sysid, or 0 (unassigned) if sysid has no entry.
-    Q_INVOKABLE int portForSysid(int sysid) const;
+    Q_INVOKABLE int portForSysid(quint32 sysid) const;
 
     /// Returns the link associations for sysid, or nullptr if sysid has no entry.
-    Q_INVOKABLE QmlObjectListModel* linksForSysid(int sysid) const;
+    Q_INVOKABLE QmlObjectListModel* linksForSysid(quint32 sysid) const;
 
     /// Adds a new named link association (e.g. "RFD900x") to the entry at index, optionally
     /// already pointing at an existing LinkConfiguration by name - pass an empty string to leave
@@ -184,16 +196,24 @@ public:
     Q_INVOKABLE void setLinkLabel(int index, int linkIndex, const QString& label);
     Q_INVOKABLE void setLinkConfigName(int index, int linkIndex, const QString& linkConfigName);
 
+    Q_INVOKABLE void setLinkPreferred(int index, int linkIndex, bool preferred);
+    Q_INVOKABLE QString preferredLinkConfigNameForSysid(quint32 sysid) const;
+
     /// True if a live LinkInterface exists right now for a LinkConfiguration with this name - i.e.
     /// the link is actually connected, not merely configured or pending auto-reconnect. An empty
     /// linkConfigName (an association not yet pointed at a real link) is never connected.
     Q_INVOKABLE bool isLinkConfigConnected(const QString& linkConfigName) const;
 
+signals:
+    void linkPreferencesChanged();
+    void failbackHoldSecondsChanged();
+
 private:
     void _load();
     void _save();
-    int _indexForSysid(int sysid) const;
+    int _indexForSysid(quint32 sysid) const;
     VehicleRoleLinkEntry* _linkAt(int index, int linkIndex) const;
 
     QmlObjectListModel* _roleEntries = nullptr;
+    int _failbackHoldSeconds = 15;
 };

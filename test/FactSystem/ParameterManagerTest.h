@@ -1,6 +1,7 @@
 #pragma once
 
 #include "BaseClasses/VehicleTestManualConnect.h"
+#include "MockLink.h"
 
 class ParameterManagerTest : public VehicleTestManualConnect
 {
@@ -27,10 +28,14 @@ private slots:
     void _paramReadFirstAttemptNoResponseRetry();
     void _paramReadNoResponse();
     void _paramWriteParamError();
+    void _paramReadParamError_data();
     void _paramReadParamError();
-    void _rebootRequiredNoticeDebounced();
+    void _rebootRequiredNotice_data();
+    void _rebootRequiredNotice();
     void _FTPnoFailure();
     void _FTPChangeParam();
+    void _FTPRequestsHeartbeatComponentParams_data();
+    void _FTPRequestsHeartbeatComponentParams();
     void _bulkRefreshExactNamesAllSucceed();
     void _bulkRefreshPrefixExpansion();
     void _bulkRefreshUnknownNameSkipped();

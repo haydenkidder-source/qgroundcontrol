@@ -1,11 +1,14 @@
 #include "PX4FirmwarePlugin.h"
 
+#include <algorithm>
+
 #include <QtCore/QString>
 
 #include "AppMessages.h"
 #include "MAVLinkLib.h"
 #include "PX4AutoPilotPlugin.h"
 #include "PX4ParameterMetaData.h"
+#include "PX4VehicleReadiness.h"
 #include "ParameterManager.h"
 #include "ParameterMetaData.h"
 #include "PlanViewSettings.h"
@@ -273,18 +276,44 @@ ParameterMetaData* PX4FirmwarePlugin::_createParameterMetaData()
     return new PX4ParameterMetaData(this);
 }
 
+namespace {
+
+/// Sends MAV_CMD_DO_REPOSITION that switches to Hold and keeps the current latitude/longitude,
+/// changing only yaw (radians) and/or AMSL altitude (NAN: no change). Sent as COMMAND_INT when
+/// supported. With no ackHandlerInfo, errors are shown to the user.
+void sendRepositionKeepLatLon(Vehicle* vehicle, float yaw, float amslAltitude,
+                              const Vehicle::MavCmdAckHandlerInfo_t* ackHandlerInfo = nullptr)
+{
+    const int compId = vehicle->defaultComponentId();
+    const float groundSpeed = -1.0f;  // no change
+    const float flags = MAV_DO_REPOSITION_FLAGS_CHANGE_MODE;
+    // PX4 before 1.12 advertises COMMAND_INT but reads the INT32_MAX "no change" latitude/longitude as
+    // 214.7483647 degrees
+    const bool commandInt =
+        (vehicle->capabilityBits() & MAV_PROTOCOL_CAPABILITY_COMMAND_INT) && (vehicle->versionCompare(1, 12, 0) >= 0);
+
+    if (commandInt) {
+        if (ackHandlerInfo) {
+            vehicle->sendMavCommandIntWithHandler(ackHandlerInfo, compId, MAV_CMD_DO_REPOSITION, MAV_FRAME_GLOBAL,
+                                                  groundSpeed, flags, 0.0f, yaw, NAN, NAN, amslAltitude);
+        } else {
+            vehicle->sendMavCommandInt(compId, MAV_CMD_DO_REPOSITION, MAV_FRAME_GLOBAL, true /* showError */,
+                                       groundSpeed, flags, 0.0f, yaw, NAN, NAN, amslAltitude);
+        }
+    } else if (ackHandlerInfo) {
+        vehicle->sendMavCommandWithHandler(ackHandlerInfo, compId, MAV_CMD_DO_REPOSITION, groundSpeed, flags, 0.0f, yaw,
+                                           NAN, NAN, amslAltitude);
+    } else {
+        vehicle->sendMavCommand(compId, MAV_CMD_DO_REPOSITION, true /* showError */, groundSpeed, flags, 0.0f, yaw, NAN,
+                                NAN, amslAltitude);
+    }
+}
+
+}  // namespace
+
 void PX4FirmwarePlugin::pauseVehicle(Vehicle* vehicle) const
 {
-    vehicle->sendMavCommand(vehicle->defaultComponentId(),
-                            MAV_CMD_DO_REPOSITION,
-                            true,   // show error if failed
-                            -1.0f,
-                            MAV_DO_REPOSITION_FLAGS_CHANGE_MODE,
-                            0.0f,
-                            NAN,
-                            NAN,
-                            NAN,
-                            NAN);
+    sendRepositionKeepLatLon(vehicle, NAN, NAN);
 }
 
 void PX4FirmwarePlugin::guidedModeRTL(Vehicle* vehicle, bool smartRTL) const
@@ -298,26 +327,37 @@ void PX4FirmwarePlugin::guidedModeLand(Vehicle* vehicle) const
     _setFlightModeAndValidate(vehicle, landFlightMode());
 }
 
-void PX4FirmwarePlugin::_mavCommandResult(int vehicleId, int component, int command, int result, int failureCode)
+namespace {
+
+void px4TakeoffResultHandler(void* resultHandlerData, int /*compId*/, const mavlink_command_ack_t& ack,
+                             Vehicle::MavCmdResultFailureCode_t failureCode)
 {
-    Q_UNUSED(vehicleId); Q_UNUSED(component); Q_UNUSED(failureCode);
+    auto* vehicle = static_cast<Vehicle*>(resultHandlerData);
 
-    auto* vehicle = qobject_cast<Vehicle*>(sender());
-    if (!vehicle) {
-        qCWarning(PX4FirmwarePluginLog) << "Dynamic cast failed!";
-        return;
-    }
-
-    if (command == MAV_CMD_NAV_TAKEOFF && result == MAV_RESULT_ACCEPTED) {
-        // Now that we are in takeoff mode we can arm the vehicle which will cause it to takeoff.
-        // We specifically don't retry arming if it fails. This way we don't fight with the user if
-        // They are trying to disarm.
-        disconnect(vehicle, &Vehicle::mavCommandResult, this, &PX4FirmwarePlugin::_mavCommandResult);
-        if (!vehicle->armed()) {
-            vehicle->setArmedShowError(true);
-        }
+    switch (failureCode) {
+        case Vehicle::MavCmdResultCommandResultOnly:
+            if (ack.result == MAV_RESULT_ACCEPTED) {
+                // Now that we are in takeoff mode we can arm the vehicle which will cause it to takeoff.
+                // We specifically don't retry arming if it fails. This way we don't fight with the user if
+                // They are trying to disarm.
+                if (!vehicle->armed()) {
+                    vehicle->setArmedShowError(true);
+                }
+            } else {
+                Vehicle::showCommandAckError(ack);
+            }
+            break;
+        case Vehicle::MavCmdResultFailureNoResponseToCommand:
+            QGC::showAppMessage(PX4FirmwarePlugin::tr("Vehicle did not respond to takeoff command."));
+            break;
+        case Vehicle::MavCmdResultFailureDuplicateCommand:
+            QGC::showAppMessage(PX4FirmwarePlugin::tr(
+                "Takeoff not sent: a previous takeoff command is still waiting for a vehicle response."));
+            break;
     }
 }
+
+}  // namespace
 
 void PX4FirmwarePlugin::guidedModeTakeoff(Vehicle* vehicle, double takeoffAltRel) const
 {
@@ -329,16 +369,16 @@ void PX4FirmwarePlugin::guidedModeTakeoff(Vehicle* vehicle, double takeoffAltRel
 
     double takeoffAltAMSL = takeoffAltRel + vehicleAltitudeAMSL;
 
-    connect(vehicle, &Vehicle::mavCommandResult, this, &PX4FirmwarePlugin::_mavCommandResult);
-    vehicle->sendMavCommand(
-        vehicle->defaultComponentId(),
-        MAV_CMD_NAV_TAKEOFF,
-        true,                                   // show error is fails
-        NAN,                                    // No pitch requested
-        NAN,                                    // param 2 unused
-        0,                                      // param 3 takeoff flags
-        NAN, NAN, NAN,                          // No yaw, lat, lon
-        static_cast<float>(takeoffAltAMSL));    // AMSL altitude
+    Vehicle::MavCmdAckHandlerInfo_t handlerInfo = {};
+    handlerInfo.resultHandler = px4TakeoffResultHandler;
+    handlerInfo.resultHandlerData = vehicle;
+
+    vehicle->sendMavCommandWithHandler(&handlerInfo, vehicle->defaultComponentId(), MAV_CMD_NAV_TAKEOFF,
+                                       NAN,                                  // No pitch requested
+                                       NAN,                                  // param 2 unused
+                                       0,                                    // param 3 takeoff flags
+                                       NAN, NAN, NAN,                        // No yaw, lat, lon
+                                       static_cast<float>(takeoffAltAMSL));  // AMSL altitude
 }
 
 double PX4FirmwarePlugin::maximumHorizontalSpeedMultirotorMetersSecond(Vehicle* vehicle) const
@@ -467,15 +507,7 @@ void PX4FirmwarePlugin::_changeAltAfterPause(void* resultHandlerData, bool pause
     PauseVehicleThenChangeAltData_t* pData = static_cast<PauseVehicleThenChangeAltData_t*>(resultHandlerData);
 
     if (pauseSucceeded) {
-        pData->vehicle->sendMavCommand(
-                    pData->vehicle->defaultComponentId(),
-                    MAV_CMD_DO_REPOSITION,
-                    true,                                   // show error is fails
-                    -1.0f,                                  // Don't change groundspeed
-                    MAV_DO_REPOSITION_FLAGS_CHANGE_MODE,
-                    0.0f,                                   // Reserved
-                    qQNaN(), qQNaN(), qQNaN(),              // No change to yaw, lat, lon
-                    static_cast<float>(pData->newAMSLAlt));
+        sendRepositionKeepLatLon(pData->vehicle, NAN, static_cast<float>(pData->newAMSLAlt));
     } else {
         QGC::showAppMessage(tr("Unable to pause vehicle."));
     }
@@ -507,14 +539,7 @@ void PX4FirmwarePlugin::guidedModeChangeAltitude(Vehicle* vehicle, double altitu
         handlerInfo.resultHandler       = _pauseVehicleThenChangeAltResultHandler;
         handlerInfo.resultHandlerData   = resultData;
 
-        vehicle->sendMavCommandWithHandler(
-                    &handlerInfo,
-                    vehicle->defaultComponentId(),
-                    MAV_CMD_DO_REPOSITION,
-                    -1.0f,                                  // Don't change groundspeed
-                    MAV_DO_REPOSITION_FLAGS_CHANGE_MODE,
-                    0.0f,                                   // Reserved
-                    qQNaN(), qQNaN(), qQNaN(), qQNaN());    // No change to yaw, lat, lon, alt
+        sendRepositionKeepLatLon(vehicle, NAN, NAN, &handlerInfo);
     } else {
         _changeAltAfterPause(resultData, true /* pauseSucceeded */);
     }
@@ -557,16 +582,7 @@ void PX4FirmwarePlugin::guidedModeChangeHeading(Vehicle* vehicle, const QGeoCoor
 
     const float radians = qDegreesToRadians(vehicle->coordinate().azimuthTo(headingCoord));
 
-    vehicle->sendMavCommand(
-        vehicle->defaultComponentId(),
-        MAV_CMD_DO_REPOSITION,
-        true,
-        -1.0f,                                  // no change in ground speed
-        MAV_DO_REPOSITION_FLAGS_CHANGE_MODE,    // switch to guided mode
-        0.0f,                                   // reserved
-        radians,                                // change heading
-        NAN, NAN, NAN                           // no change lat, lon, alt
-    );
+    sendRepositionKeepLatLon(vehicle, radians, NAN);
 }
 
 bool PX4FirmwarePlugin::guidedModeROI(Vehicle* vehicle, const QGeoCoordinate& roiCenterCoord, double relativeAltitudeMeters) const
@@ -659,6 +675,11 @@ QString PX4FirmwarePlugin::takeOffFlightMode() const
 QString PX4FirmwarePlugin::stabilizedFlightMode() const
 {
     return _modeEnumToString.value(PX4CustomMode::STABILIZED);
+}
+
+VehicleReadiness* PX4FirmwarePlugin::createVehicleReadiness(Vehicle* vehicle) const
+{
+    return new PX4VehicleReadiness(vehicle);
 }
 
 bool PX4FirmwarePlugin::isGuidedMode(const Vehicle* vehicle) const
@@ -858,6 +879,43 @@ void PX4FirmwarePlugin::updateAvailableFlightModes(FlightModeList &modeList)
         }
     }
     _updateFlightModeList(modeList);
+}
+
+QString PX4FirmwarePlugin::externalFlightModeName(const FlightModeList& modeList, int externalIndex)
+{
+    static_assert(kExternalFlightModeCount == PX4_CUSTOM_SUB_MODE_EXTERNAL8 - PX4_CUSTOM_SUB_MODE_EXTERNAL1 + 1,
+                  "kExternalFlightModeCount must match the PX4 external sub modes");
+    if ((externalIndex < 1) || (externalIndex > kExternalFlightModeCount)) {
+        return QString();
+    }
+
+    px4_custom_mode customMode{};
+    customMode.main_mode = PX4_CUSTOM_MAIN_MODE_AUTO;
+    customMode.sub_mode = static_cast<uint8_t>(PX4_CUSTOM_SUB_MODE_EXTERNAL1 + externalIndex - 1);
+    const auto mode = std::find_if(modeList.cbegin(), modeList.cend(), [&customMode](const FirmwareFlightMode& entry) {
+        return entry.custom_mode == customMode.data;
+    });
+    if (mode == modeList.cend()) {
+        return QString();
+    }
+    const QString& name = mode->mode_name;
+
+    // PX4 reports external slots with no registered mode under this name (AVAILABLE_MODES.hpp). QGC may have added
+    // " (N)" to keep the names unique.
+    if (name.startsWith(QStringLiteral("(Mode not available)"))) {
+        return QString();
+    }
+    return name;
+}
+
+QStringList PX4FirmwarePlugin::externalFlightModeNames(const FlightModeList& modeList)
+{
+    QStringList names;
+    for (int externalIndex = 1; externalIndex <= kExternalFlightModeCount; externalIndex++) {
+        names.append(externalFlightModeName(modeList, externalIndex));
+    }
+
+    return names;
 }
 
 QVariant PX4FirmwarePlugin::expandedToolbarIndicatorSource(const Vehicle* /*vehicle*/, const QString& indicatorName) const

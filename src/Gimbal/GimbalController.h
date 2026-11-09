@@ -26,6 +26,13 @@ public:
     GimbalController(Vehicle *vehicle);
     ~GimbalController();
 
+    // These are public for creating unit tests
+    static constexpr int kRateResendIntervalMs = 500;     ///< Rate command resend period while an axis is moving
+    static constexpr int kTestRateResendIntervalMs = 50;  ///< Shortened rate resend period in unit tests
+    /// Minimum time between GIMBAL_MANAGER_STATUS interval requests, per gimbal
+    static constexpr int kStatusRequestSpacingMs = 1000;
+    static constexpr int kTestStatusRequestSpacingMs = 50;  ///< Shortened status request spacing in unit tests
+
     Gimbal *activeGimbal() const { return _activeGimbal; }
     QmlObjectListModel *gimbals() const { return _gimbals; }
 
@@ -107,6 +114,8 @@ private:
     void _checkComplete(Gimbal &gimbal, GimbalPairId pairId);
     bool _tryGetGimbalControl();
     bool _yawInVehicleFrame(uint32_t flags);
+    static bool _gcsSystemIdSupportsGimbalControl();
+    static void _showGcsSystemIdUnsupportedMessage();
 
     void _sendGimbalAttitudeRates(float pitch_rate_deg_s, float yaw_rate_deg_s);
 
@@ -124,6 +133,7 @@ private:
     QMap<GimbalPairId, Gimbal*> _potentialGimbals;
     QmlObjectListModel *_gimbals = nullptr;
     bool _initialConnectComplete = false;
+    bool _gcsSystemIdUnsupportedMessageShown = false;  ///< Rate commands retry continuously; warn only once
 
     static constexpr const char *_gimbalFactGroupNamePrefix = "gimbal";
 };

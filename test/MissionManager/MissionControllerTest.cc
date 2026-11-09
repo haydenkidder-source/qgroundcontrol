@@ -3,6 +3,8 @@
 #include <QtCore/QRegularExpression>
 #include <QtCore/QScopeGuard>
 #include <QtCore/QTemporaryDir>
+#include <QtMath>
+#include <QtTest/QSignalSpy>
 
 #include "AppSettings.h"
 #include "CameraCalc.h"
@@ -28,6 +30,7 @@
 
 using namespace TestFixtures;
 
+MissionControllerTest::MissionControllerTest() = default;
 MissionControllerTest::~MissionControllerTest() = default;
 
 namespace {
@@ -497,6 +500,53 @@ void MissionControllerTest::_testVehicleYawRecalc()
     }
 }
 
+void MissionControllerTest::_testLoiterTurnsDistance()
+{
+    _initForVehicleType(MAV_AUTOPILOT_PX4, MAV_TYPE_FIXED_WING);
+
+    const QGeoCoordinate coordinate = Coord::zurich();
+    _missionController->setHomePosition(coordinate);
+    SimpleMissionItem* loiterItem =
+        qobject_cast<SimpleMissionItem*>(_missionController->insertSimpleMissionItem(coordinate, 1));
+    QVERIFY(loiterItem);
+
+    loiterItem->setCommand(MAV_CMD_NAV_LOITER_TURNS);
+    const double initialDistance =
+        2.0 * M_PI * qAbs(loiterItem->missionItem().param3()) * qAbs(loiterItem->missionItem().param1());
+    QVERIFY(initialDistance > 0.0);
+    QCOMPARE(loiterItem->loiterDistance(), initialDistance);
+    QCOMPARE_TRUE_WAIT(_missionController->missionTotalDistance(), initialDistance, TestTimeout::mediumMs());
+
+    loiterItem->missionItem().setParam3(40.0);
+    loiterItem->missionItem().setParam1(2.5);
+    const double turnsDistance = 2.0 * M_PI * 40.0 * 2.5;
+    QCOMPARE(loiterItem->loiterDistance(), turnsDistance);
+    QCOMPARE_TRUE_WAIT(_missionController->missionTotalDistance(), turnsDistance, TestTimeout::mediumMs());
+
+    loiterItem->missionItem().setParam3(-25.0);
+
+    const double expectedDistance = 2.0 * M_PI * 25.0 * 2.5;
+    QCOMPARE(loiterItem->loiterDistance(), expectedDistance);
+    QCOMPARE_TRUE_WAIT(_missionController->missionTotalDistance(), expectedDistance, TestTimeout::mediumMs());
+    QCOMPARE(_missionController->missionPlannedDistance(), expectedDistance);
+    QCOMPARE(_missionController->missionCruiseDistance(), expectedDistance);
+    QCOMPARE(_missionController->missionTime(),
+             expectedDistance / _masterController->controllerVehicle()->defaultCruiseSpeed());
+
+    loiterItem->missionItem().setParam3(0.0);
+    QCOMPARE(loiterItem->loiterDistance(), 0.0);
+    QCOMPARE_TRUE_WAIT(_missionController->missionTotalDistance(), 0.0, TestTimeout::mediumMs());
+
+    loiterItem->missionItem().setParam3(25.0);
+    QCOMPARE_TRUE_WAIT(_missionController->missionTotalDistance(), expectedDistance, TestTimeout::mediumMs());
+
+    QSignalSpy loiterDistanceSpy(loiterItem, &SimpleMissionItem::loiterDistanceChanged);
+    loiterItem->setCommand(MAV_CMD_NAV_WAYPOINT);
+    QVERIFY(loiterDistanceSpy.count() > 0);
+    QCOMPARE(loiterItem->loiterDistance(), 0.0);
+    QCOMPARE_TRUE_WAIT(_missionController->missionTotalDistance(), 0.0, TestTimeout::mediumMs());
+}
+
 void MissionControllerTest::_testMissionReposition()
 {
     _initForFirmwareType(MAV_AUTOPILOT_PX4);
@@ -540,9 +590,24 @@ void MissionControllerTest::_testMissionReposition()
     QCOMPARE_FUZZY(item2->editableAlt(), oldAlt2, kAltToleranceMeters);
 }
 
+void MissionControllerTest::_testMissionOffset_data()
+{
+    QTest::addColumn<int>("planFrame");
+    QTest::addColumn<bool>("withTakeoff");
+
+    QTest::newRow("relative plan") << int(QGroundControlQmlGlobal::AltitudeFrameRelative) << false;
+    QTest::newRow("mixed plan") << int(QGroundControlQmlGlobal::AltitudeFrameMixed) << false;
+    // Takeoff is always relative, so it differs from the plan frame here
+    QTest::newRow("absolute plan, relative takeoff") << int(QGroundControlQmlGlobal::AltitudeFrameAbsolute) << true;
+}
+
 void MissionControllerTest::_testMissionOffset()
 {
+    QFETCH(int, planFrame);
+    QFETCH(bool, withTakeoff);
+
     _initForFirmwareType(MAV_AUTOPILOT_PX4);
+    _missionController->setGlobalAltitudeFrame(static_cast<QGroundControlQmlGlobal::AltitudeFrame>(planFrame));
 
     MissionSettingsItem* settingsItem = _missionController->visualItems()->value<MissionSettingsItem*>(0);
     QVERIFY(settingsItem);
@@ -550,29 +615,30 @@ void MissionControllerTest::_testMissionOffset()
     const QGeoCoordinate home = Coord::zurich();
     settingsItem->setCoordinate(home);
 
-    const QGeoCoordinate wp1 = home.atDistanceAndAzimuth(150.0, 15.0);
-    const QGeoCoordinate wp2 = home.atDistanceAndAzimuth(320.0, 120.0);
-    _missionController->insertSimpleMissionItem(wp1, 1);
-    _missionController->insertSimpleMissionItem(wp2, 2);
+    if (withTakeoff) {
+        QVERIFY(_missionController->insertTakeoffItem(home, -1));
+    }
+    _missionController->insertSimpleMissionItem(home.atDistanceAndAzimuth(150.0, 15.0), -1);
+    _missionController->insertSimpleMissionItem(home.atDistanceAndAzimuth(320.0, 120.0), -1);
 
-    SimpleMissionItem* item1 = _missionController->visualItems()->value<SimpleMissionItem*>(1);
-    SimpleMissionItem* item2 = _missionController->visualItems()->value<SimpleMissionItem*>(2);
-    QVERIFY(item1);
-    QVERIFY(item2);
+    QList<VisualMissionItem*> items;
+    QList<double> oldAlts;
+    for (int i = 1; i < _missionController->visualItems()->count(); i++) {
+        VisualMissionItem* item = _missionController->visualItems()->value<VisualMissionItem*>(i);
+        QVERIFY(item);
+        items.append(item);
+        oldAlts.append(item->editableAlt());
+    }
+    QCOMPARE(items.count(), withTakeoff ? 3 : 2);
 
     const double oldHomeAlt = settingsItem->editableAlt();
-    const double oldAlt1 = item1->editableAlt();
-    const double oldAlt2 = item2->editableAlt();
 
     _missionController->offsetMission(0.0, 0.0, 12.0, true, true);
-    QVERIFY_TRUE_WAIT(qAbs(settingsItem->editableAlt() - oldHomeAlt) <= kAltToleranceMeters &&
-                          qAbs(item1->editableAlt() - (oldAlt1 + 12.0)) <= kAltToleranceMeters &&
-                          qAbs(item2->editableAlt() - (oldAlt2 + 12.0)) <= kAltToleranceMeters,
-                      TestTimeout::shortMs());
 
     QCOMPARE_FUZZY(settingsItem->editableAlt(), oldHomeAlt, kAltToleranceMeters);
-    QCOMPARE_FUZZY(item1->editableAlt(), oldAlt1 + 12.0, kAltToleranceMeters);
-    QCOMPARE_FUZZY(item2->editableAlt(), oldAlt2 + 12.0, kAltToleranceMeters);
+    for (qsizetype i = 0; i < items.count(); i++) {
+        QCOMPARE_FUZZY(items[i]->editableAlt(), oldAlts[i] + 12.0, kAltToleranceMeters);
+    }
 }
 
 void MissionControllerTest::_testMissionRotate()
@@ -1125,6 +1191,9 @@ void MissionControllerTest::_testUnitsChangeDoesNotDirtyPlan()
     geoFenceController->addInclusionPolygon(home.atDistanceAndAzimuth(800, 315), home.atDistanceAndAzimuth(800, 135));
     RallyPointController* const rallyPointController = _masterController->rallyPointController();
     rallyPointController->addPoint(home.atDistanceAndAzimuth(100, 180));
+    // A PX4 rally point asks for its terrain altitude, whose answer dirties it: settled first, so it can't land after
+    // the reset below.
+    QTRY_VERIFY_WITH_TIMEOUT(!rallyPointController->terrainQueryPending(), TestTimeout::longMs());
     QCoreApplication::processEvents();
 
     _missionController->setDirty(false);
@@ -1168,6 +1237,138 @@ void MissionControllerTest::_testUnitsChangeDoesNotDirtyPlan()
     QVERIFY(!_missionController->dirty());
     QVERIFY(!geoFenceController->dirty());
     QVERIFY(!rallyPointController->dirty());
+}
+
+void MissionControllerTest::_testApplyDefaultMissionAltitudeOfferedOnlyForExistingItems_data()
+{
+    QTest::addColumn<bool>("mixedFrame");
+    QTest::addColumn<bool>("itemBeforeChange");
+    QTest::addColumn<QString>("followUp");
+    QTest::addColumn<bool>("expectedAvailable");
+
+    QTest::newRow("empty plan") << false << false << "none" << false;
+    QTest::newRow("empty plan, item added after change") << false << false << "addItem" << false;
+    QTest::newRow("existing items") << false << true << "none" << true;
+    QTest::newRow("existing items, item added after change") << false << true << "addItem" << true;
+    QTest::newRow("applied") << false << true << "apply" << false;
+    QTest::newRow("last item removed") << false << true << "removeItem" << false;
+    QTest::newRow("plan cleared") << false << true << "removeAll" << false;
+    QTest::newRow("mixed altitude frame") << true << true << "none" << false;
+    QTest::newRow("switched to mixed altitude frame") << false << true << "switchToMixed" << false;
+}
+
+void MissionControllerTest::_testApplyDefaultMissionAltitudeOfferedOnlyForExistingItems()
+{
+    QFETCH(bool, mixedFrame);
+    QFETCH(bool, itemBeforeChange);
+    QFETCH(QString, followUp);
+    QFETCH(bool, expectedAvailable);
+
+    _initForFirmwareType(MAV_AUTOPILOT_PX4);
+    if (mixedFrame) {
+        _missionController->setGlobalAltitudeFrame(QGroundControlQmlGlobal::AltitudeFrameMixed);
+    }
+
+    const QGeoCoordinate coord = Coord::zurich();
+    if (itemBeforeChange) {
+        QVERIFY(_missionController->insertSimpleMissionItem(coord, 1, false));
+    }
+    QVERIFY(!_missionController->applyDefaultMissionAltitudeAvailable());
+
+    Fact* const defaultAltFact = SettingsManager::instance()->appSettings()->defaultMissionItemAltitude();
+    const QVariant savedDefaultAlt = defaultAltFact->rawValue();
+    const auto restoreDefaultAlt =
+        qScopeGuard([defaultAltFact, savedDefaultAlt] { defaultAltFact->setRawValue(savedDefaultAlt); });
+    defaultAltFact->setRawValue(savedDefaultAlt.toDouble() + 10.0);
+
+    if (followUp == QStringLiteral("addItem")) {
+        QVERIFY(_missionController->insertSimpleMissionItem(coord.atDistanceAndAzimuth(100, 0), -1, false));
+    } else if (followUp == QStringLiteral("apply")) {
+        _missionController->applyDefaultMissionAltitude();
+    } else if (followUp == QStringLiteral("removeItem")) {
+        _missionController->removeVisualItem(1);
+    } else if (followUp == QStringLiteral("removeAll")) {
+        _missionController->removeAll();
+    } else if (followUp == QStringLiteral("switchToMixed")) {
+        _missionController->setGlobalAltitudeFrame(QGroundControlQmlGlobal::AltitudeFrameMixed);
+    }
+
+    QCOMPARE(_missionController->applyDefaultMissionAltitudeAvailable(), expectedAvailable);
+}
+
+void MissionControllerTest::_testApplyDefaultMissionAltitudeSkipsItemsInOtherFrames_data()
+{
+    QTest::addColumn<QString>("itemType");
+    QTest::addColumn<int>("planFrame");
+    QTest::addColumn<bool>("itemAbsolute");
+    QTest::addColumn<bool>("expectUpdated");
+
+    const int relative = QGroundControlQmlGlobal::AltitudeFrameRelative;
+    const int absolute = QGroundControlQmlGlobal::AltitudeFrameAbsolute;
+
+    // Takeoff and structure scan altitudes are always relative
+    QTest::newRow("takeoff, relative plan") << "takeoff" << relative << false << true;
+    QTest::newRow("takeoff, absolute plan") << "takeoff" << absolute << false << false;
+    QTest::newRow("structure scan, relative plan") << "structureScan" << relative << false << true;
+    QTest::newRow("structure scan, absolute plan") << "structureScan" << absolute << false << false;
+    QTest::newRow("landing pattern, relative plan") << "landing" << relative << false << true;
+    QTest::newRow("landing pattern absolute, relative plan") << "landing" << relative << true << false;
+    QTest::newRow("survey, relative plan") << "survey" << relative << false << true;
+    QTest::newRow("survey absolute, relative plan") << "survey" << relative << true << false;
+}
+
+void MissionControllerTest::_testApplyDefaultMissionAltitudeSkipsItemsInOtherFrames()
+{
+    QFETCH(QString, itemType);
+    QFETCH(int, planFrame);
+    QFETCH(bool, itemAbsolute);
+    QFETCH(bool, expectUpdated);
+
+    _initForVehicleType(MAV_AUTOPILOT_PX4, MAV_TYPE_FIXED_WING);
+    _missionController->setGlobalAltitudeFrame(static_cast<QGroundControlQmlGlobal::AltitudeFrame>(planFrame));
+
+    const QGeoCoordinate home = Coord::zurich();
+    _missionController->setHomePosition(home);
+    const QGeoCoordinate itemCoord = home.atDistanceAndAzimuth(300, 0);
+
+    Fact* altFact = nullptr;
+    if (itemType == QStringLiteral("takeoff")) {
+        auto* takeoffItem = qobject_cast<TakeoffMissionItem*>(_missionController->insertTakeoffItem(home, 1, false));
+        QVERIFY(takeoffItem);
+        QCOMPARE(takeoffItem->altitudeFrame(), QGroundControlQmlGlobal::AltitudeFrameRelative);
+        altFact = takeoffItem->altitude();
+    } else if (itemType == QStringLiteral("structureScan")) {
+        auto* structureItem = qobject_cast<StructureScanComplexItem*>(_missionController->insertComplexMissionItem(
+            StructureScanComplexItem::canonicalName, itemCoord, -1, false));
+        QVERIFY(structureItem);
+        altFact = structureItem->entranceAlt();
+    } else if (itemType == QStringLiteral("landing")) {
+        auto* landingItem = qobject_cast<LandingComplexItem*>(_missionController->insertLandItem(itemCoord, -1, false));
+        QVERIFY(landingItem);
+        landingItem->setAltitudesAreRelative(!itemAbsolute);
+        altFact = landingItem->finalApproachAltitude();
+    } else if (itemType == QStringLiteral("survey")) {
+        auto* surveyItem = qobject_cast<SurveyComplexItem*>(
+            _missionController->insertComplexMissionItem(SurveyComplexItem::canonicalName, itemCoord, -1, false));
+        QVERIFY(surveyItem);
+        if (itemAbsolute) {
+            surveyItem->cameraCalc()->setDistanceMode(QGroundControlQmlGlobal::AltitudeFrameAbsolute);
+        }
+        altFact = surveyItem->cameraCalc()->distanceToSurface();
+    }
+    QVERIFY(altFact);
+
+    Fact* const defaultAltFact = SettingsManager::instance()->appSettings()->defaultMissionItemAltitude();
+    const QVariant savedDefaultAlt = defaultAltFact->rawValue();
+    const auto restoreDefaultAlt =
+        qScopeGuard([defaultAltFact, savedDefaultAlt] { defaultAltFact->setRawValue(savedDefaultAlt); });
+
+    const double originalAlt = altFact->rawValue().toDouble();
+    const double newDefaultAlt = originalAlt + 37.0;
+    defaultAltFact->setRawValue(newDefaultAlt);
+    _missionController->applyDefaultMissionAltitude();
+
+    QCOMPARE(altFact->rawValue().toDouble(), expectUpdated ? newDefaultAlt : originalAlt);
 }
 
 #include "UnitTest.h"

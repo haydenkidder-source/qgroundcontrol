@@ -59,7 +59,6 @@ ApplicationWindow {
                 nextPromptIdIndex++
             } else {
                 currentDialog = null
-                showPreFlightChecklistIfNeeded()
             }
         }
     }
@@ -99,7 +98,6 @@ ApplicationWindow {
     signal disarmVehicleRequest
     signal vtolTransitionToFwdFlightRequest
     signal vtolTransitionToMRFlightRequest
-    signal showPreFlightChecklistIfNeeded
 
     //-------------------------------------------------------------------------
     //-- Global Scope Functions
@@ -256,13 +254,35 @@ ApplicationWindow {
         return true
     }
 
-    function checkForUnsavedMission() {
+    function _hasUnsavedMission() {
         // Only warn when edits are neither saved to disk nor uploaded to the vehicle.
         // If either happened the edits are recoverable, so closing loses nothing.
         // With no active vehicle an upload can't have happened, so treat the plan as
         // not uploaded regardless of dirtyForUpload.
-        if (planView._planMasterController.dirtyForSave &&
-                (planView._planMasterController.dirtyForUpload || !QGroundControl.multiVehicleManager.activeVehicle)) {
+        return planView._planMasterController.dirtyForSave &&
+                (planView._planMasterController.dirtyForUpload || !QGroundControl.multiVehicleManager.activeVehicle)
+    }
+
+    function _hasPendingParameterWrites() {
+        for (var index=0; index<QGroundControl.multiVehicleManager.vehicles.count; index++) {
+            if (QGroundControl.multiVehicleManager.vehicles.get(index).parameterManager.pendingWrites) {
+                return true
+            }
+        }
+        return false
+    }
+
+    function _hasActiveConnections() {
+        return !!QGroundControl.multiVehicleManager.activeVehicle
+    }
+
+    /// True when closing would show at least one close-check warning
+    function _closeNeedsConfirmation() {
+        return _hasUnsavedMission() || _hasPendingParameterWrites() || _hasActiveConnections()
+    }
+
+    function checkForUnsavedMission() {
+        if (_hasUnsavedMission()) {
             let accepted = false
             _reentrantCloseGuard = true
             _showMessageDialogWorker(mainWindow, qsTr("Unsaved Mission"),
@@ -278,24 +298,22 @@ ApplicationWindow {
     }
 
     function checkForPendingParameterWrites() {
-        for (var index=0; index<QGroundControl.multiVehicleManager.vehicles.count; index++) {
-            if (QGroundControl.multiVehicleManager.vehicles.get(index).parameterManager.pendingWrites) {
-                let accepted = false
-                _reentrantCloseGuard = true
-                _showMessageDialogWorker(mainWindow, qsTr("Pending Parameter Updates"),
-                    qsTr("You have pending parameter updates to a vehicle. If you close you will lose changes. Are you sure you want to close?"),
-                    Dialog.Yes | Dialog.No,
-                    function() { accepted = true; _closeChecksToSkip |= _skipPendingParameterWritesCheckMask; performCloseChecks() },
-                    function() { if (!accepted) _reentrantCloseGuard = false },
-                    true /* bypassNavigationCheck */)
-                return false
-            }
+        if (_hasPendingParameterWrites()) {
+            let accepted = false
+            _reentrantCloseGuard = true
+            _showMessageDialogWorker(mainWindow, qsTr("Pending Parameter Updates"),
+                qsTr("You have pending parameter updates to a vehicle. If you close you will lose changes. Are you sure you want to close?"),
+                Dialog.Yes | Dialog.No,
+                function() { accepted = true; _closeChecksToSkip |= _skipPendingParameterWritesCheckMask; performCloseChecks() },
+                function() { if (!accepted) _reentrantCloseGuard = false },
+                true /* bypassNavigationCheck */)
+            return false
         }
         return true
     }
 
     function checkForActiveConnections() {
-        if (QGroundControl.multiVehicleManager.activeVehicle) {
+        if (_hasActiveConnections()) {
             let accepted = false
             _reentrantCloseGuard = true
             _showMessageDialogWorker(mainWindow, qsTr("Active Vehicle Connections"),
@@ -319,6 +337,15 @@ ApplicationWindow {
             _closeChecksToSkip = 0
             close.accepted = performCloseChecks()
         }
+    }
+
+    // Since Qt 6.12 an unhandled Android back press backgrounds the app without a close event.
+    // Route back through the close checks while they would warn; open popups still take back first.
+    Shortcut {
+        objectName:     "androidBackShortcut"
+        sequences:      [ "Back" ]
+        enabled:        Qt.platform.os === "android" && mainWindow._closeNeedsConfirmation()
+        onActivated:    mainWindow.close()
     }
 
     background: Rectangle {
@@ -571,7 +598,7 @@ ApplicationWindow {
             close()
             if (additionalCriticalMessagesReceived) {
                 additionalCriticalMessagesReceived = false
-                flyView.dropMainStatusIndicatorTool()
+                flyView.dropMainStatusIndicatorTool(true /* showMessages */)
             }
         }
 
@@ -709,6 +736,7 @@ ApplicationWindow {
                 id:             backgroundRect
                 anchors.fill:   parent
                 color:          QGroundControl.globalPalette.window
+                border.color:   QGroundControl.globalPalette.borderSubtle
                 radius:         indicatorDrawer._margins
                 opacity:        0.85
             }
@@ -720,14 +748,14 @@ ApplicationWindow {
                 width:                      ScreenTools.largeFontPixelHeight
                 height:                     width
                 radius:                     width / 2
-                color:                      QGroundControl.globalPalette.button
-                border.color:               QGroundControl.globalPalette.buttonText
+                color:                      QGroundControl.globalPalette.windowCard
+                border.color:               QGroundControl.globalPalette.textPrimary
                 visible:                    indicatorDrawerLoader.item && indicatorDrawerLoader.item._showExpand && !indicatorDrawer._expanded
 
                 QGCLabel {
                     anchors.centerIn:   parent
                     text:               ">"
-                    color:              QGroundControl.globalPalette.buttonText
+                    color:              QGroundControl.globalPalette.textPrimary
                 }
 
                 QGCMouseArea {

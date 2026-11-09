@@ -147,13 +147,6 @@ Item {
         z:                      QGroundControl.zOrderWidgets
         maxHeight:              pipViewRect.y - y - _toolsMargin
         visible:                !QGroundControl.videoManager.fullScreen
-
-        onDisplayPreFlightChecklist: {
-            if (!preFlightChecklistLoader.active) {
-                preFlightChecklistLoader.active = true
-            }
-            preFlightChecklistLoader.item.open()
-        }
     }
 
     VehicleWarnings {
@@ -172,7 +165,7 @@ Item {
         property bool coversMap: geoMapControls.visible || (mapScale.visible && mapScale.opacity > 0)
 
         // Google Earth-style camera controls, GeoMap engine only
-        FlyViewGeoMapControls {
+        GeoMapControls {
             id:      geoMapControls
             geoMap:  mapControl && mapControl.geoMap ? mapControl.geoMap : null
             visible: !!geoMap && !ScreenTools.isTinyScreen && QGCViewer3DManager.displayMode !== QGCViewer3DManager.View3D && mapControl.pipState.state === mapControl.pipState.fullState
@@ -198,17 +191,5 @@ Item {
         controller:         _root.viewer3DCameraController
         autoHide:           true
         visible:            !ScreenTools.isTinyScreen && QGroundControl.corePlugin.options.flyView.showMapScale && QGCViewer3DManager.displayMode === QGCViewer3DManager.View3D && !!_root.viewer3DCameraController
-    }
-
-    Loader {
-        id: preFlightChecklistLoader
-        sourceComponent: preFlightChecklistPopup
-        active: false
-    }
-
-    Component {
-        id: preFlightChecklistPopup
-        FlyViewPreFlightChecklistPopup {
-        }
     }
 }

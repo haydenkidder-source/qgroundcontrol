@@ -1,82 +1,108 @@
-# Linux GStreamer SDK discovery — invoked by Orchestrator.cmake.
+# Linux GStreamer: SDK discovery, invoked by Orchestrator.cmake, and the installer qgc_gst_install_platform_sdk
+# (Install.cmake) runs.
 
 include_guard(GLOBAL)
 
-include(CMakePushCheckState)
-
-macro(_qgc_discover_linux_sdk)
-    if(NOT DEFINED GStreamer_ROOT_DIR)
-        if(CMAKE_SYSROOT)
-            set(GStreamer_ROOT_DIR "${CMAKE_SYSROOT}/usr")
-        else()
-            set(GStreamer_ROOT_DIR "/usr")
+# _qgc_gst_linux_pkg_variable(<out_var> <module> <variable>)
+# Sets <out_var> to the pkg-config <variable> of <module>, prefixed with CMAKE_SYSROOT in a cross build: pkg-config
+# prefixes the sysroot to flags only.
+function(_qgc_gst_linux_pkg_variable out_var module variable)
+    pkg_get_variable(_value ${module} ${variable})
+    if(_value AND CMAKE_SYSROOT)
+        cmake_path(IS_PREFIX CMAKE_SYSROOT "${_value}" NORMALIZE _in_sysroot)
+        if(NOT _in_sysroot)
+            set(_value "${CMAKE_SYSROOT}${_value}")
         endif()
     endif()
-
-    # Candidate multiarch triplets: explicit CMAKE_LIBRARY_ARCHITECTURE first, then
-    # any lib/<triplet> that actually contains gstreamer-1.0 (handles musl,
-    # arm-linux-gnueabihf, and non-Debian layouts where the triplet is unset).
-    set(_gst_linux_triplet_candidates)
-    if(CMAKE_LIBRARY_ARCHITECTURE)
-        list(APPEND _gst_linux_triplet_candidates "${CMAKE_LIBRARY_ARCHITECTURE}")
-    endif()
-    list(APPEND _gst_linux_triplet_candidates "${CMAKE_SYSTEM_PROCESSOR}-linux-gnu")
-    # musl sysroots use a -linux-musl triplet and often leave CMAKE_LIBRARY_ARCHITECTURE unset.
-    list(APPEND _gst_linux_triplet_candidates "${CMAKE_SYSTEM_PROCESSOR}-linux-musl")
-    file(GLOB _gst_linux_multiarch_dirs LIST_DIRECTORIES true "${GStreamer_ROOT_DIR}/lib/*-linux-*")
-    foreach(_d IN LISTS _gst_linux_multiarch_dirs)
-        cmake_path(GET _d FILENAME _d_name)
-        list(APPEND _gst_linux_triplet_candidates "${_d_name}")
-    endforeach()
-    list(REMOVE_DUPLICATES _gst_linux_triplet_candidates)
-
-    set(_gst_linux_lib "")
-    foreach(_triplet IN LISTS _gst_linux_triplet_candidates)
-        if(EXISTS "${GStreamer_ROOT_DIR}/lib/${_triplet}/gstreamer-1.0")
-            set(_gst_linux_lib "${GStreamer_ROOT_DIR}/lib/${_triplet}")
-            break()
-        endif()
-    endforeach()
-    if(NOT _gst_linux_lib)
-        if(EXISTS "${GStreamer_ROOT_DIR}/lib64/gstreamer-1.0")
-            set(_gst_linux_lib "${GStreamer_ROOT_DIR}/lib64")
-        elseif(EXISTS "${GStreamer_ROOT_DIR}/lib/gstreamer-1.0")
-            set(_gst_linux_lib "${GStreamer_ROOT_DIR}/lib")
-        else()
-            message(FATAL_ERROR "Could not locate GStreamer libraries - check installation or set environment/cmake variables")
-        endif()
-    endif()
-
-    gstreamer_create_layout_target(
-        SDK_ROOT "${GStreamer_ROOT_DIR}"
-        TYPE     FLAT
-        LIB_PATH "${_gst_linux_lib}"
+    set(${out_var}
+        "${_value}"
+        PARENT_SCOPE
     )
+endfunction()
 
-    # Prepend SDK pkgconfig dir so system glib/gobject .pc files remain discoverable.
-    gstreamer_apply_pkgconfig_env(
-        MODE SYSTEM_AUGMENT
-        LIBDIR "${GSTREAMER_LIB_PATH}/pkgconfig"
-    )
-endmacro()
-
-# Zero-copy DMABuf GPU path probe. Sets QGC_GST_HAS_DMABUF; consumed by
-# HwBuffers/CMakeLists.txt to compile GstDmaBufVideoBuffer when present.
-# Requires gst-allocators (pulled in via the Allocators QGCGStreamer component
-# requested by the Linux-only branch in src/.../GStreamer/CMakeLists.txt).
-# NOTE: QGC_GST_HAS_DMABUF is a cached try-compile result; if the GStreamer
-# include dirs change, clear the cache var to force a re-probe.
-macro(_qgc_detect_dmabuf)
-    include(CheckCXXSourceCompiles)
-    if(TARGET GStreamer::GStreamer)
-        cmake_push_check_state(RESET)
-        set(CMAKE_REQUIRED_LIBRARIES GStreamer::GStreamer)
-        check_cxx_source_compiles("
-            #include <gst/allocators/gstdmabuf.h>
-            int main() { (void)gst_is_dmabuf_memory; return 0; }
-        " QGC_GST_HAS_DMABUF)
-        cmake_pop_check_state()
-    else()
-        message(STATUS "GStreamer: DMABuf probe skipped — GStreamer::GStreamer target not defined")
+# _qgc_gst_discover_linux_sdk()
+# Uses the GStreamer pkg-config finds: the system's, or one under GStreamer_ROOT_DIR, whose pkgconfig directories go
+# ahead of the system's. Its layout comes from gstreamer-1.0.pc (prefix, libdir, includedir, pluginsdir and
+# pluginscannerdir) and gio-2.0.pc (giomoduledir).
+# cmake-lint: disable=C0103
+function(_qgc_gst_discover_linux_sdk)
+    find_package(PkgConfig REQUIRED QUIET)
+    if(GStreamer_ROOT_DIR)
+        file(GLOB _pc_files "${GStreamer_ROOT_DIR}/lib*/pkgconfig/gstreamer-1.0.pc"
+             "${GStreamer_ROOT_DIR}/lib/*/pkgconfig/gstreamer-1.0.pc"
+        )
+        if(NOT _pc_files)
+            message(
+                FATAL_ERROR
+                    "GStreamer: no gstreamer-1.0.pc in ${GStreamer_ROOT_DIR}/lib*/pkgconfig or "
+                    "${GStreamer_ROOT_DIR}/lib/<multiarch>/pkgconfig; point GStreamer_ROOT_DIR at the "
+                    "prefix GStreamer is installed in."
+            )
+        endif()
+        list(TRANSFORM _pc_files REPLACE "/gstreamer-1\\.0\\.pc$" "")
+        qgc_gst_apply_pkgconfig_env(MODE SYSTEM_AUGMENT LIBDIR ${_pc_files})
     endif()
-endmacro()
+
+    # <layout key>|<module>|<variable>|REQUIRED or OPTIONAL; an OPTIONAL one left empty takes the SDK-layout default.
+    set(_layout "")
+    foreach(
+        _entry IN
+        ITEMS
+            "SDK_ROOT|gstreamer-1.0|prefix|REQUIRED"
+            "LIB_PATH|gstreamer-1.0|libdir|REQUIRED"
+            "INCLUDE_PATH|gstreamer-1.0|includedir|REQUIRED"
+            "PLUGIN_PATH|gstreamer-1.0|pluginsdir|REQUIRED"
+            "PLUGIN_SCANNER_PATH|gstreamer-1.0|pluginscannerdir|OPTIONAL"
+            "GIO_MODULE_PATH|gio-2.0|giomoduledir|OPTIONAL"
+    )
+        string(REPLACE "|" ";" _entry "${_entry}")
+        list(GET _entry 0 _key)
+        list(GET _entry 1 _module)
+        list(GET _entry 2 _variable)
+        list(GET _entry 3 _need)
+        _qgc_gst_linux_pkg_variable(_value ${_module} ${_variable})
+        if(_value)
+            list(APPEND _layout ${_key} "${_value}")
+        elseif(_need STREQUAL "REQUIRED")
+            message(
+                FATAL_ERROR
+                    "GStreamer: pkg-config found no ${_module} (its '${_variable}' variable is empty). Install the "
+                    "GStreamer development packages (python3 -m tools.setup.install_dependencies) or set "
+                    "GStreamer_ROOT_DIR."
+            )
+        endif()
+    endforeach()
+    qgc_gst_resolve_layout(${_layout})
+    _qgc_gst_return_discovery()
+endfunction()
+
+# Linux: plugins, the GIO modules for TLS and proxies, the gst-plugin-scanner/gst-ptp-helper binaries and the notice.
+# The libraries come from the AppImage's dependency deployment (cmake/install/CreateAppImage.cmake).
+function(qgc_gst_install_linux_sdk app_name plugin_dest_out)
+    qgc_gst_layout_get(PLUGIN_PATH _gst_plugin_path)
+    qgc_gst_layout_get(PLUGIN_SCANNER_PATH _gst_scanner_path)
+    qgc_gst_layout_get(GIO_MODULE_PATH _gst_gio_module_path)
+    set(_plugin_dest "lib/gstreamer-1.0")
+    qgc_gst_install_plugins("${_gst_plugin_path}" "${_plugin_dest}" "libgst" "so")
+    # glib-networking's GnuTLS backend and libproxy proxy resolver, and dconf's GSettings backend, through which
+    # libproxy reads GNOME's proxy settings (it reads KDE's itself). glib-networking's GNOME resolver stays out: GIO
+    # instantiates every resolver before asking which applies, and it aborts the process where org.gnome.system.proxy's
+    # schema isn't installed. The VFS modules (gvfsdbus, remote volume monitor) stay out: the bundle runs GIO with
+    # GIO_USE_VFS=local (AppRun, and GStreamerEnvironment.cc on GLib 2.76+) or alongside the system's modules.
+    qgc_gst_install_gio_modules("${_gst_gio_module_path}" "lib/gio/modules" "so" giognutls giolibproxy dconfsettings)
+    # gstreamer-1.0.pc's pluginscannerdir (Debian lib/<multiarch>/gstreamer1.0/gstreamer-1.0, Fedora
+    # libexec/gstreamer-1.0, Arch lib/gstreamer-1.0).
+    foreach(_helper IN ITEMS gst-plugin-scanner gst-ptp-helper)
+        set(_path "${_gst_scanner_path}/${_helper}")
+        if(EXISTS "${_path}")
+            install(PROGRAMS "${_path}" DESTINATION "lib/gstreamer1.0/gstreamer-1.0")
+        elseif(_helper STREQUAL "gst-plugin-scanner")
+            message(WARNING "gst-plugin-scanner not found in ${_gst_scanner_path}; AppImage video may not " "work")
+        endif()
+    endforeach()
+    _qgc_gst_install_notice(share/licenses/gstreamer)
+    set(${plugin_dest_out}
+        "${_plugin_dest}"
+        PARENT_SCOPE
+    )
+endfunction()

@@ -333,7 +333,7 @@ Rectangle {
                             Rectangle {
                                 Layout.preferredWidth: legend.swatchWidth
                                 Layout.preferredHeight: 4
-                                color: QGroundControl.globalPalette.text
+                                color: QGroundControl.globalPalette.textPrimary
                             }
                             QGCLabel { text: qsTr("Route (S start, E end)"); font.pointSize: ScreenTools.smallFontPointSize }
                         }
@@ -353,7 +353,7 @@ Rectangle {
                                            : "transparent"
                                     COPDashedLine {
                                         anchors.fill: parent
-                                        color: QGroundControl.globalPalette.text
+                                        color: QGroundControl.globalPalette.textPrimary
                                         dashPattern: modelData.dash
                                         points: [Qt.point(0, height / 2), Qt.point(width, height / 2)]
                                     }
@@ -371,7 +371,7 @@ Rectangle {
                                     width: parent.height * 0.72
                                     height: width
                                     rotation: 45
-                                    color: QGroundControl.globalPalette.text
+                                    color: QGroundControl.globalPalette.textPrimary
                                 }
                             }
                             QGCLabel { text: qsTr("Rally point"); font.pointSize: ScreenTools.smallFontPointSize }

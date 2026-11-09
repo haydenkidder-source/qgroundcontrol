@@ -1,5 +1,8 @@
 #include "COPController.h"
 
+#include <cmath>
+#include <limits>
+
 #include <QtCore/QSettings>
 #include <QtCore/QTimer>
 
@@ -18,6 +21,39 @@
 #include "VideoManager.h"
 
 namespace {
+// QSettings may restore old integer variants or decimal strings from an INI file.
+quint32 savedSystemId(const QVariant& value)
+{
+    if (value.metaType().id() == QMetaType::QString) {
+        const QString text = value.toString().trimmed();
+        for (const QChar character : text) {
+            if (character < QLatin1Char('0') || character > QLatin1Char('9')) {
+                return 0;
+            }
+        }
+        bool ok = false;
+        const qulonglong id = text.toULongLong(&ok, 10);
+        return ok && id >= 1 && id <= std::numeric_limits<quint32>::max() ? static_cast<quint32>(id) : 0;
+    }
+    switch (value.metaType().id()) {
+        case QMetaType::Int:
+        case QMetaType::UInt:
+        case QMetaType::LongLong:
+        case QMetaType::ULongLong:
+        case QMetaType::Double:
+        case QMetaType::Float:
+            break;
+        default:
+            return 0;
+    }
+    bool ok = false;
+    const double id = value.toDouble(&ok);
+    if (!ok || !std::isfinite(id) || id < 1 || id > std::numeric_limits<quint32>::max() || std::floor(id) != id) {
+        return 0;
+    }
+    return static_cast<quint32>(id);
+}
+
 // Fixed, distinct hues so vehicles stay visually distinguishable on the COP map and in overlays;
 // cycles if there are ever more vehicles than colors. Order matters only in that it's stable -
 // operators learn "vehicle 1 is blue" over time, so don't reorder once vehicles have been assigned.
@@ -54,7 +90,7 @@ bool isRoutePoint(const MissionItem* item)
 }
 }  // namespace
 
-COPVehicle::COPVehicle(int sysid, VehicleRoleController* roles, QObject* parent)
+COPVehicle::COPVehicle(quint32 sysid, VehicleRoleController* roles, QObject* parent)
     : QObject(parent)
     , _sysid(sysid)
     , _roles(roles)
@@ -77,7 +113,7 @@ QString COPVehicle::label() const
     const QString role = _roles ? _roles->roleForSysid(_sysid) : QString();
     const QString name = _roles ? _roles->nameForSysid(_sysid) : QString();
     const QString base = role.isEmpty() ? tr("Vehicle %1").arg(_sysid) : role;
-    return name.isEmpty() ? base : tr("%1 · %2").arg(base, name);
+    return name.isEmpty() ? base : tr("%1 - %2").arg(base, name);
 }
 
 bool COPVehicle::connected() const
@@ -140,8 +176,8 @@ void COPVehicle::_refreshPlanData()
                                              {QStringLiteral("inclusion"), circle.inclusion()}});
         }
 
-        for (const QGeoCoordinate& coordinate : _vehicle->rallyPointManager()->points()) {
-            _rallyPoints.append(QVariant::fromValue(coordinate));
+        for (const RallyPointData& point : _vehicle->rallyPointManager()->points()) {
+            _rallyPoints.append(QVariant::fromValue(point.coordinate));
         }
     }
 
@@ -201,7 +237,7 @@ COPController::COPController(QObject* parent)
     : QObject(parent)
 {}
 
-COPVehicle* COPController::_find(int sysid) const
+COPVehicle* COPController::_find(quint32 sysid) const
 {
     for (int i = 0; i < _vehicles.count(); ++i) {
         auto* entry = _vehicles.value<COPVehicle*>(i);
@@ -217,9 +253,9 @@ COPVehicle* COPController::selected() const
     return _find(_selectedSysid);
 }
 
-COPVehicle* COPController::_remember(int sysid)
+COPVehicle* COPController::_remember(quint32 sysid)
 {
-    if (sysid < 1 || sysid > 255) {
+    if (sysid == 0) {
         return nullptr;
     }
     if (auto* entry = _find(sysid)) {
@@ -246,7 +282,7 @@ void COPController::initialize(VehicleRoleController* roles)
     connect(QGCCorePlugin::instance(), &QGCCorePlugin::operatorNotification, this, &COPController::notify);
     const auto ids = QSettings().value(QStringLiteral("COP/VehicleOrder")).toList();
     for (const auto& id : ids) {
-        _remember(id.toInt());
+        _remember(savedSystemId(id));
     }
     _syncRoles();
     connect(roles->roleEntries(), &QAbstractItemModel::rowsInserted, this, &COPController::_syncRoles);
@@ -305,7 +341,7 @@ void COPController::_vehicleAdded(Vehicle* vehicle)
     }
     entry->setVehicle(vehicle);
     connect(vehicle, &Vehicle::textMessageReceived, this,
-            [this, entry](int, int, int severity, const QString& text, const QString&) {
+            [this, entry](quint32, int, int severity, const QString& text, const QString&) {
                 // Emergency/Alert require immediate action; subsystem health remains in Vehicle's message display.
                 if (severity >= MAV_SEVERITY_EMERGENCY && severity <= MAV_SEVERITY_ALERT) {
                     notify(tr("%1 needs attention now: \u201c%2\u201d. Look at the vehicle before sending any command.")
@@ -379,7 +415,7 @@ void COPController::_vehicleRemoved(Vehicle* vehicle)
     emit selectionChanged();
 }
 
-void COPController::selectVehicle(int sysid)
+void COPController::selectVehicle(quint32 sysid)
 {
     if (sysid != 0 && !_find(sysid)) {
         return;

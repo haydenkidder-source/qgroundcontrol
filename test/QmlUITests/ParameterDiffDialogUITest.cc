@@ -48,6 +48,13 @@ static const char* kQGCParamsTwoDiffs =
     "1\t1\tSYS_AUTOSTART\t4002\t6\n"
     "1\t1\tCOM_DL_LOSS_T\t20\t6\n";
 
+// QGC file with a fractional value for an int32 parameter (cannot be sent)
+static const char* kQGCParamsInvalidValue =
+    "# Onboard parameters for Vehicle 1\n"
+    "#\n"
+    "# Vehicle-Id Component-Id Name Value Type\n"
+    "1\t1\tSYS_AUTOSTART\t4002.5\t9\n";
+
 // Arm the file dialog test hook with filePath and drive Tools → "Load from
 // file for review..." so ParameterEditor builds the diff and opens the dialog.
 void ParameterDiffDialogUITest::_openDiffDialogForFile(const QString& filePath)
@@ -114,6 +121,41 @@ void ParameterDiffDialogUITest::_testDiffDialogCases()
                     return;
 
                 QVERIFY2(rejectDialog(), "Failed to close all-match dialog");
+            }
+
+            // -------------------------------------------------------------------------
+            // Case: invalid file value — shown as a disabled row, never sent
+            // -------------------------------------------------------------------------
+            {
+                TestFixtures::TempFileFixture tempFile(QStringLiteral("test_XXXXXX.params"));
+                QVERIFY(tempFile.isValid());
+                QVERIFY(tempFile.write(QByteArray(kQGCParamsInvalidValue)));
+
+                expectLogMessage("QMLControls.ParameterEditorController", QtWarningMsg,
+                                 QRegularExpression(QStringLiteral("invalid file value.*SYS_AUTOSTART")));
+                _openDiffDialogForFile(tempFile.path());
+                verifyExpectedLogMessage();
+                if (QTest::currentTestFailed()) {
+                    return;
+                }
+
+                if (!_labelTextContains(QStringLiteral("diffSummaryLabel"),
+                                        QStringLiteral("1 has an invalid value and will not be sent"))) {
+                    return;
+                }
+                verifyVisibility(QStringLiteral("diffGrid"), true, QStringLiteral("invalid-value case"));
+                verifyVisibility(QStringLiteral("diffInvalidHintLabel"), true, QStringLiteral("invalid-value case"));
+                verifyVisibility(QStringLiteral("diffCannotSendHintLabel"), false,
+                                 QStringLiteral("invalid-value case"));
+                verifyEnabled(QStringLiteral("diffRowCheckbox_SYS_AUTOSTART"), false,
+                              QStringLiteral("invalid-value case"));
+                // No sendable rows means no Ok button
+                verifyVisibility(QStringLiteral("diffOkHintLabel"), false, QStringLiteral("invalid-value case"));
+                if (QTest::currentTestFailed()) {
+                    return;
+                }
+
+                QVERIFY2(rejectDialog(), "Failed to close invalid-value dialog");
             }
 
             // -------------------------------------------------------------------------
@@ -184,23 +226,27 @@ void ParameterDiffDialogUITest::_testDiffDialogCases()
                 if (QTest::currentTestFailed())
                     return;
 
-                // Dismiss the app message dialog(s) so the next case can use the menus.
+                // Dismiss the app message dialog(s) so the next case can use the menus. The write failure already
+                // queued the first one; any others would show as soon as it closes.
                 // Bounded so a runaway popup loop fails loudly instead of hitting the ctest timeout.
                 int dismissAttempts = 0;
-                while (findVisibleItem(_rootItem, QStringLiteral("popupDialog_acceptButton"), 1000)) {
+                int popupTimeoutMs = TestTimeout::shortMs();
+                while (findVisibleItem(_rootItem, QStringLiteral("popupDialog_acceptButton"), popupTimeoutMs)) {
                     QVERIFY2(++dismissAttempts <= 5, "App message dialogs keep re-appearing - runaway popup loop");
                     QVERIFY2(clickButton(QStringLiteral("popupDialog_acceptButton")),
                              "Failed to dismiss app message dialog");
+                    popupTimeoutMs = 0;
                 }
 
-                // The dismiss loop above idled for at least a second after the last
-                // dialog - long enough for a (buggy) post-failure refresh to have
-                // produced its "Parameter read failed" popup. Verify it never appeared.
-                const auto msgs = LogManager::capturedMessages();
-                const bool readFailed = std::any_of(msgs.cbegin(), msgs.cend(), [](const LogEntry& entry) {
-                    return entry.message.contains(QStringLiteral("Parameter read failed: param: NO_SUCH_PARAM"));
-                });
-                QVERIFY2(!readFailed,
+                // A (buggy) post-failure refresh would report "Parameter read failed" after its retries, a few
+                // 50 ms test-mode ack timeouts. Verify it never appears.
+                const auto readFailedCaptured = []() {
+                    const auto msgs = LogManager::capturedMessages();
+                    return std::any_of(msgs.cbegin(), msgs.cend(), [](const LogEntry& entry) {
+                        return entry.message.contains(QStringLiteral("Parameter read failed: param: NO_SUCH_PARAM"));
+                    });
+                };
+                QVERIFY2(!QTest::qWaitFor(readFailedCaptured, 250),
                          "Unexpected redundant 'Parameter read failed' after DOES_NOT_EXIST write rejection");
             }
 

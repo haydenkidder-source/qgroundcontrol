@@ -5,7 +5,7 @@ The GeoMap engine is an experimental technology preview and is under active deve
 It is too early to report issues against this feature — there is still too much work left to do.
 :::
 
-The GeoMap engine is a new map engine for QGroundControl that renders a single, seamless 2D/3D map: satellite/street imagery draped over real terrain elevation, with Google Earth-style camera controls. When enabled it replaces the map in the [Fly View](fly_view.md), displaying your vehicles, the planned mission (with waypoint markers, connecting path, and drop lines showing each waypoint's height above the terrain), the flown flight path, the launch location, and the ground station position — all in true 3D.
+The GeoMap engine is a new map engine for QGroundControl that renders a single, seamless 2D/3D map: satellite/street imagery draped over real terrain elevation, with Google Earth-style camera controls. When enabled it replaces the map in the [Fly View](fly_view.md), displaying your vehicles, the planned mission (with waypoint markers, connecting path drawn in red where a leg passes below the terrain, and drop lines showing each waypoint's height above the terrain), the flown flight path, the launch location, and the ground station position — all in true 3D.
 
 :::info
 Map interaction (click-to-goto, orbit, ROI, and other map click actions, including dragging the orbit and loiter circles) works in both 2D and 3D modes. All other Fly View controls (arm, takeoff, guided actions, instruments, and so on) work as usual.
@@ -16,6 +16,12 @@ The long-term goal is for the GeoMap engine to eventually replace all map usage 
 ## Enabling the GeoMap Engine
 
 The GeoMap engine is disabled by default. To enable it, go to **Application Settings > Fly View** and turn on **Use GeoMap engine (preview)**, then restart QGroundControl. After the restart the Fly View map is rendered by the GeoMap engine.
+
+### Plan View
+
+The [Plan View](../plan_view/plan_view.md) map can use the GeoMap engine too. Go to **Application Settings > Plan View**, turn on **Use GeoMap engine (preview)** under **Experimental**, then restart QGroundControl. The setting is only available with the tabbed Plan panel.
+
+In this preview the Plan View displays the plan on the GeoMap: mission items and path, the planned home position, and the geofence and rally points. Clicking the map sets the home position and inserts waypoints, ROIs and rally points as usual, and clicking a mission item marker selects that item. Drag the marker of the selected waypoint to move it. Dragging other items, editing fence polygons and circles, and editing patterns directly on the map are not supported yet, use the Plan panel instead.
 
 ## View Controls
 

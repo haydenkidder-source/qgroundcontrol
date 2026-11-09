@@ -12,11 +12,12 @@ The generator reads two types of inputs:
 It also reads `src/Settings/*.SettingsGroup.json` to look up fact type metadata
 (bool, enum, etc.) so it can auto-detect the right control type.
 
-## Quick start
+CMake runs the generator at configure time and writes the pages to the build
+tree. To inspect the output, run it from the repository root:
 
 ```bash
 python3 -m tools.generators.settings_qml.generate_pages \
-    --output-dir src/AppSettings
+    --output-dir build/generated-settings-qml
 ```
 
 ---
@@ -88,8 +89,8 @@ A custom build (`QGC_CUSTOM_DIR`) can pass `--custom-pages-dir <dir>` and
   stem plus `Settings`, e.g. `Custom.SettingsGroup.json` → `customSettings`).
   A custom stem that maps to a stock `SettingsManager` accessor is rejected.
 
-`--list-outputs` prints the QML file names that would be generated (used by
-CMake to compute the output list when an overlay is active).
+`--list-outputs` prints the QML file names that would be generated; CMake uses
+it to compute the output list.
 
 See the `custom-example` build for a working reference.
 
@@ -106,6 +107,7 @@ Defines the layout of a single settings page.
 | `fileType` | `"SettingsUI"` | yes | Must be `"SettingsUI"` |
 | `version` | `1` | yes | Schema version |
 | `bindings` | object | no | Named QML property bindings (e.g. accessor aliases) |
+| `imports` | array of strings | no | Extra QML modules to import (e.g. `QGroundControl.GPS`) |
 | `groups` | array of [Group](#group) | yes | Setting groups displayed on the page |
 
 `bindings` is the standard way to alias a long settings accessor:
@@ -133,6 +135,7 @@ A collapsible group with an optional heading.
 | `sectionName` | string | no | Tree-nav display name; falls back to `heading` |
 | `keywords` | array of strings | no | Extra search terms |
 | `component` | string | no | Name of a hand-written QML component to embed instead of generating controls |
+| `properties` | object | no | QML property bindings set on the `component` (same value rules as control `properties`) |
 | `missing` | array of strings | no | Descriptions of complex UI not yet generated (documentation only) |
 | `controls` | array of [Control](#control) | yes* | Controls in this group |
 
@@ -144,15 +147,17 @@ A collapsible group with an optional heading.
 
 | Key | Type | Required | Description |
 | --- | --- | --- | --- |
-| `setting` | string | yes | Dotted path to the fact, e.g. `"appSettings.qLocaleLanguage"` |
+| `setting` | string | yes, except `component`/`info` | Dotted path to the fact, e.g. `"appSettings.qLocaleLanguage"` |
 | `label` | string | no | Override label; empty → uses `fact.label` |
 | `control` | string | no | Explicit control type (see [Control types](#control-types)); auto-detected if omitted |
 | `showWhen` | string | no | Extra QML visibility expression (combined with `fact.userVisible` via logical AND) |
 | `enableWhen` | string | no | QML expression bound to `enabled` |
 | `placeholder` | string | no | Placeholder text for text fields |
-| `properties` | object | no | Extra QML property bindings for `browse`/`scaler` controls (see below) |
+| `value` | string | no | QML expression shown by an `info` control |
+| `component` | string | no | Hand-written QML component a `component` control embeds; it needs no `setting` |
+| `properties` | object | no | Extra QML property bindings for `browse`/`scaler`/`component` controls (see below) |
 | `enableCheckbox` | object | no | Enable-checkbox for sliders (see below) |
-| `button` | object | no | Adjacent button (see below) |
+| `button` | object | no | Adjacent button for `slider` or `info` controls (see below) |
 
 The `setting` value must be `"<settingsGroupAccessor>.<factName>"`, where the
 accessor matches the C++ `SettingsManager` property
@@ -169,7 +174,7 @@ When `control` is omitted, the generator reads the fact's type from
 | --- | --- |
 | `bool` | `checkbox` |
 | Has `enumStrings` | `combobox` |
-| Numeric | `textfield` |
+| Anything else | `textfield` |
 
 Explicit `control` values:
 
@@ -179,8 +184,10 @@ Explicit `control` values:
 | `textfield` | `LabelledFactTextField` |
 | `checkbox` | `FactCheckBoxSlider` |
 | `slider` | Slider with optional enable-checkbox and adjacent button |
-| `browse` | File/path browser (desktop only; pair with `showWhen: "!ScreenTools.isMobile"`) |
-| `scaler` | Percentage scaler (for `uiScalePercent`) |
+| `browse` | `LabelledFactBrowse` file/path browser (desktop only; pair with `showWhen: "!ScreenTools.isMobile"`) |
+| `scaler` | `LabelledFactIncrementer` percentage scaler (for `uiScalePercent`) |
+| `component` | The hand-written QML component named by `component`, inside the group |
+| `info` | Read-only `LabelledLabel` showing `label` and `value`; an optional `button` adds an action |
 
 #### `slider` extra keys
 
@@ -189,7 +196,7 @@ Explicit `control` values:
 | `enableCheckbox` | object | `{ "checked": "expr", "onClicked": "body" }` |
 | `button` | object | `{ "text": "label", "onClicked": "body", "enabled": "expr" }` |
 
-#### `browse` / `scaler` extra keys
+#### `browse` / `scaler` / `component` extra keys
 
 `properties` maps QML property names to values emitted into the control.
 Booleans and numbers map to their QML literals; strings are emitted verbatim
@@ -219,7 +226,7 @@ text/traversal matching:
 | Item | objectName |
 | --- | --- |
 | Page root | `settingsPage_<PageName>` (characters outside `[A-Za-z0-9_]` stripped, e.g. `settingsPage_RemoteID`) |
-| Group (`SettingsGroupLayout`, headed groups only) | `settingsGroup_<Heading>` (characters outside `[A-Za-z0-9_]` stripped, e.g. `settingsGroup_EUVehicleInfo`) |
+| Group (`QGCGroupBox`, headed groups only) | `settingsGroup_<Heading>` (characters outside `[A-Za-z0-9_]` stripped, e.g. `settingsGroup_EUVehicleInfo`) |
 | Text field (`LabelledFactTextField`) | `settingsTextField_<factName>` |
 | Checkbox (`FactCheckBoxSlider`) | `settingsCheckBox_<factName>` |
 

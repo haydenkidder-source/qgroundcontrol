@@ -26,6 +26,8 @@ public:
 
     void request();
 
+    const FlightModeList& modeList() const { return _modeList; }
+
     void availableModesMonitorReceived(uint8_t seq);
 
     void gotMessage(MAV_RESULT result, VehicleTypes::RequestMessageResultHandlerFailureCode_t failureCode, const mavlink_message_t &message);
@@ -37,6 +39,7 @@ signals:
 private:
 
     void requestMode(int modeIndex);
+    void startRequest();
     void ensureUniqueModeNames();
 
     Vehicle*const _vehicle;
@@ -45,6 +48,10 @@ private:
     bool _wantReset{false};
 
     int _lastSeq{-1};
+    uint8_t _requestSeq{0};
+    int _sequenceRestartCount{0};
+
+    static constexpr int kMaxSequenceRestarts = 3;
 
     FlightModeList _modeList;
 };

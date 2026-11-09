@@ -75,6 +75,16 @@ AnalyzePage {
         return null
     }
 
+    function _vehicleForSysid(sysid) {
+        for (let i = 0; i < _vehicles.count; i++) {
+            const vehicle = _vehicles.get(i)
+            if (vehicle && vehicle.id === sysid) {
+                return vehicle
+            }
+        }
+        return null
+    }
+
     function _isVehicleConnected(sysid) {
         for (let i = 0; i < _vehicles.count; i++) {
             if (_vehicles.get(i).id === sysid) {
@@ -107,6 +117,26 @@ AnalyzePage {
                 id:         pageColumn
                 width:      parent.width
                 spacing:    ScreenTools.defaultFontPixelHeight
+
+                RowLayout {
+                    spacing: ScreenTools.defaultFontPixelWidth
+
+                    QGCLabel { text: qsTr("Wait before returning (seconds):") }
+
+                    QGCTextField {
+                        objectName:             "failbackHoldSeconds"
+                        Layout.preferredWidth:  ScreenTools.defaultFontPixelWidth * 6
+                        text:                   _controller.failbackHoldSeconds.toString()
+                        inputMethodHints:       Qt.ImhDigitsOnly
+                        validator:              IntValidator { bottom: 5; top: 300 }
+                        onEditingFinished: {
+                            if (acceptableInput) {
+                                _controller.failbackHoldSeconds = Number(text)
+                            }
+                            text = Qt.binding(function() { return _controller.failbackHoldSeconds.toString() })
+                        }
+                    }
+                }
 
                 QGCLabel {
                     objectName:         "noVehiclesConnectedHint"
@@ -170,7 +200,7 @@ AnalyzePage {
 
                             QGCLabel {
                                 visible:    setUpNameField.taken
-                                color:      QGroundControl.globalPalette.warningText
+                                color:      QGroundControl.globalPalette.errorText
                                 text:       qsTr("Nickname already used by another vehicle")
                             }
                         }
@@ -196,6 +226,18 @@ AnalyzePage {
 
                         property int  _entryIndex: index
                         property var  _entry:      object
+                        readonly property var _vehicle: vehicleLinksPage._vehicleForSysid(_entry.sysid)
+                        readonly property var _vehicleLinks: _vehicle ? _vehicle.vehicleLinkManager : null
+                        property var _linkState: ({ names: [], statuses: [], primary: "" })
+
+                        function _refreshLinkState() {
+                            _linkState = _vehicleLinks
+                                ? { names: _vehicleLinks.linkNames, statuses: _vehicleLinks.linkStatuses,
+                                    primary: _vehicleLinks.primaryLinkName }
+                                : { names: [], statuses: [], primary: "" }
+                        }
+
+                        on_VehicleLinksChanged: Qt.callLater(_refreshLinkState)
 
                         Rectangle {
                             Layout.fillWidth:   true
@@ -251,7 +293,7 @@ AnalyzePage {
                             Layout.fillWidth:   true
                             wrapMode:           Text.WordWrap
                             visible:            entryNameField.taken
-                            color:              QGroundControl.globalPalette.warningText
+                            color:              QGroundControl.globalPalette.errorText
                             text:               qsTr("Nickname already used by another vehicle")
                         }
 
@@ -271,6 +313,8 @@ AnalyzePage {
                                     property var  _resolvedConfig: vehicleLinksPage._configForName(
                                                                         _linkObject.linkConfigName)
                                     property bool _connected:      _resolvedConfig !== null && _resolvedConfig.linkActive
+                                    readonly property int _attachedIndex: entrySection._linkState.names.indexOf(
+                                                                              _linkObject.linkConfigName)
 
                                     QGCLabel {
                                         Layout.preferredWidth:  ScreenTools.defaultFontPixelWidth * 16
@@ -318,12 +362,55 @@ AnalyzePage {
                                         }
                                     }
 
+                                    QGCCheckBox {
+                                        objectName: "vehiclePreferLink_" + _entry.sysid + "_" + _linkIndex
+                                        text:       qsTr("Preferred")
+                                        checked:    _linkObject.preferred
+                                        enabled:    _linkObject.linkConfigName !== ""
+                                        onClicked:  _controller.setLinkPreferred(_entryIndex, _linkIndex, checked)
+                                    }
+
+                                    ColumnLayout {
+                                        QGCLabel {
+                                            objectName: "vehicleLinkNotAttached_" + _entry.sysid + "_" + _linkIndex
+                                            text:       qsTr("Not connected to this vehicle")
+                                            color:      qgcPal.warningText
+                                            visible:    _linkObject.preferred && _vehicle !== null && _attachedIndex < 0
+                                        }
+
+                                        QGCLabel {
+                                            objectName: "vehicleLinkPrimary_" + _entry.sysid + "_" + _linkIndex
+                                            text:       qsTr("Primary")
+                                            color:      qgcPal.colorGreen
+                                            visible:    _attachedIndex >= 0 &&
+                                                        entrySection._linkState.primary === _linkObject.linkConfigName
+                                        }
+
+                                        QGCLabel {
+                                            objectName: "vehicleLinkLost_" + _entry.sysid + "_" + _linkIndex
+                                            text:       qsTr("Comm lost")
+                                            color:      qgcPal.warningText
+                                            visible:    _attachedIndex >= 0 &&
+                                                        _attachedIndex < entrySection._linkState.statuses.length &&
+                                                        entrySection._linkState.statuses[_attachedIndex] !== ""
+                                        }
+                                    }
+
                                     QGCButton {
                                         objectName: "vehicleRemoveLink_" + _entry.sysid + "_" + _linkIndex
                                         text:       qsTr("Remove")
                                         onClicked:  _controller.removeLink(_entryIndex, _linkIndex)
                                     }
                                 }
+                            }
+
+                            QGCLabel {
+                                Layout.fillWidth: true
+                                wrapMode: Text.WordWrap
+                                text: qsTr("QGC returns to the preferred link after a steady connection. " +
+                                           "Repeated losses make the wait longer. Picking another link, even during " +
+                                           "an outage, holds that link until the preferred link loses and regains " +
+                                           "communication again.")
                             }
 
                             RowLayout {
@@ -347,6 +434,17 @@ AnalyzePage {
                                 }
                             }
                         }
+
+                        Connections {
+                            target: entrySection._vehicleLinks
+
+                            // Stock signals before erasing a removed link; read all three values afterward.
+                            function onLinkNamesChanged() { Qt.callLater(entrySection._refreshLinkState) }
+                            function onLinkStatusesChanged() { Qt.callLater(entrySection._refreshLinkState) }
+                            function onPrimaryLinkChanged() { Qt.callLater(entrySection._refreshLinkState) }
+                        }
+
+                        Component.onCompleted: Qt.callLater(_refreshLinkState)
                     }
                 }
 
@@ -367,9 +465,18 @@ AnalyzePage {
                     QGCTextField {
                         id:                     newSysidField
                         objectName:             "newVehicleSysid"
-                        Layout.preferredWidth:  ScreenTools.defaultFontPixelWidth * 8
+                        Layout.preferredWidth:  ScreenTools.defaultFontPixelWidth * 12
                         placeholderText:        qsTr("sysid")
-                        validator:              IntValidator { bottom: 1; top: 255 }
+                        validator: DoubleValidator {
+                            bottom: 1
+                            top: 4294967295
+                            decimals: 0
+                            notation: DoubleValidator.StandardNotation
+                            locale: "C"
+                        }
+                        readonly property real sysid: Number(text)
+                        readonly property bool validSysid: acceptableInput && Number.isInteger(sysid)
+                                                          && sysid >= 1 && sysid <= 4294967295
                     }
 
                     QGCComboBox {
@@ -381,7 +488,8 @@ AnalyzePage {
                     QGCTextField {
                         id:                     newNameField
                         objectName:             "newVehicleNickname"
-                        readonly property bool taken: _controller.isNicknameTaken(text, parseInt(newSysidField.text) || 0)
+                        readonly property bool taken: _controller.isNicknameTaken(
+                                                          text, newSysidField.validSysid ? newSysidField.sysid : 0)
                         Layout.preferredWidth:  ScreenTools.defaultFontPixelWidth * 20
                         placeholderText:        qsTr("Nickname (optional)")
                     }
@@ -389,9 +497,9 @@ AnalyzePage {
                     QGCButton {
                         objectName: "newVehicleAdd"
                         text:       qsTr("Add Vehicle")
-                        enabled:    newSysidField.acceptableInput && !newNameField.taken
+                        enabled:    newSysidField.validSysid && !newNameField.taken
                         onClicked: {
-                            _controller.addEntry(parseInt(newSysidField.text), newRoleCombo.currentText,
+                            _controller.addEntry(newSysidField.sysid, newRoleCombo.currentText,
                                                  newNameField.text, 0)
                             newSysidField.text = ""
                             newNameField.text = ""
@@ -400,7 +508,7 @@ AnalyzePage {
 
                     QGCLabel {
                         visible:    newNameField.taken
-                        color:      QGroundControl.globalPalette.warningText
+                        color:      QGroundControl.globalPalette.errorText
                         text:       qsTr("Nickname already used by another vehicle")
                     }
                 }
