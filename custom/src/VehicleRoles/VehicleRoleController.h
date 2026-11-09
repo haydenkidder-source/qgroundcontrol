@@ -27,6 +27,7 @@ class VehicleRoleLinkEntry : public QObject
 
     Q_PROPERTY(QString label READ label NOTIFY labelChanged)
     Q_PROPERTY(QString linkConfigName READ linkConfigName NOTIFY linkConfigNameChanged)
+    Q_PROPERTY(bool preferred READ preferred NOTIFY preferredChanged)
 
 public:
     VehicleRoleLinkEntry(const QString& label, const QString& linkConfigName, QObject* parent = nullptr);
@@ -35,14 +36,19 @@ public:
 
     QString linkConfigName() const { return _linkConfigName; }
 
+    bool preferred() const { return _preferred; }
+
+    void setPreferred(bool preferred);
     void setLabel(const QString& label);
     void setLinkConfigName(const QString& linkConfigName);
 
 signals:
+    void preferredChanged(bool preferred);
     void labelChanged(QString label);
     void linkConfigNameChanged(QString linkConfigName);
 
 private:
+    bool _preferred = false;
     QString _label;
     QString _linkConfigName;
 };
@@ -121,9 +127,15 @@ class VehicleRoleController : public QObject
 
     Q_PROPERTY(QmlObjectListModel* roleEntries READ roleEntries CONSTANT)
     Q_PROPERTY(QStringList availableRoles READ availableRoles CONSTANT)
+    Q_PROPERTY(
+        int failbackHoldSeconds READ failbackHoldSeconds WRITE setFailbackHoldSeconds NOTIFY failbackHoldSecondsChanged)
 
 public:
     explicit VehicleRoleController(QObject* parent = nullptr);
+
+    int failbackHoldSeconds() const { return _failbackHoldSeconds; }
+
+    void setFailbackHoldSeconds(int seconds);
 
     QmlObjectListModel* roleEntries() const { return _roleEntries; }
 
@@ -184,10 +196,17 @@ public:
     Q_INVOKABLE void setLinkLabel(int index, int linkIndex, const QString& label);
     Q_INVOKABLE void setLinkConfigName(int index, int linkIndex, const QString& linkConfigName);
 
+    Q_INVOKABLE void setLinkPreferred(int index, int linkIndex, bool preferred);
+    Q_INVOKABLE QString preferredLinkConfigNameForSysid(quint32 sysid) const;
+
     /// True if a live LinkInterface exists right now for a LinkConfiguration with this name - i.e.
     /// the link is actually connected, not merely configured or pending auto-reconnect. An empty
     /// linkConfigName (an association not yet pointed at a real link) is never connected.
     Q_INVOKABLE bool isLinkConfigConnected(const QString& linkConfigName) const;
+
+signals:
+    void linkPreferencesChanged();
+    void failbackHoldSecondsChanged();
 
 private:
     void _load();
@@ -196,4 +215,5 @@ private:
     VehicleRoleLinkEntry* _linkAt(int index, int linkIndex) const;
 
     QmlObjectListModel* _roleEntries = nullptr;
+    int _failbackHoldSeconds = 15;
 };

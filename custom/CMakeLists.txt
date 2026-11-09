@@ -302,6 +302,10 @@ set(CUSTOM_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/MissionManager/PerimeterScanPlanCreator.h
     ${CMAKE_CURRENT_SOURCE_DIR}/src/Settings/CustomSettings.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/src/Settings/CustomSettings.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/VehicleRoles/LinkPreferenceController.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/VehicleRoles/LinkPreferenceController.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/VehicleRoles/LinkPreferencePolicy.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/VehicleRoles/LinkPreferencePolicy.h
     ${CMAKE_CURRENT_SOURCE_DIR}/src/VehicleRoles/VehicleRoleController.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/src/VehicleRoles/VehicleRoleController.h
     PARENT_SCOPE
@@ -411,6 +415,10 @@ if(QGC_BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/test/VehicleRoleControllerTest.h
             ${CMAKE_CURRENT_SOURCE_DIR}/test/VehicleRoleLinksTest.cc
             ${CMAKE_CURRENT_SOURCE_DIR}/test/VehicleRoleLinksTest.h
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/LinkPreferencePolicyTest.cc
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/LinkPreferencePolicyTest.h
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/LinkPreferenceControllerTest.cc
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/LinkPreferenceControllerTest.h
     )
     cmake_language(
         DEFER
@@ -498,6 +506,29 @@ if(QGC_BUILD_TESTING)
         LABELS
         Unit
         Comms
+        RESOURCE_LOCK
+        Settings
+    )
+    cmake_language(
+        DEFER
+        DIRECTORY
+        "${CMAKE_SOURCE_DIR}"
+        CALL
+        add_qgc_test
+        LinkPreferencePolicyTest
+        LABELS
+        Unit
+    )
+    cmake_language(
+        DEFER
+        DIRECTORY
+        "${CMAKE_SOURCE_DIR}"
+        CALL
+        add_qgc_test
+        LinkPreferenceControllerTest
+        LABELS
+        Integration
+        Vehicle
         RESOURCE_LOCK
         Settings
     )

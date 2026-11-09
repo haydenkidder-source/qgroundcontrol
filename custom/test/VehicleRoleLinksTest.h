@@ -21,8 +21,15 @@ private slots:
     void _addRemoveAndPersistLinks();
     void _oldFormatFileLoadsWithoutLinks();
     void _isLinkConfigConnectedTracksLiveLink();
+    void _preferredLinksPersistAndStayUnique_data();
+    void _preferredLinksPersistAndStayUnique();
+    void _duplicateSavedPreferences_data();
+    void _duplicateSavedPreferences();
+    void _loadPreferences_data();
+    void _loadPreferences();
 
 private:
     QTemporaryDir _directory;
     QVariant _savePath;
+    QVariant _failbackHold;
 };

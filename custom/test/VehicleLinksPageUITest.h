@@ -23,6 +23,8 @@ private slots:
     void _connectedVehicleIsOfferedForOneClickSetup();
     void _nicknameAlreadyInUseBlocksAdd();
     void _linksBelongToTheirVehicle();
+    void _preferredAndStatusTagsFollowVehicle_data();
+    void _preferredAndStatusTagsFollowVehicle();
 
 private:
     bool _openPage();
@@ -31,4 +33,5 @@ private:
 
     QTemporaryDir _directory;
     QVariant _savePath;
+    QVariant _failbackHold;
 };
