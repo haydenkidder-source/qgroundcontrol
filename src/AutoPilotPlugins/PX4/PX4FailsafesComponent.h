@@ -16,6 +16,7 @@ public:
 
     QString description() const final;
     QString iconResource() const final;
+    QStringList searchKeywords() const final;
 
     bool requiresSetup() const final { return false; }
 
@@ -24,6 +25,9 @@ public:
     QUrl setupSource() const final;
 
     QUrl summaryQmlSource() const final { return QUrl(); }
+
+    QList<VehicleSummaryItem> summaryItems() const final;
+    QStringList summaryChangedTriggerList() const final;
 
     bool allowSetupWhileArmed() const final { return true; }
 

@@ -15,6 +15,8 @@ import QGroundControl
 import QGroundControl.Controls
 import QGroundControl.GeoMap
 
+import "GeoMapAltitude.js" as GeoMapAltitude
+
 /// Simple-mission waypoint marker for the GeoMap: a colored dot that
 /// crossfades into a 3D sphere, with an always-visible sequence-number label.
 /// Marker color matches the existing 2D FlyView convention (MissionItemIndexLabel):
@@ -33,27 +35,32 @@ GeoMapItem {
     property real size: ScreenTools.defaultFontPixelHeight * 1.5
     property bool collapsed: false  ///< Drawn by another marker of its overlap group (see GeoMapMissionItems)
     property bool grouped: false    ///< Stands for an overlap group: shows a "…" badge
+    property bool draggable: false  ///< The marker can be dragged to move its item; the map is not panned meanwhile
+    property bool pickable: true    ///< The marker takes clicks and drags; false lets them through to the map
 
     readonly property bool hasMarker: item ? item.isSimpleItem && item.specifiesCoordinate : false
     readonly property real smallIndicatorSize: size * 0.75
 
-    signal clicked()
-
-    objectName: "geoMapWaypointMarker"
-    width: size
-    height: size
-    anchorPoint: Qt.point(width / 2, height / 2)
-    altitudeMode: GeoMapItem.Absolute
+    // terrainHeightAt does not notify, so _terrainRev re-evaluates the fallback as terrain tiles arrive.
+    property int _terrainRev: 0
+    readonly property real _pendingTerrainHeight: {
+        root._terrainRev
+        return item && isNaN(item.amslEntryAlt) && surfaceModel ? surfaceModel.terrainHeightAt(item.coordinate) : NaN
+    }
     // item.amslEntryAlt is AMSL per QGC's own terrain-query pipeline, which
     // can disagree with GeoMap's own DEM tiles; bias-corrected the same way
-    // GeoMapVehicleItem aligns the vehicle marker to the rendered mesh
-    coordinate: item ? QtPositioning.coordinate(item.coordinate.latitude,
-                                                item.coordinate.longitude,
-                                                item.amslEntryAlt + homeTerrainBias)
-                     : QtPositioning.coordinate()
-    visible: hasMarker && !collapsed
+    // GeoMapVehicleItem aligns the vehicle marker to the rendered mesh.
+    // It is NaN while a terrain-frame item waits on its terrain query.
+    readonly property real _amsl: !item ? NaN : GeoMapAltitude.displayAmsl(
+        item.amslEntryAlt,
+        item.isSimpleItem ? item.altitude.rawValue : NaN,
+        _pendingTerrainHeight,
+        homeTerrainBias)
 
-    QGCPalette { id: qgcPal; colorGroupEnabled: root.enabled }
+    // Terrain-relative items stand at their height above the terrain, so moving one changes its height
+    readonly property bool _terrainRelative: !!item && item.isSimpleItem
+        && (item.altitudeFrame === QGroundControl.AltitudeFrameTerrain
+            || item.altitudeFrame === QGroundControl.AltitudeFrameCalcAboveTerrain)
 
     // Matches MissionItemIndicator.qml's _isCurrentItem exactly: current item
     // (or a complex item with a current child) is highlighted
@@ -75,6 +82,52 @@ GeoMapItem {
     readonly property real _modelScale: _camera
         ? root._indicatorSize * _camera.distance * _camera.unitsPerPixelAtUnitDistance / 100
         : 1
+
+    signal clicked()
+    signal dragged(var coordinate)  ///< Horizontal position the marker was dragged to
+
+    function _coordinateUnderCursor(target) {
+        const heightAt = root._terrainRelative && root.surfaceModel
+            ? (coordinate) => root.surfaceModel.terrainHeightAt(coordinate) + root.item.altitude.rawValue
+            : null
+        return GeoMapAltitude.coordinateUnderCursor(root.scene.camera, target, root.scenePosition.z,
+                                                    root.scene.verticalScale * root.scene.terrainScale, heightAt)
+    }
+
+    objectName: "geoMapWaypointMarker"
+    width: size
+    height: size
+    anchorPoint: Qt.point(width / 2, height / 2)
+    altitudeMode: GeoMapItem.Absolute
+    coordinate: item ? QtPositioning.coordinate(item.coordinate.latitude,
+                                                item.coordinate.longitude,
+                                                _amsl + homeTerrainBias)
+                     : QtPositioning.coordinate()
+    visible: hasMarker && !collapsed
+
+    delegate3D: Component {
+        Node {
+            Node {
+                scale: Qt.vector3d(root._modelScale, root._modelScale, root._modelScale)
+
+                Model {
+                    source: "#Sphere"
+
+                    materials: PrincipledMaterial {
+                        baseColor: root._markerColor
+                    }
+                }
+            }
+
+            GeoMapDropLine {
+                dropLength: dropShadow.dropLength
+                lineScale: dropShadow.dropLineScale
+                lineColor: root._markerColor
+            }
+        }
+    }
+
+    QGCPalette { id: qgcPal; colorGroupEnabled: root.enabled }
 
     Rectangle {
         anchors.centerIn: parent
@@ -116,9 +169,20 @@ GeoMapItem {
 
     // The item itself tracks the projected marker position at any tilt, so
     // this hit target follows the 3D sphere through the 2D<->3D crossfade
-    MouseArea {
+    GeoMapMarkerMouseArea {
         anchors.fill: parent
-        onClicked: root.clicked()
+        marker: root
+        enabled: root.pickable
+        draggable: root.draggable
+
+        onMarkerClicked: root.clicked()
+        onDragged: (target) => {
+            // The marker sits on the horizontal plane at its height, so it stays under the cursor at any tilt
+            const coordinate = root._coordinateUnderCursor(target)
+            if (coordinate.isValid) {
+                root.dragged(coordinate)
+            }
+        }
     }
 
     GeoMapDropShadow {
@@ -127,25 +191,12 @@ GeoMapItem {
         indicatorSize: root._indicatorSize
     }
 
-    delegate3D: Component {
-        Node {
-            Node {
-                scale: Qt.vector3d(root._modelScale, root._modelScale, root._modelScale)
+    Connections {
+        target: root.surfaceModel
+        enabled: !!root.item && isNaN(root.item.amslEntryAlt)
 
-                Model {
-                    source: "#Sphere"
-
-                    materials: PrincipledMaterial {
-                        baseColor: root._markerColor
-                    }
-                }
-            }
-
-            GeoMapDropLine {
-                dropLength: dropShadow.dropLength
-                lineScale: dropShadow.dropLineScale
-                lineColor: root._markerColor
-            }
+        function onTerrainHeightsChanged() {
+            root._terrainRev++
         }
     }
 }

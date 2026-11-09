@@ -588,7 +588,7 @@ void COPStressUITest::_overlayDataTracksUploadsAndSkipsNonRoutePoints()
     QTRY_VERIFY_WITH_TIMEOUT(fence.sent, TestTimeout::longMs());
 
     vehicle->rallyPointManager()->sendToVehicle(
-        {base.atDistanceAndAzimuth(60, 45), base.atDistanceAndAzimuth(90, 300)});
+        {RallyPointData{base.atDistanceAndAzimuth(60, 45)}, RallyPointData{base.atDistanceAndAzimuth(90, 300)}});
     QTRY_VERIFY_WITH_TIMEOUT(rally.sent, TestTimeout::longMs());
 
     // Only uploads happened, no download: COP must still pick each new plan up.

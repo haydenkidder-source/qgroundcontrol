@@ -59,6 +59,13 @@ private slots:
 
     void _testEditMarksDirtyForSave_data();
     void _testEditMarksDirtyForSave();
+    void _testRallyPointFileFrames_data();
+    void _testRallyPointFileFrames();
+    void _testRallyPointFramesSurviveSave();
+    void _testRallyPointDefaultAltitude_data();
+    void _testRallyPointDefaultAltitude();
+    void _testRallyPointFramesSurviveVehicleRoundTrip();
+    void _testPendingRallyTerrainBlocksSaveAndUpload();
 
 private:
     /// Connects an additional PX4 MockLink vehicle (tracked in _extraLinks) and waits for its initial connect

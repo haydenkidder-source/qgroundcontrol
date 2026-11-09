@@ -176,8 +176,8 @@ void COPVehicle::_refreshPlanData()
                                              {QStringLiteral("inclusion"), circle.inclusion()}});
         }
 
-        for (const QGeoCoordinate& coordinate : _vehicle->rallyPointManager()->points()) {
-            _rallyPoints.append(QVariant::fromValue(coordinate));
+        for (const RallyPointData& point : _vehicle->rallyPointManager()->points()) {
+            _rallyPoints.append(QVariant::fromValue(point.coordinate));
         }
     }
 

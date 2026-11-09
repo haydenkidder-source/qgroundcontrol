@@ -6,16 +6,14 @@ import QtQuick.Dialogs
 import QGroundControl
 import QGroundControl.Controls
 import QGroundControl.FactControls
+import QGroundControl.Toolbar
 
 // Toolbar for Plan View
 RowLayout {
-    required property var planMasterController
-    property bool showRallyPointsHelp: false
-
-    signal toolbarButtonClicked()
-
     id: root
-    spacing: ScreenTools.defaultFontPixelWidth
+
+    required property var planMasterController
+    property string statusHint: ""     ///< Guidance for the user, shown as a pill; empty hides it
 
     property var _planMasterController: planMasterController
     property var _missionController: _planMasterController.missionController
@@ -29,6 +27,8 @@ RowLayout {
     property bool _hasPlanItems: _planMasterController.containsItems
 
     readonly property real _margins: ScreenTools.defaultFontPixelWidth
+
+    signal toolbarButtonClicked()
 
     function _uploadClicked() {
         _planMasterController.upload()
@@ -70,7 +70,7 @@ RowLayout {
     function _saveButtonClicked() {
         if (_planMasterController.currentPlanFile === "") {
             _planMasterController.saveToSelectedFile()
-        } else {
+        } else if (_planMasterController.checkReadyForSaveUpload(true /* save */)) {
             _planMasterController.saveToCurrent()
         }
     }
@@ -132,6 +132,8 @@ RowLayout {
         }
     }
 
+    spacing: ScreenTools.defaultFontPixelWidth
+
     QGCPalette { id: qgcPal }
 
     QGCButton {
@@ -183,9 +185,11 @@ RowLayout {
         }
     }
 
-    QGCLabel {
-        text:    qsTr("Click in map to add rally points")
-        visible: root.showRallyPointsHelp
+    StatusPill {
+        objectName: "planToolbar_statusHint"
+        text: root.statusHint
+        color: qgcPal.colorBlue
+        fontPointSize: ScreenTools.defaultFontPointSize
         Layout.alignment: Qt.AlignVCenter
     }
 
@@ -194,6 +198,7 @@ RowLayout {
 
         DropPanel {
             id: dropPanel
+            onClosed: destroy()
 
             sourceComponent: Component {
                 ColumnLayout {

@@ -10,17 +10,18 @@ import QGroundControl.PlanView
 
 Rectangle {
     id: _root
-    width: parent.width
-    height: ScreenTools.toolbarHeight
-    color: qgcPal.toolbarBackground
 
     property var planMasterController
-    property bool showRallyPointsHelp: false
-
-    signal toolbarButtonClicked()
+    property string statusHint: ""
 
     property var _activeVehicle: QGroundControl.multiVehicleManager.activeVehicle
     property real _controllerProgressPct: planMasterController.missionController.progressPct
+
+    signal toolbarButtonClicked()
+
+    width: parent.width
+    height: ScreenTools.toolbarHeight
+    color: qgcPal.toolbarBackground
 
     QGCPalette { id: qgcPal }
 
@@ -103,7 +104,7 @@ Rectangle {
             anchors.top: parent.top
             anchors.bottom: parent.bottom
             planMasterController: _root.planMasterController
-            showRallyPointsHelp: _root.showRallyPointsHelp
+            statusHint: _root.statusHint
             onToolbarButtonClicked: _root.toolbarButtonClicked()
         }
     }
@@ -128,20 +129,16 @@ Rectangle {
     // Large mission download progress bar
     Rectangle {
         id: largeProgressBar
+
+        property bool _userHide: false
+        property bool _showLargeProgress: progressBar.visible && !_userHide && qgcPal.globalTheme === QGCPalette.Light
+
         anchors.bottom: parent.bottom
         anchors.left: parent.left
         anchors.right: parent.right
         height: parent.height
         color: qgcPal.window
         visible: _showLargeProgress
-
-        property bool _userHide: false
-        property bool _showLargeProgress: progressBar.visible && !_userHide && qgcPal.globalTheme === QGCPalette.Light
-
-        Connections {
-            target: QGroundControl.multiVehicleManager
-            function onActiveVehicleChanged(activeVehicle) { largeProgressBar._userHide = false }
-        }
 
         Rectangle {
             anchors.top: parent.top
@@ -165,18 +162,29 @@ Rectangle {
         }
 
         QGCLabel {
+            property real _margin: ScreenTools.defaultFontPixelWidth / 2
+
             anchors.margins: _margin
             anchors.right: parent.right
             anchors.bottom: parent.bottom
             text: qsTr("Click anywhere to hide")
-
-            property real _margin: ScreenTools.defaultFontPixelWidth / 2
         }
 
         MouseArea {
             anchors.fill: parent
             onClicked: largeProgressBar._userHide = true
         }
+
+        Connections {
+            target: QGroundControl.multiVehicleManager
+            function onActiveVehicleChanged(activeVehicle) { largeProgressBar._userHide = false }
+        }
+    }
+
+    Timer {
+        id: resetProgressTimer
+        interval: 3000
+        onTriggered: progressBar.visible = false
     }
 
     // Progress bar
@@ -194,11 +202,5 @@ Rectangle {
                 progressBar.visible = true
             }
         }
-    }
-
-    Timer {
-        id: resetProgressTimer
-        interval: 3000
-        onTriggered: progressBar.visible = false
     }
 }

@@ -75,8 +75,8 @@ public:
     /// Name a vehicle's AVAILABLE_MODES list gives an External Mode (1-based), empty if no mode is registered there
     static QString externalFlightModeName(const FlightModeList& modeList, int externalIndex);
 
-private slots:
-    void _mavCommandResult(quint32 vehicleId, int component, int command, int result, int failureCode);
+    /// externalFlightModeName of each of External Mode 1-8, in order
+    static QStringList externalFlightModeNames(const FlightModeList& modeList);
 
 private:
     void    _handleAutopilotVersion         (Vehicle* vehicle, mavlink_message_t* message);
