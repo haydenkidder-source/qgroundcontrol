@@ -96,7 +96,7 @@ No rescue-mission implementation was found by searching `src/` and `custom/` for
 
 **Root cause:** `custom/src/COP/COPController.cc:259` clears pending state for a connected target and forwards requests without serialization. `src/Vehicle/MultiVehicleManager.cc:223` compares only with the committed active pointer, while line 234 queues each switch independently. There is no latest-request token/cancellation in that path. As with Finding 1, the manager behaviour predates this review; branch attribution was not established.
 
-**Reachability limitation:** `custom/src/COP/COPNavigation.qml:83` disables Assume Control for the currently active target, so the exact second call is not established as a possible physical button click within 20 ms. This test attacks the public QML-invokable controller API. It does not establish a field-reproducible wrong-aircraft command or a crash.
+**Reachability limitation:** `custom/src/COP/COPNavigation.qml:83` disables Assume Control for the currently active target, so the exact second call is not established as a possible physical button click within 20 ms. This test attacks the public QML-callable controller API. It does not establish a field-reproducible wrong-aircraft command or a crash.
 
 **Regression repro added:** `COPStressUITest::_lastControlRequestWins`. It boots the real UI and uses two MockLinks, then invokes the controller in one event-loop turn. Expected final-target mismatch; not executed.
 

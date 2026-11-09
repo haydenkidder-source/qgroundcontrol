@@ -87,7 +87,7 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
     qgc_enable_split_dwarf()
 
     # Build profiling: -ftime-trace emits per-TU Chrome-tracing JSON next to each .o.
-    # Aggregate with ClangBuildAnalyzer; see docs in tools/README.md.
+    # Summarize with tools/build_profile.py (see tools/README.md).
     if(QGC_TIME_TRACE)
         if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
             add_compile_options(-ftime-trace -ftime-trace-granularity=100)
@@ -105,9 +105,14 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
 elseif(MSVC)
     # MSVC-specific optimizations
     add_link_options("$<$<CONFIG:Release>:/LTCG:INCREMENTAL>")
-    # /Z7 not /Zi — /Zi's absolute PDB paths break ccache hashing (ccache#1040); linker still emits a sidecar PDB.
+    # /Z7 not /Zi — /Zi's absolute PDB paths break ccache hashing (ccache#1040); the linker writes the PDB.
     set(CMAKE_MSVC_DEBUG_INFORMATION_FORMAT "Embedded")
+    # Release PDB beside the exe symbolizes CI crash dumps; installs exclude it. /DEBUG would
+    # otherwise drop the /OPT:REF and /OPT:ICF size optimizations.
+    add_link_options("$<$<CONFIG:Release>:/DEBUG:FULL;/OPT:REF;/OPT:ICF>")
     set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
+    # Runs after qgc_enable_ipo(), whose /GL objects lld-link cannot link.
+    qgc_set_msvc_linker()
 endif()
 
 # ----------------------------------------------------------------------------

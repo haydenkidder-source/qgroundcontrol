@@ -64,17 +64,15 @@ private:
     /// Connects an additional PX4 MockLink vehicle (tracked in _extraLinks) and waits for its initial connect
     Vehicle* _connectExtraVehicle();
 
-    enum DirtyScenario {
-        UploadPreservesSaveDirtyTrue,
-        UploadPreservesSaveDirtyFalse,
+    enum DirtyScenario
+    {
+        UploadPreservesSaveDirty,
         UploadFalseOnPlanClear,
         UploadTrueWhenSaveTrue,
         UploadTrueOnNewPlanLoad,
-        SaveToFilePreservesUploadDirtyTrue,
-        SaveToFilePreservesUploadDirtyFalse,
+        SaveToFilePreservesUploadDirty,
         SaveFalseOnSuccessfulLoad,
-        ClearSaveDirtyPreservesUploadTrue,
-        ClearSaveDirtyPreservesUploadFalse,
+        ClearSaveDirtyPreservesUpload,
         DownloadWithItemsNotDirtyForSave,
         DownloadEmptyNotDirtyForSave,
     };

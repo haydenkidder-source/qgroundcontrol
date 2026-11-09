@@ -8,6 +8,7 @@
 #include <QtCore/QRegularExpression>
 
 #include "AppSettings.h"
+#include "MockLink.h"
 #include "QmlObjectListModel.h"
 #include "SettingsManager.h"
 #include "VehicleRoleController.h"

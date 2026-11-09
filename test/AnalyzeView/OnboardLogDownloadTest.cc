@@ -8,6 +8,7 @@
 
 #include "FTPManager.h"
 #include "MAVLinkProtocol.h"
+#include "MockLink.h"
 #include "MockLinkFTP.h"
 #include "MultiSignalSpy.h"
 #include "MultiVehicleManager.h"

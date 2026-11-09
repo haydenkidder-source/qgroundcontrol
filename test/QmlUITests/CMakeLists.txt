@@ -21,6 +21,8 @@ target_sources(
         ${CMAKE_CURRENT_SOURCE_DIR}/PlanViewUITest.h
         ${CMAKE_CURRENT_SOURCE_DIR}/PlanViewLayerUITest.cc
         ${CMAKE_CURRENT_SOURCE_DIR}/PlanViewLayerUITest.h
+        ${CMAKE_CURRENT_SOURCE_DIR}/PlanPanelUITest.cc
+        ${CMAKE_CURRENT_SOURCE_DIR}/PlanPanelUITest.h
         ${CMAKE_CURRENT_SOURCE_DIR}/PX4SensorsCalibrationUITest.cc
         ${CMAKE_CURRENT_SOURCE_DIR}/PX4SensorsCalibrationUITest.h
         ${CMAKE_CURRENT_SOURCE_DIR}/APMSensorsCalibrationUITest.cc
@@ -89,10 +91,11 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_
 add_qgc_test(TopLevelViewsTest LABELS Integration NoSanitizer TIMEOUT 120)
 add_qgc_test(PX4VehicleConfigUITest LABELS Integration NoSanitizer TIMEOUT 180)
 add_qgc_test(APMVehicleConfigUITest LABELS Integration NoSanitizer TIMEOUT 360)
-add_qgc_test(ToolbarIndicatorUITest LABELS Integration NoSanitizer TIMEOUT 180)
+add_qgc_test(ToolbarIndicatorUITest LABELS Integration NoSanitizer TIMEOUT 180 SHARDS 3)
 add_qgc_test(PlanViewUITest LABELS Integration NoSanitizer TIMEOUT 120)
 # StockUI: asserts stock UI elements that custom builds intentionally replace/omit
 add_qgc_test(PlanViewLayerUITest LABELS Integration NoSanitizer StockUI TIMEOUT 120)
+add_qgc_test(PlanPanelUITest LABELS Integration NoSanitizer StockUI TIMEOUT 180)
 add_qgc_test(PX4SensorsCalibrationUITest LABELS Integration NoSanitizer TIMEOUT 180)
 add_qgc_test(APMSensorsCalibrationUITest LABELS Integration NoSanitizer TIMEOUT 240)
 add_qgc_test(APMFreshFlashUITest LABELS Integration NoSanitizer TIMEOUT 180)
@@ -102,7 +105,7 @@ add_qgc_test(PX4FailsafesUITest LABELS Integration NoSanitizer StockUI TIMEOUT 1
 add_qgc_test(PX4FlightModesUITest LABELS Integration NoSanitizer StockUI TIMEOUT 120)
 add_qgc_test(PX4SerialPortsUITest LABELS Integration NoSanitizer StockUI TIMEOUT 120)
 add_qgc_test(FailureInjectionUITest LABELS Integration NoSanitizer StockUI TIMEOUT 120)
-add_qgc_test(AppCloseWarningUITest LABELS Integration NoSanitizer TIMEOUT 120)
+add_qgc_test(AppCloseWarningUITest LABELS Integration NoSanitizer TIMEOUT 120 SHARDS 5)
 add_qgc_test(FlyViewCameraCaptureUITest LABELS Integration NoSanitizer TIMEOUT 120)
 add_qgc_test(FlyViewCameraZoomUITest LABELS Integration NoSanitizer TIMEOUT 120)
 add_qgc_test(FlyViewGuidedUnitsUITest LABELS Integration NoSanitizer TIMEOUT 120)

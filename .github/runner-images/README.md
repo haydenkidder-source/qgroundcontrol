@@ -39,6 +39,7 @@ repository's `RUNS_ON_WINDOWS_POOL` variable to `qgc-windows-x64-builder`. Leave
 until the pool exists; workflows will continue using the ordinary `windows-x64-builder` runner.
 Keep the pool's runner image in sync with `.github/runs-on.yml`: `windows25-full-x64` includes the
 MSVC toolchain, while `windows22-full-x64` forces a Visual Studio Build Tools install in every job.
+Keep the example's `windows-x64-builder` family list identical to `.github/runs-on.yml`.
 
 The CPM seed lives separately from job workspaces at `/opt/qgc-sdk/cpm`. Its manifest records the
 source commit, dependency fingerprint, size in bytes, and preparation time. The cache action copies

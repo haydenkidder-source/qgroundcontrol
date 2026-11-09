@@ -7,6 +7,7 @@
 
 #include "FirmwarePlugin.h"
 #include "MissionManager.h"
+#include "MockLink.h"
 #include "MultiSignalSpy.h"
 #include "UnitTestCoords.h"
 #include "Vehicle.h"

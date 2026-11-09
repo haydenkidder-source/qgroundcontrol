@@ -15,6 +15,7 @@
 #include "LinkManager.h"
 #include "MissionItem.h"
 #include "MissionManager.h"
+#include "MockLink.h"
 #include "MultiVehicleManager.h"
 #include "PlanManager.h"
 #include "QGCCorePlugin.h"

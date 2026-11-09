@@ -14,6 +14,7 @@
 #include "GPSCorrectionSettings.h"
 #include "LinkManager.h"
 #include "ManualScheduler.h"
+#include "MockLink.h"
 #include "SettingsManager.h"
 #include "VehicleLinkManager.h"
 #include "VehicleSystemIdTestData.h"

@@ -8,6 +8,8 @@
 #include "GeoFenceManager.h"
 #include "LinkManager.h"
 #include "MissionItem.h"
+#include "MockConfiguration.h"
+#include "MockLink.h"
 #include "QGCFenceCircle.h"
 #include "QGCFencePolygon.h"
 #include "QmlObjectListModel.h"
