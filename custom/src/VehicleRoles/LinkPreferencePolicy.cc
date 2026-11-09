@@ -40,6 +40,21 @@ void LinkPreferencePolicy::observe(const Input& input, qint64 now, bool policySw
 
     const bool healthy = preferredHealthy(input);
     const bool primary = input.primaryName == _preferredName;
+    const auto previousIndex = input.linkNames.indexOf(_lastPrimary);
+    const bool previousHealthy = !_lastPrimary.isEmpty() && previousIndex >= 0 &&
+                                 previousIndex < input.linkStatuses.size() &&
+                                 input.linkStatuses[previousIndex].isEmpty();
+    const bool primaryChanged = _lastPrimary != input.primaryName;
+    // Only setPrimaryLinkByName emits primaryLinkChanged for an unchanged primary (an explicit re-pick).
+    const bool manualPick = !policySwitch && !input.primaryName.isEmpty() &&
+                            ((!primaryChanged && primarySignal) || (primaryChanged && previousHealthy));
+    if (primary || (_wasHealthy && !healthy)) {
+        _manualOverride = false;
+    }
+    if (!primary && manualPick) {
+        _manualOverride = true;
+        _switchPending = false;
+    }
     // Core clears the primary before removing its name from the link list.
     _preferredUsed = _preferredUsed || primary;
     if (!healthy) {
@@ -49,7 +64,6 @@ void LinkPreferencePolicy::observe(const Input& input, qint64 now, bool policySw
         _lastFailback = -1;
         _healthySince = -1;
         _primaryHealthySince = -1;
-        _manualOverride = false;
         _switchPending = false;
         _failoverSeen = _failoverSeen || _preferredUsed ||
                         (!_lastPrimary.isEmpty() && !input.primaryName.isEmpty() && _lastPrimary != input.primaryName);
@@ -62,7 +76,6 @@ void LinkPreferencePolicy::observe(const Input& input, qint64 now, bool policySw
                 _lastFailback = now;
             }
             _switchPending = false;
-            _manualOverride = false;
             if (_primaryHealthySince < 0) {
                 _primaryHealthySince = now;
             }
@@ -72,11 +85,6 @@ void LinkPreferencePolicy::observe(const Input& input, qint64 now, bool policySw
             }
         } else {
             _primaryHealthySince = -1;
-            if (!policySwitch && !input.primaryName.isEmpty() &&
-                (primarySignal || (!_lastPrimary.isEmpty() && _lastPrimary != input.primaryName))) {
-                _manualOverride = true;
-                _switchPending = false;
-            }
         }
     }
     _wasHealthy = healthy;

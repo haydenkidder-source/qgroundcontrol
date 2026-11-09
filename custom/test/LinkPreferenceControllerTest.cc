@@ -15,9 +15,11 @@
 #include "QmlObjectListModel.h"
 #include "RallyPointManager.h"
 #include "SettingsManager.h"
+#include "SigningController.h"
 #include "Vehicle.h"
 #include "VehicleLinkManager.h"
 #include "VehicleRoleController.h"
+#include "VehicleSigningController.h"
 
 void LinkPreferenceControllerTest::init()
 {
@@ -321,6 +323,51 @@ void LinkPreferenceControllerTest::_transferBusyAtDeadline()
     }
     _preference->evaluateForTesting(4);
     QCOMPARE(links->primaryLinkName(), QStringLiteral("UDP"));
+}
+
+void LinkPreferenceControllerTest::_signingPendingAtDeadline_data()
+{
+    QTest::addColumn<bool>("disabling");
+    QTest::newRow("enable-pending") << false;
+    QTest::newRow("disable-pending") << true;
+}
+
+void LinkPreferenceControllerTest::_signingPendingAtDeadline()
+{
+    QFETCH(bool, disabling);
+    Vehicle* const vehicle = _startPair();
+    QVERIFY(vehicle);
+    auto* links = vehicle->vehicleLinkManager();
+    auto* signing = _backup->signing();
+    auto* facade = vehicle->signingController();
+    QVERIFY(signing && facade);
+    MAVLinkSigning::SigningKey key{};
+    key.fill(0x42);
+    _preference->evaluateForTesting(2);
+    // Use a reserved target without transmitting SETUP_SIGNING; background MockLink heartbeats cannot confirm it.
+    constexpr quint32 signingTargetSysid = 0;
+    if (disabling) {
+        const QByteArrayView keyView(reinterpret_cast<const char*>(key.data()), key.size());
+        QVERIFY(signing->initSigningImmediate(keyView, MAVLinkSigning::UnsignedAcceptancePolicy::Strict));
+        QVERIFY(!signing->tryBeginDisable(signingTargetSysid));
+    } else {
+        QVERIFY(!signing->tryBeginEnable(signingTargetSysid, QString(), key));
+    }
+    QVERIFY(facade->signingStatus().pending());
+    _preference->evaluateForTesting(3);
+    QCOMPARE(links->primaryLinkName(), QStringLiteral("RFD"));
+    QVERIFY(facade->signingStatus().pending());
+    QSignalSpy statusChanges(facade, &VehicleSigningController::signingStatusChanged);
+    expectLogMessage("MAVLink.SigningController", QtWarningMsg,
+                     QRegularExpression(disabling ? QStringLiteral("Signing disable not confirmed")
+                                                  : QStringLiteral("Signing operation cancelled")));
+    signing->cancelPending();
+    verifyExpectedLogMessage();
+    QVERIFY(!facade->signingStatus().pending());
+    QVERIFY(!statusChanges.isEmpty());
+    QVERIFY(signing->clearSigning());
+    // Completion must trigger a queued reevaluation at the same deadline, without advancing the test clock.
+    QTRY_COMPARE_WITH_TIMEOUT(links->primaryLinkName(), QStringLiteral("UDP"), TestTimeout::shortMs());
 }
 
 UT_REGISTER_TEST(LinkPreferenceControllerTest, TestLabel::Integration, TestLabel::Vehicle)

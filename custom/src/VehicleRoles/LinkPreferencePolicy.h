@@ -6,7 +6,8 @@
 class LinkPreferencePolicy
 {
 public:
-    static constexpr qint64 kInitialSettleMs = 3000;
+    // Outlast stock's 3500 ms heartbeat timeout plus its 1000 ms comm-loss polling interval.
+    static constexpr qint64 kInitialSettleMs = 6000;
 
     struct Timing
     {

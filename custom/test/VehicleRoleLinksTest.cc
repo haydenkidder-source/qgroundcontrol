@@ -220,7 +220,7 @@ void VehicleRoleLinksTest::_loadPreferences()
     if (savedHold != 0) {
         QSettings().setValue(QStringLiteral("Custom/LinkPreference/FailbackHoldSeconds"), savedHold);
     }
-    QFile file(_directory.filePath(QStringLiteral("VehicleRoles.json")));
+    QFile file(SettingsManager::instance()->appSettings()->settingsSavePath() + QStringLiteral("/VehicleRoles.json"));
     QVERIFY(file.open(QIODevice::WriteOnly));
     const QJsonDocument json(entries);
     QVERIFY(file.write(json.toJson()) > 0);
@@ -253,7 +253,7 @@ void VehicleRoleLinksTest::_duplicateSavedPreferences()
                     {QStringLiteral("role"), QStringLiteral("Rover")},
                     {QStringLiteral("links"),
                      QJsonArray{link(QString()), link(QStringLiteral("RFD")), link(QStringLiteral("UDP"))}}}};
-    QFile file(_directory.filePath(QStringLiteral("VehicleRoles.json")));
+    QFile file(SettingsManager::instance()->appSettings()->settingsSavePath() + QStringLiteral("/VehicleRoles.json"));
     QVERIFY(file.open(QIODevice::WriteOnly));
     QVERIFY(file.write(QJsonDocument(entries).toJson()) > 0);
     file.close();

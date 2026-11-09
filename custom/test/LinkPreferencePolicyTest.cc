@@ -18,6 +18,124 @@ LinkPreferencePolicy::Input input()
 }
 }  // namespace
 
+void LinkPreferencePolicyTest::_initialSettleOutlastsLossDetection()
+{
+    auto state = input();
+    LinkPreferencePolicy policy;
+    policy.observe(state, 0);
+    QVERIFY(policy.evaluate(state, 4500).isEmpty());
+    QVERIFY(policy.evaluate(state, 5999).isEmpty());
+    QCOMPARE(policy.evaluate(state, 6000), state.preferredName);
+
+    // A single packet followed by silence must reach stock loss detection before selection.
+    LinkPreferencePolicy silentLink;
+    silentLink.observe(state, 0);
+    state.linkStatuses[1] = QStringLiteral("lost");
+    silentLink.observe(state, 4500);
+    QVERIFY(silentLink.evaluate(state, 6000).isEmpty());
+}
+
+void LinkPreferencePolicyTest::_primaryChangeClassification_data()
+{
+    QTest::addColumn<QString>("previousStatus");
+    QTest::addColumn<bool>("preferredLost");
+    QTest::addColumn<bool>("primarySignal");
+    for (const char* status : {"healthy", "lost", "removed", "missing-status", "empty-primary"}) {
+        for (bool preferredLost : {false, true}) {
+            for (bool primarySignal : {false, true}) {
+                const auto row = QStringLiteral("%1-%2-%3")
+                                     .arg(QString::fromLatin1(status))
+                                     .arg(preferredLost ? "outage" : "healthy")
+                                     .arg(primarySignal ? "signal" : "snapshot");
+                QTest::newRow(qPrintable(row)) << QString::fromLatin1(status) << preferredLost << primarySignal;
+            }
+        }
+    }
+}
+
+void LinkPreferencePolicyTest::_primaryChangeClassification()
+{
+    QFETCH(QString, previousStatus);
+    QFETCH(bool, preferredLost);
+    QFETCH(bool, primarySignal);
+    auto state = input();
+    state.linkNames.append(QStringLiteral("Backup B"));
+    state.linkStatuses.append(QString());
+    if (preferredLost) {
+        state.linkStatuses[1] = QStringLiteral("lost");
+    }
+    if (previousStatus == QStringLiteral("empty-primary")) {
+        state.primaryName.clear();
+    }
+    LinkPreferencePolicy policy(timing());
+    policy.observe(state, 0);
+    if (previousStatus == QStringLiteral("lost")) {
+        state.linkStatuses[0] = QStringLiteral("lost");
+        policy.observe(state, 1);
+    } else if (previousStatus == QStringLiteral("removed")) {
+        state.linkNames.removeFirst();
+        state.linkStatuses.removeFirst();
+    } else if (previousStatus == QStringLiteral("missing-status")) {
+        state.linkNames.move(0, 2);
+        state.linkStatuses.removeFirst();
+    }
+    state.primaryName = QStringLiteral("Backup B");
+    policy.observe(state, 2, false, primarySignal);
+    state.linkStatuses[state.linkNames.indexOf(state.preferredName)].clear();
+    policy.observe(state, 3);
+    if (previousStatus == QStringLiteral("healthy")) {
+        QVERIFY(policy.evaluate(state, 1000).isEmpty());
+    } else {
+        QCOMPARE(policy.evaluate(state, 1000), state.preferredName);
+    }
+}
+
+void LinkPreferencePolicyTest::_outagePickRelease_data()
+{
+    QTest::addColumn<QString>("release");
+    for (const char* name : {"next-loss", "preferred-primary", "preference-change", "reset"}) {
+        QTest::newRow(name) << QString::fromLatin1(name);
+    }
+}
+
+void LinkPreferencePolicyTest::_outagePickRelease()
+{
+    QFETCH(QString, release);
+    auto state = input();
+    state.primaryName = state.preferredName;
+    LinkPreferencePolicy policy(timing());
+    policy.observe(state, 0);
+    state.linkStatuses[1] = QStringLiteral("lost");
+    policy.observe(state, 1);
+    state.primaryName = QStringLiteral("RFD");
+    policy.observe(state, 1, false, true);
+    // Stock failover is followed by an explicit re-pick during the outage.
+    policy.observe(state, 2, false, true);
+    QVERIFY(policy.evaluate(state, 100).isEmpty());
+    state.linkStatuses[1].clear();
+    policy.observe(state, 101);
+    QVERIFY(policy.evaluate(state, 1000).isEmpty());
+    if (release == QStringLiteral("next-loss")) {
+        state.linkStatuses[1] = QStringLiteral("lost");
+        policy.observe(state, 1001);
+        state.linkStatuses[1].clear();
+    } else if (release == QStringLiteral("preferred-primary")) {
+        state.primaryName = state.preferredName;
+        policy.observe(state, 1001, false, true);
+        state.primaryName = QStringLiteral("RFD");
+        policy.observe(state, 1002, true, true);
+    } else if (release == QStringLiteral("preference-change")) {
+        state.preferredName = QStringLiteral("New UDP");
+        state.linkNames[1] = state.preferredName;
+    } else {
+        state.preferredName.clear();
+        policy.observe(state, 1001);
+        state.preferredName = QStringLiteral("UDP");
+    }
+    policy.observe(state, 1002);
+    QCOMPARE(policy.evaluate(state, 2000), state.preferredName);
+}
+
 void LinkPreferencePolicyTest::_selectionGuards_data()
 {
     QTest::addColumn<QString>("guard");
@@ -183,8 +301,8 @@ void LinkPreferencePolicyTest::_manualChoiceAndStockFailover()
     policy.observe(state, 1, false, true);
     state.linkStatuses[1].clear();
     QVERIFY(policy.evaluate(state, 2).isEmpty());
-    if (lostAtSignal) {
-        const qint64 deadline = samePrimary ? 5 : 17;
+    if (lostAtSignal && !samePrimary) {
+        const qint64 deadline = 17;
         QVERIFY(policy.evaluate(state, deadline - 1).isEmpty());
         QCOMPARE(policy.evaluate(state, deadline), state.preferredName);
     } else {

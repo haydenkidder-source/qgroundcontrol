@@ -7,6 +7,11 @@ class LinkPreferencePolicyTest : public UnitTest
     Q_OBJECT
 
 private slots:
+    void _initialSettleOutlastsLossDetection();
+    void _primaryChangeClassification_data();
+    void _primaryChangeClassification();
+    void _outagePickRelease_data();
+    void _outagePickRelease();
     void _selectionGuards_data();
     void _selectionGuards();
     void _continuousHealthAndPendingSwitch();

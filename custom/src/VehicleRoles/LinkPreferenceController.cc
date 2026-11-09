@@ -13,6 +13,7 @@
 #include "Vehicle.h"
 #include "VehicleLinkManager.h"
 #include "VehicleRoleController.h"
+#include "VehicleSigningController.h"
 
 QGC_LOGGING_CATEGORY(LinkPreferenceLog, "Custom.LinkPreference")
 
@@ -79,6 +80,10 @@ void LinkPreferenceController::_vehicleAdded(Vehicle* vehicle)
         connect(parameters, &ParameterManager::pendingWritesChanged, state, changed);
         connect(parameters, &ParameterManager::loadProgressChanged, state, changed);
     }
+    if (auto* signing = vehicle->signingController()) {
+        // The signing facade can signal inside primaryLinkChanged before our primary observer runs.
+        connect(signing, &VehicleSigningController::signingStatusChanged, state, changed, Qt::QueuedConnection);
+    }
     for (PlanManager* plan :
          {static_cast<PlanManager*>(vehicle->missionManager()), static_cast<PlanManager*>(vehicle->geoFenceManager()),
           static_cast<PlanManager*>(vehicle->rallyPointManager())}) {
@@ -120,6 +125,7 @@ LinkPreferencePolicy::Input LinkPreferenceController::_input(Vehicle* vehicle) c
     if (!links || !parameters || !mission || !fence || !rally) {
         return {};
     }
+    auto* signing = vehicle->signingController();
     // Public progress covers visible refreshes, but is not an aggregate parameter-read busy flag.
     return {.preferredName = _roles->preferredLinkConfigNameForSysid(vehicle->id()),
             .linkNames = links->linkNames(),
@@ -128,7 +134,7 @@ LinkPreferencePolicy::Input LinkPreferenceController::_input(Vehicle* vehicle) c
             .initialConnectDone = vehicle->isInitialConnectComplete(),
             .transferActive = !parameters->parametersReady() || parameters->pendingWrites() ||
                               parameters->loadProgress() > 0 || mission->inProgress() || fence->inProgress() ||
-                              rally->inProgress()};
+                              rally->inProgress() || (signing && signing->signingStatus().pending())};
 }
 
 void LinkPreferenceController::_observe(State* state, bool primarySignal)

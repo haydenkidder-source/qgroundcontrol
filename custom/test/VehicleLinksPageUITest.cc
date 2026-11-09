@@ -13,11 +13,15 @@
 
 #include "AppSettings.h"
 #include "COPController.h"
+#include "GeoFenceManager.h"
 #include "LinkManager.h"
 #include "LinkPreferenceController.h"
+#include "MissionManager.h"
 #include "MockLink.h"
 #include "MultiVehicleManager.h"
+#include "ParameterManager.h"
 #include "QmlObjectListModel.h"
+#include "RallyPointManager.h"
 #include "SettingsManager.h"
 #include "Vehicle.h"
 #include "VehicleLinkManager.h"
@@ -307,6 +311,21 @@ void VehicleLinksPageUITest::_preferredAndStatusTagsFollowVehicle()
         },
         [this, requestedSysid](QPointer<MockLink> backup, Vehicle* vehicle) {
             QVERIFY(backup && vehicle);
+            auto secondaryConfig = std::make_shared<MockConfiguration>(QStringLiteral("UI Secondary"));
+            secondaryConfig->setDynamic(true);
+            secondaryConfig->setIncrementVehicleId(false);
+            secondaryConfig->setSystemId(requestedSysid);
+            SharedLinkConfigurationPtr sharedSecondaryConfig = secondaryConfig;
+            QVERIFY(LinkManager::instance()->createConnectedLink(sharedSecondaryConfig));
+            QPointer<MockLink> secondary = qobject_cast<MockLink*>(secondaryConfig->link());
+            const auto disconnectSecondary = qScopeGuard([&secondary]() {
+                if (secondary) {
+                    secondary->disconnect();
+                }
+            });
+            QVERIFY(secondary);
+            auto* links = vehicle->vehicleLinkManager();
+            QTRY_COMPARE_WITH_TIMEOUT(links->linkNames().size(), 2, TestTimeout::longMs());
             auto config = std::make_shared<MockConfiguration>(QStringLiteral("UI UDP"));
             config->setDynamic(true);
             config->setIncrementVehicleId(false);
@@ -321,8 +340,13 @@ void VehicleLinksPageUITest::_preferredAndStatusTagsFollowVehicle()
             });
             QVERIFY(preferred);
             QCOMPARE(preferred->vehicleId(), backup->vehicleId());
-            auto* links = vehicle->vehicleLinkManager();
-            QTRY_COMPARE_WITH_TIMEOUT(links->linkNames().size(), 2, TestTimeout::longMs());
+            QTRY_COMPARE_WITH_TIMEOUT(links->linkNames().size(), 3, TestTimeout::longMs());
+            auto* parameters = vehicle->parameterManager();
+            QTRY_VERIFY_WITH_TIMEOUT(parameters->parametersReady() && !parameters->pendingWrites() &&
+                                         parameters->loadProgress() <= 0 && !vehicle->missionManager()->inProgress() &&
+                                         !vehicle->geoFenceManager()->inProgress() &&
+                                         !vehicle->rallyPointManager()->inProgress(),
+                                     TestTimeout::longMs());
             auto* roles = _roles();
             QVERIFY(roles);
             auto* preference = roles->findChild<LinkPreferenceController*>();
@@ -333,6 +357,7 @@ void VehicleLinksPageUITest::_preferredAndStatusTagsFollowVehicle()
             roles->addEntry(sysid, QStringLiteral("Rover"), QStringLiteral("Scout"), 0);
             roles->addLink(0, QStringLiteral("RFD"), QStringLiteral("UI RFD"));
             roles->addLink(0, QStringLiteral("UDP"), QStringLiteral("UI UDP"));
+            roles->addLink(0, QStringLiteral("Secondary"), QStringLiteral("UI Secondary"));
             const quint32 otherSysid = sysid == 1 ? 4294967295U : 1;
             roles->addEntry(otherSysid, QStringLiteral("Plane"), QStringLiteral("Other"), 0);
             roles->addLink(1, QStringLiteral("UDP"), QStringLiteral("UI UDP"));
@@ -343,7 +368,7 @@ void VehicleLinksPageUITest::_preferredAndStatusTagsFollowVehicle()
             QQuickItem* const otherPrimary = _requireItem(QStringLiteral("vehicleLinkPrimary_%1_0").arg(otherSysid));
             QQuickItem* const otherLost = _requireItem(QStringLiteral("vehicleLinkLost_%1_0").arg(otherSysid));
             QVERIFY(firstPrimary && secondPrimary && secondLost && otherPrimary && otherLost);
-            QVERIFY(firstPrimary->isVisible());
+            QTRY_VERIFY_WITH_TIMEOUT(firstPrimary->isVisible(), TestTimeout::shortMs());
             QVERIFY(!secondPrimary->isVisible() && !secondLost->isVisible());
             QVERIFY(!otherPrimary->isVisible() && !otherLost->isVisible());
             QVERIFY(clickButtonScrolled(QStringLiteral("vehiclePreferLink_%1_1").arg(sysid),
@@ -354,11 +379,26 @@ void VehicleLinksPageUITest::_preferredAndStatusTagsFollowVehicle()
             QTRY_VERIFY_WITH_TIMEOUT(secondPrimary->isVisible(), TestTimeout::shortMs());
             QVERIFY(!firstPrimary->isVisible());
 
+            QCOMPARE(links->linkNames().indexOf(QStringLiteral("UI Secondary")), 1);
+            QCOMPARE(links->linkNames().indexOf(QStringLiteral("UI UDP")), 2);
+            secondary->disconnect();
+            QTRY_COMPARE_WITH_TIMEOUT(links->linkNames().size(), 2, TestTimeout::longMs());
+            QCOMPARE(links->linkNames().indexOf(QStringLiteral("UI UDP")), 1);
+            QQuickItem* const secondaryRowPrimary = _requireItem(QStringLiteral("vehicleLinkPrimary_%1_2").arg(sysid));
+            QQuickItem* const secondaryRowLost = _requireItem(QStringLiteral("vehicleLinkLost_%1_2").arg(sysid));
+            QVERIFY(secondaryRowPrimary && secondaryRowLost);
+            // Removing a secondary shifts UDP; the following loss must still update the UDP row.
+            QTRY_VERIFY_WITH_TIMEOUT(!secondaryRowLost->isVisible(), TestTimeout::shortMs());
+            QVERIFY(!secondaryRowPrimary->isVisible());
+            QVERIFY(!secondLost->isVisible());
+            QVERIFY(!firstPrimary->isVisible() && secondPrimary->isVisible());
+
             ignoreLogMessage("Vehicle.StandardModes", QtWarningMsg,
                              QRegularExpression(QStringLiteral("Failed to retrieve available modes")));
             expectAppMessage(QRegularExpression(QStringLiteral("Switching communication to secondary link")));
             preferred->setCommLost(true);
             QTRY_VERIFY_WITH_TIMEOUT(secondLost->isVisible(), TestTimeout::longMs());
+            QVERIFY(!secondaryRowLost->isVisible() && !secondaryRowPrimary->isVisible());
             QTRY_VERIFY_WITH_TIMEOUT(firstPrimary->isVisible(), TestTimeout::shortMs());
             QVERIFY(!secondPrimary->isVisible());
             verifyExpectedLogMessage();
@@ -377,7 +417,7 @@ void VehicleLinksPageUITest::_preferredAndStatusTagsFollowVehicle()
             QCOMPARE(roles->failbackHoldSeconds(), 30);
             preferred->disconnect();
             QTRY_COMPARE_WITH_TIMEOUT(links->linkNames().size(), 1, TestTimeout::longMs());
-            QVERIFY(!secondPrimary->isVisible() && !secondLost->isVisible());
+            QTRY_VERIFY_WITH_TIMEOUT(!secondPrimary->isVisible() && !secondLost->isVisible(), TestTimeout::shortMs());
             QQuickItem* const notAttached = _requireItem(QStringLiteral("vehicleLinkNotAttached_%1_1").arg(sysid));
             QVERIFY(notAttached);
             QTRY_VERIFY_WITH_TIMEOUT(notAttached->isVisible(), TestTimeout::shortMs());

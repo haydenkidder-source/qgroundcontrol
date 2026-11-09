@@ -228,6 +228,16 @@ AnalyzePage {
                         property var  _entry:      object
                         readonly property var _vehicle: vehicleLinksPage._vehicleForSysid(_entry.sysid)
                         readonly property var _vehicleLinks: _vehicle ? _vehicle.vehicleLinkManager : null
+                        property var _linkState: ({ names: [], statuses: [], primary: "" })
+
+                        function _refreshLinkState() {
+                            _linkState = _vehicleLinks
+                                ? { names: _vehicleLinks.linkNames, statuses: _vehicleLinks.linkStatuses,
+                                    primary: _vehicleLinks.primaryLinkName }
+                                : { names: [], statuses: [], primary: "" }
+                        }
+
+                        on_VehicleLinksChanged: Qt.callLater(_refreshLinkState)
 
                         Rectangle {
                             Layout.fillWidth:   true
@@ -303,8 +313,8 @@ AnalyzePage {
                                     property var  _resolvedConfig: vehicleLinksPage._configForName(
                                                                         _linkObject.linkConfigName)
                                     property bool _connected:      _resolvedConfig !== null && _resolvedConfig.linkActive
-                                    readonly property int _attachedIndex: _vehicleLinks
-                                        ? _vehicleLinks.linkNames.indexOf(_linkObject.linkConfigName) : -1
+                                    readonly property int _attachedIndex: entrySection._linkState.names.indexOf(
+                                                                              _linkObject.linkConfigName)
 
                                     QGCLabel {
                                         Layout.preferredWidth:  ScreenTools.defaultFontPixelWidth * 16
@@ -372,17 +382,17 @@ AnalyzePage {
                                             objectName: "vehicleLinkPrimary_" + _entry.sysid + "_" + _linkIndex
                                             text:       qsTr("Primary")
                                             color:      qgcPal.colorGreen
-                                            visible:    _attachedIndex >= 0 && _vehicleLinks !== null &&
-                                                        _vehicleLinks.primaryLinkName === _linkObject.linkConfigName
+                                            visible:    _attachedIndex >= 0 &&
+                                                        entrySection._linkState.primary === _linkObject.linkConfigName
                                         }
 
                                         QGCLabel {
                                             objectName: "vehicleLinkLost_" + _entry.sysid + "_" + _linkIndex
                                             text:       qsTr("Comm lost")
                                             color:      qgcPal.warningText
-                                            visible:    _attachedIndex >= 0 && _vehicleLinks !== null &&
-                                                        _attachedIndex < _vehicleLinks.linkStatuses.length &&
-                                                        _vehicleLinks.linkStatuses[_attachedIndex] !== ""
+                                            visible:    _attachedIndex >= 0 &&
+                                                        _attachedIndex < entrySection._linkState.statuses.length &&
+                                                        entrySection._linkState.statuses[_attachedIndex] !== ""
                                         }
                                     }
 
@@ -398,8 +408,9 @@ AnalyzePage {
                                 Layout.fillWidth: true
                                 wrapMode: Text.WordWrap
                                 text: qsTr("QGC returns to the preferred link after a steady connection. " +
-                                           "Repeated losses make the wait longer. Picking another link pauses " +
-                                           "automatic return until the preferred link loses and regains communication.")
+                                           "Repeated losses make the wait longer. Picking another link, even during " +
+                                           "an outage, holds that link until the preferred link loses and regains " +
+                                           "communication again.")
                             }
 
                             RowLayout {
@@ -423,6 +434,17 @@ AnalyzePage {
                                 }
                             }
                         }
+
+                        Connections {
+                            target: entrySection._vehicleLinks
+
+                            // Stock signals before erasing a removed link; read all three values afterward.
+                            function onLinkNamesChanged() { Qt.callLater(entrySection._refreshLinkState) }
+                            function onLinkStatusesChanged() { Qt.callLater(entrySection._refreshLinkState) }
+                            function onPrimaryLinkChanged() { Qt.callLater(entrySection._refreshLinkState) }
+                        }
+
+                        Component.onCompleted: Qt.callLater(_refreshLinkState)
                     }
                 }
 

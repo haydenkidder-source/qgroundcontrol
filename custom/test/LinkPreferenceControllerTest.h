@@ -22,6 +22,8 @@ private slots:
     void _transferBusyAtDeadline_data();
     void _transferBusyAtDeadline();
     void _repickCurrentPrimary();
+    void _signingPendingAtDeadline_data();
+    void _signingPendingAtDeadline();
     void _reusedSysidStartsWithFreshHistory();
 
 private:
