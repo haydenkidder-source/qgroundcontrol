@@ -1,7 +1,8 @@
 # Unified pkg-config env management for GStreamer discovery — single mutator
 # for PKG_CONFIG_PATH / PKG_CONFIG_LIBDIR / --dont-define-prefix, used by the
 # platform discovery functions: platform/Linux.cmake (system-augment) and
-# platform/{Windows,MacOS,Android}.cmake (SDK lock-in).
+# platform/{Windows,MacOS,Android}.cmake (SDK lock-in) — and the pkg-config
+# lookup of macOS hosts (_qgc_gst_find_apple_pkg_config).
 #
 # The pkg-config state discovery derives is scoped to the GStreamer subtree, whose
 # later probes (HwBuffers' gstreamer-{cuda,vulkan,d3d*}-1.0) need the same SDK view:
@@ -30,7 +31,7 @@ function(_qgc_gst_save_pkgconfig_env)
     set_property(GLOBAL PROPERTY _QGC_GST_PKG_CONFIG_ENV_SAVED TRUE)
 endfunction()
 
-# gstreamer_apply_pkgconfig_env(
+# qgc_gst_apply_pkgconfig_env(
 #     MODE <SDK|SYSTEM_AUGMENT>
 #     LIBDIR <dir>...                 # one or more pkgconfig dirs (semicolon list)
 #     [PKG_CONFIG_EXE <path>]         # optional explicit pkg-config binary (PKG_CONFIG_EXECUTABLE)
@@ -48,9 +49,9 @@ endfunction()
 # scope.
 # cmakelang reads set(ENV{<name>}) as a variable name.
 # cmake-lint: disable=C0103
-function(gstreamer_apply_pkgconfig_env)
+function(qgc_gst_apply_pkgconfig_env)
     cmake_parse_arguments(PARSE_ARGV 0 ARG "DONT_DEFINE_PREFIX" "MODE;PKG_CONFIG_EXE" "LIBDIR")
-    _qgc_gst_check_args(gstreamer_apply_pkgconfig_env MODE LIBDIR)
+    _qgc_gst_check_args(qgc_gst_apply_pkgconfig_env MODE LIBDIR)
 
     _qgc_gst_save_pkgconfig_env()
     if(ARG_PKG_CONFIG_EXE)
@@ -84,9 +85,7 @@ function(gstreamer_apply_pkgconfig_env)
         string(REPLACE ";" "${_sep}" _pkg_config_path "${_pkg_config_paths}")
         set(ENV{PKG_CONFIG_PATH} "${_pkg_config_path}")
     else()
-        message(
-            FATAL_ERROR "gstreamer_apply_pkgconfig_env: invalid MODE='${ARG_MODE}' (expected SDK or SYSTEM_AUGMENT)"
-        )
+        message(FATAL_ERROR "qgc_gst_apply_pkgconfig_env: invalid MODE='${ARG_MODE}' (expected SDK or SYSTEM_AUGMENT)")
     endif()
 
     if(ARG_DONT_DEFINE_PREFIX AND NOT "--dont-define-prefix" IN_LIST PKG_CONFIG_ARGN)
@@ -99,7 +98,7 @@ function(gstreamer_apply_pkgconfig_env)
 endfunction()
 
 # qgc_gst_restore_pkgconfig_env()
-# Restores the PKG_CONFIG_PATH / PKG_CONFIG_LIBDIR environment gstreamer_apply_pkgconfig_env found.
+# Restores the PKG_CONFIG_PATH / PKG_CONFIG_LIBDIR environment qgc_gst_apply_pkgconfig_env found.
 # cmakelang reads set(ENV{<name>}) as a variable name.
 # cmake-lint: disable=C0103
 function(qgc_gst_restore_pkgconfig_env)
@@ -116,4 +115,33 @@ function(qgc_gst_restore_pkgconfig_env)
         endif()
     endforeach()
     set_property(GLOBAL PROPERTY _QGC_GST_PKG_CONFIG_ENV_SAVED FALSE)
+endfunction()
+
+# Sets the cache entry <out_var> to a pkg-config executable, preferring Homebrew's; an existing entry is kept.
+function(_qgc_gst_find_apple_pkg_config out_var)
+    if(DEFINED CACHE{${out_var}} AND EXISTS "$CACHE{${out_var}}")
+        return()
+    endif()
+    find_program(
+        _qgc_pkg_config
+        NAMES pkg-config pkgconf
+        PATHS /opt/homebrew/bin /usr/local/bin
+        NO_DEFAULT_PATH
+    )
+    if(NOT _qgc_pkg_config)
+        find_program(_qgc_pkg_config NAMES pkg-config pkgconf)
+    endif()
+    if(NOT _qgc_pkg_config)
+        message(
+            FATAL_ERROR
+                "Could not find pkg-config.\n"
+                "Install dependencies with: python3 tools/setup/install_dependencies --platform macos\n"
+                "or install pkg-config manually (for example: brew install pkg-config)."
+        )
+    endif()
+    set(${out_var}
+        "${_qgc_pkg_config}"
+        CACHE FILEPATH "pkg-config executable" FORCE
+    )
+    unset(_qgc_pkg_config CACHE)
 endfunction()

@@ -1,5 +1,7 @@
 #pragma once
 
+#include <functional>
+
 #include <QtCore/QObject>
 #include <QtCore/QPointer>
 #include <QtCore/QTimer>
@@ -41,20 +43,32 @@ public:
     void setVehicle(Vehicle* vehicle);
     void setOutput(QQuickItem* output);
     void setEnabled(bool enabled);
+    /// Permanently stops this session while application event delivery is still available.
+    void shutdown();
 
 private:
+    friend class COPVideoSessionTest;
+
+    void _queueUpdate();
     void _update();
+    void _invalidate();
+    void _releaseEndpoint();
     void _stop();
     void _setStatus(const QString& status);
     QPointer<Vehicle> _vehicle;
     QPointer<QQuickItem> _output;
-    VideoReceiver* _receiver = nullptr;
+    QPointer<VideoReceiver> _receiver;
+    std::function<VideoReceiver*(QObject*)> _receiverFactory;
+    std::function<void(QObject*, std::function<void(bool)>)> _requestBackendReady;
     QTimer _refresh;
     QString _status;
     QString _uri;
     QString _endpoint;
+    QString _pendingUri;
+    quint64 _generation = 0;
     bool _backendReady = false;
     bool _backendPending = false;
+    bool _shutdown = false;
     bool _enabled = true;
     bool _decoding = false;
 

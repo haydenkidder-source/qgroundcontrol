@@ -4,7 +4,7 @@ cmake_minimum_required(VERSION 3.25)
 # ABIs built from one cache coexist, as with Qt's multi-ABI sub-builds.
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}/..")
 include("${CMAKE_CURRENT_LIST_DIR}/_assert.cmake")
-include(Download)
+include(Acquire)
 include(Layout)
 include(PkgConfig)
 include(Platform)
@@ -28,8 +28,9 @@ foreach(_abi_dir IN LISTS _abi_dirs)
     file(WRITE "${_sandbox}/src/${_abi_dir}/lib/gstreamer-1.0/libgstcoreelements.a" "")
 endforeach()
 file(MAKE_DIRECTORY "${_cache_dir}")
-execute_process(COMMAND "${CMAKE_COMMAND}" -E tar cJf "${_archive}" ${_abi_dirs}
-                WORKING_DIRECTORY "${_sandbox}/src" COMMAND_ERROR_IS_FATAL ANY
+execute_process(
+    COMMAND "${CMAKE_COMMAND}" -E tar cJf "${_archive}" ${_abi_dirs} WORKING_DIRECTORY "${_sandbox}/src"
+                                                                                       COMMAND_ERROR_IS_FATAL ANY
 )
 file(SHA256 "${_archive}" _hash)
 set(QGC_BUILD_CONFIG_CONTENT
@@ -43,9 +44,12 @@ foreach(_case IN ITEMS "x86|x86" "x86_64|x86_64" "arm64-v8a|arm64")
     _qgc_gst_discover_android_sdk()
 
     set(_root "${_cache_dir}/${_abi_dir}/${_abi_dir}")
-    qgc_test_assert_streq("${CMAKE_ANDROID_ARCH_ABI} root" "${_root}" "${GStreamer_ROOT_DIR}")
-    qgc_test_assert_streq("${CMAKE_ANDROID_ARCH_ABI} lib path" "${_root}/lib" "${GSTREAMER_LIB_PATH}")
-    qgc_test_assert_streq("${CMAKE_ANDROID_ARCH_ABI} auto-downloaded" "TRUE" "${GStreamer_AUTO_DOWNLOADED}")
+    qgc_gst_layout_get(ROOT_DIR _recorded_root)
+    qgc_gst_layout_get(LIB_PATH _recorded_lib)
+    qgc_gst_layout_get(AUTO_DOWNLOADED _recorded_auto)
+    qgc_test_assert_streq("${CMAKE_ANDROID_ARCH_ABI} root" "${_root}" "${_recorded_root}")
+    qgc_test_assert_streq("${CMAKE_ANDROID_ARCH_ABI} lib path" "${_root}/lib" "${_recorded_lib}")
+    qgc_test_assert_streq("${CMAKE_ANDROID_ARCH_ABI} auto-downloaded" "TRUE" "${_recorded_auto}")
     file(READ "${_root}/include/abi.txt" _extracted_abi)
     qgc_test_assert_streq("${CMAKE_ANDROID_ARCH_ABI} tree" "${_abi_dir}" "${_extracted_abi}")
 endforeach()

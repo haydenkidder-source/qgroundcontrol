@@ -1,20 +1,27 @@
 #include "VideoSettings.h"
-#include "VideoManager.h"
 
-#include "QGCLoggingCategory.h"
-#include "QGCNetworkHelper.h"
 #include <QtCore/QSettings>
 #include <QtCore/QVariantList>
 
+#include "QGCLoggingCategory.h"
+#include "UVCDevices.h"
+#include "VideoBackend.h"
+
 QGC_LOGGING_CATEGORY(VideoSettingsLog, "Settings.VideoSettings")
 
-#ifdef QGC_GST_STREAMING
-#include "GStreamer.h"
-static constexpr bool kGstEnabled = true;
-#else
-static constexpr bool kGstEnabled = false;
-#endif
-#include "UVCReceiver.h"
+namespace {
+
+bool hasStreaming()
+{
+    return VideoBackend::instance().capabilities().streaming;
+}
+
+bool hasPipelineSettings()
+{
+    return VideoBackend::instance().capabilities().pipelineSettings;
+}
+
+}  // namespace
 
 DECLARE_SETTINGGROUP(Video, "Video")
 {
@@ -34,7 +41,7 @@ DECLARE_SETTINGGROUP(Video, "Video")
 #else
     videoSourceList.append(videoSourceHerelinkHotspot);
 #endif
-    QStringList uvcDevices = UVCReceiver::getDeviceNameList();
+    QStringList uvcDevices = UVCDevices::deviceNames();
     for (const QString& device : uvcDevices) {
         videoSourceList.append(device);
     }
@@ -72,6 +79,17 @@ DECLARE_SETTINGGROUP(Video, "Video")
         settings.endGroup();
     }
 
+    // Drop a stored streamEnabled=false: it has no UI, so it is a stale "disable when disarmed" state.
+    {
+        QSettings settings;
+        settings.beginGroup(settingsGroup);
+        if (!settings.value(streamEnabledName, true).toBool()) {
+            qCDebug(VideoSettingsLog) << "Clearing a stored streamEnabled=false";
+            settings.remove(streamEnabledName);
+        }
+        settings.endGroup();
+    }
+
     // Set default value for videoSource
     _setDefaults();
 }
@@ -88,12 +106,24 @@ void VideoSettings::_setDefaults()
 DECLARE_SETTINGSFACT(VideoSettings, aspectRatio)
 DECLARE_SETTINGSFACT(VideoSettings, videoFit)
 DECLARE_SETTINGSFACT(VideoSettings, gridLines)
+DECLARE_SETTINGSFACT(VideoSettings, showTelemetryOverlay)
 DECLARE_SETTINGSFACT(VideoSettings, showRecControl)
 DECLARE_SETTINGSFACT(VideoSettings, recordingFormat)
 DECLARE_SETTINGSFACT(VideoSettings, maxVideoSize)
 DECLARE_SETTINGSFACT(VideoSettings, enableStorageLimit)
 DECLARE_SETTINGSFACT(VideoSettings, streamEnabled)
 DECLARE_SETTINGSFACT(VideoSettings, disableWhenDisarmed)
+DECLARE_SETTINGSFACT(VideoSettings, udpUrl)
+DECLARE_SETTINGSFACT(VideoSettings, rtspUrl)
+DECLARE_SETTINGSFACT(VideoSettings, tcpUrl)
+DECLARE_SETTINGSFACT(VideoSettings, uvcCameraFormat)
+DECLARE_SETTINGSFACT(VideoSettings, uvcCameraRotation)
+DECLARE_SETTINGSFACT(VideoSettings, uvcCameraMirror)
+DECLARE_SETTINGSFACT(VideoSettings, uvcWhiteBalance)
+DECLARE_SETTINGSFACT(VideoSettings, uvcZoom)
+DECLARE_SETTINGSFACT(VideoSettings, uvcExposureCompensation)
+DECLARE_SETTINGSFACT(VideoSettings, uvcFocusMode)
+DECLARE_SETTINGSFACT(VideoSettings, uvcRecordingCodec)
 
 DECLARE_SETTINGSFACT_NO_FUNC(VideoSettings, videoSource)
 {
@@ -107,9 +137,18 @@ DECLARE_SETTINGSFACT_NO_FUNC(VideoSettings, videoSource)
                 _videoSourceFact->setRawValue(videoDisabled);
             }
         }
-        connect(_videoSourceFact, &Fact::valueChanged, this, &VideoSettings::_configChanged);
     }
     return _videoSourceFact;
+}
+
+// Only a GStreamer build offers a choice: without GStreamer, Qt Multimedia plays the streams.
+DECLARE_SETTINGSFACT_NO_FUNC(VideoSettings, videoBackend)
+{
+    if (!_videoBackendFact) {
+        _videoBackendFact = _createSettingsFact(videoBackendName);
+        _videoBackendFact->setUserVisible(hasPipelineSettings());
+    }
+    return _videoBackendFact;
 }
 
 DECLARE_SETTINGSFACT_NO_FUNC(VideoSettings, forceVideoDecoder)
@@ -117,9 +156,7 @@ DECLARE_SETTINGSFACT_NO_FUNC(VideoSettings, forceVideoDecoder)
     if (!_forceVideoDecoderFact) {
         _forceVideoDecoderFact = _createSettingsFact(forceVideoDecoderName);
 
-        _forceVideoDecoderFact->setUserVisible(kGstEnabled);
-
-        connect(_forceVideoDecoderFact, &Fact::valueChanged, this, &VideoSettings::_configChanged);
+        _forceVideoDecoderFact->setUserVisible(hasPipelineSettings());
     }
     return _forceVideoDecoderFact;
 }
@@ -129,9 +166,7 @@ DECLARE_SETTINGSFACT_NO_FUNC(VideoSettings, lowLatencyMode)
     if (!_lowLatencyModeFact) {
         _lowLatencyModeFact = _createSettingsFact(lowLatencyModeName);
 
-        _lowLatencyModeFact->setUserVisible(kGstEnabled);
-
-        connect(_lowLatencyModeFact, &Fact::valueChanged, this, &VideoSettings::_configChanged);
+        _lowLatencyModeFact->setUserVisible(hasStreaming());
     }
     return _lowLatencyModeFact;
 }
@@ -140,8 +175,7 @@ DECLARE_SETTINGSFACT_NO_FUNC(VideoSettings, rtpJitterLatencyMs)
 {
     if (!_rtpJitterLatencyMsFact) {
         _rtpJitterLatencyMsFact = _createSettingsFact(rtpJitterLatencyMsName);
-        _rtpJitterLatencyMsFact->setUserVisible(kGstEnabled);
-        connect(_rtpJitterLatencyMsFact, &Fact::valueChanged, this, &VideoSettings::_configChanged);
+        _rtpJitterLatencyMsFact->setUserVisible(hasPipelineSettings());
     }
     return _rtpJitterLatencyMsFact;
 }
@@ -150,8 +184,7 @@ DECLARE_SETTINGSFACT_NO_FUNC(VideoSettings, rtspAutoReconnect)
 {
     if (!_rtspAutoReconnectFact) {
         _rtspAutoReconnectFact = _createSettingsFact(rtspAutoReconnectName);
-        _rtspAutoReconnectFact->setUserVisible(kGstEnabled);
-        connect(_rtspAutoReconnectFact, &Fact::valueChanged, this, &VideoSettings::_configChanged);
+        _rtspAutoReconnectFact->setUserVisible(hasStreaming());
     }
     return _rtspAutoReconnectFact;
 }
@@ -161,22 +194,19 @@ DECLARE_SETTINGSFACT_NO_FUNC(VideoSettings, forceCpuVideoPath)
     if (!_forceCpuVideoPathFact) {
         _forceCpuVideoPathFact = _createSettingsFact(forceCpuVideoPathName);
 
-#if defined(QGC_HAS_ANY_GPU_PATH)
-        _forceCpuVideoPathFact->setUserVisible(kGstEnabled);
-#else
-        _forceCpuVideoPathFact->setUserVisible(false);
-#endif
+        _forceCpuVideoPathFact->setUserVisible(VideoBackend::instance().capabilities().gpuVideoPath);
     }
     return _forceCpuVideoPathFact;
 }
 
-// videoConversionElement / disablePixelAspectRatio are read by VideoBackend::createSink()
-// into a VideoSinkConfig and passed as construct-only bin properties — no env-var indirection.
+// videoConversionElement / disablePixelAspectRatio reach the receivers' display sinks as construct-only properties
+// (VideoStreamResolver::displayConfig()); VideoManager restarts the streams, which rebuilds the sinks, when they
+// change.
 DECLARE_SETTINGSFACT_NO_FUNC(VideoSettings, videoConversionElement)
 {
     if (!_videoConversionElementFact) {
         _videoConversionElementFact = _createSettingsFact(videoConversionElementName);
-        _videoConversionElementFact->setUserVisible(kGstEnabled);
+        _videoConversionElementFact->setUserVisible(hasPipelineSettings());
     }
     return _videoConversionElementFact;
 }
@@ -185,7 +215,7 @@ DECLARE_SETTINGSFACT_NO_FUNC(VideoSettings, disablePixelAspectRatio)
 {
     if (!_disablePixelAspectRatioFact) {
         _disablePixelAspectRatioFact = _createSettingsFact(disablePixelAspectRatioName);
-        _disablePixelAspectRatioFact->setUserVisible(kGstEnabled);
+        _disablePixelAspectRatioFact->setUserVisible(hasPipelineSettings());
     }
     return _disablePixelAspectRatioFact;
 }
@@ -196,148 +226,55 @@ DECLARE_SETTINGSFACT_NO_FUNC(VideoSettings, rtspTimeout)
     if (!_rtspTimeoutFact) {
         _rtspTimeoutFact = _createSettingsFact(rtspTimeoutName);
 
-        _rtspTimeoutFact->setUserVisible(kGstEnabled);
-
-        connect(_rtspTimeoutFact, &Fact::valueChanged, this, &VideoSettings::_configChanged);
+        _rtspTimeoutFact->setUserVisible(hasStreaming());
     }
     return _rtspTimeoutFact;
 }
 
-DECLARE_SETTINGSFACT_NO_FUNC(VideoSettings, udpUrl)
-{
-    if (!_udpUrlFact) {
-        _udpUrlFact = _createSettingsFact(udpUrlName);
-        connect(_udpUrlFact, &Fact::valueChanged, this, &VideoSettings::_configChanged);
-    }
-    return _udpUrlFact;
-}
-
-DECLARE_SETTINGSFACT_NO_FUNC(VideoSettings, rtspUrl)
-{
-    if (!_rtspUrlFact) {
-        _rtspUrlFact = _createSettingsFact(rtspUrlName);
-        connect(_rtspUrlFact, &Fact::valueChanged, this, &VideoSettings::_configChanged);
-    }
-    return _rtspUrlFact;
-}
-
-DECLARE_SETTINGSFACT_NO_FUNC(VideoSettings, tcpUrl)
-{
-    if (!_tcpUrlFact) {
-        _tcpUrlFact = _createSettingsFact(tcpUrlName);
-        connect(_tcpUrlFact, &Fact::valueChanged, this, &VideoSettings::_configChanged);
-    }
-    return _tcpUrlFact;
-}
-
-bool VideoSettings::streamConfigured(void)
-{
-    //-- First, check if it's autoconfigured
-    if(VideoManager::instance()->autoStreamConfigured()) {
-        qCDebug(VideoSettingsLog) << "Stream auto configured";
-        return true;
-    }
-    //-- Check if it's disabled
-    QString vSource = videoSource()->rawValue().toString();
-    if(vSource == videoSourceNoVideo || vSource == videoDisabled) {
-        return false;
-    }
-    //-- If UDP, check for URL
-    if(vSource == videoSourceUDPH264 || vSource == videoSourceUDPH265) {
-        const QString url = udpUrl()->rawValue().toString();
-        qCDebug(VideoSettingsLog) << "Testing configuration for UDP Stream:"
-                                  << QGCNetworkHelper::redactedUrlForLogging(url);
-        return !url.isEmpty();
-    }
-    //-- If RTSP, check for URL
-    if(vSource == videoSourceRTSP) {
-        const QString url = rtspUrl()->rawValue().toString();
-        qCDebug(VideoSettingsLog) << "Testing configuration for RTSP Stream:"
-                                  << QGCNetworkHelper::redactedUrlForLogging(url);
-        return !url.isEmpty();
-    }
-    //-- If TCP, check for URL
-    if(vSource == videoSourceTCP) {
-        const QString url = tcpUrl()->rawValue().toString();
-        qCDebug(VideoSettingsLog) << "Testing configuration for TCP Stream:"
-                                  << QGCNetworkHelper::redactedUrlForLogging(url);
-        return !url.isEmpty();
-    }
-    //-- If MPEG-TS, check for URL
-    if(vSource == videoSourceMPEGTS) {
-        const QString url = udpUrl()->rawValue().toString();
-        qCDebug(VideoSettingsLog) << "Testing configuration for MPEG-TS Stream:"
-                                  << QGCNetworkHelper::redactedUrlForLogging(url);
-        return !url.isEmpty();
-    }
-    //-- If Herelink Air unit, good to go
-    if(vSource == videoSourceHerelinkAirUnit) {
-        qCDebug(VideoSettingsLog) << "Stream configured for Herelink Air Unit";
-        return true;
-    }
-    //-- If Herelink Hotspot, good to go
-    if(vSource == videoSourceHerelinkHotspot) {
-        qCDebug(VideoSettingsLog) << "Stream configured for Herelink Hotspot";
-        return true;
-    }
-    if (UVCReceiver::enabled() && UVCReceiver::deviceExists(vSource)) {
-        qCDebug(VideoSettingsLog) << "Stream configured for UVC";
-        return true;
-    }
-    return false;
-}
-
-void VideoSettings::_configChanged(QVariant)
-{
-    emit streamConfiguredChanged(streamConfigured());
-}
-
 void VideoSettings::_setForceVideoDecodeList()
 {
-#ifdef QGC_GST_STREAMING
-    static const QList<GStreamer::VideoDecoderOptions> removeForceVideoDecodeList{
+    if (!hasPipelineSettings()) {
+        return;
+    }
+    static const QList<VideoDecoder::Options> removeForceVideoDecodeList{
 #if defined(Q_OS_ANDROID)
-    GStreamer::VideoDecoderOptions::ForceVideoDecoderDirectX3D,
-    GStreamer::VideoDecoderOptions::ForceVideoDecoderVideoToolbox,
-    GStreamer::VideoDecoderOptions::ForceVideoDecoderVAAPI,
-    GStreamer::VideoDecoderOptions::ForceVideoDecoderNVIDIA,
-    GStreamer::VideoDecoderOptions::ForceVideoDecoderIntel,
+        VideoDecoder::ForceVideoDecoderDirectX3D, VideoDecoder::ForceVideoDecoderVideoToolbox,
+        VideoDecoder::ForceVideoDecoderVAAPI,     VideoDecoder::ForceVideoDecoderNVIDIA,
+        VideoDecoder::ForceVideoDecoderIntel,
 #elif defined(Q_OS_LINUX)
-    GStreamer::VideoDecoderOptions::ForceVideoDecoderDirectX3D,
-    GStreamer::VideoDecoderOptions::ForceVideoDecoderVideoToolbox,
+        VideoDecoder::ForceVideoDecoderDirectX3D,
+        VideoDecoder::ForceVideoDecoderVideoToolbox,
 #elif defined(Q_OS_WIN)
-    GStreamer::VideoDecoderOptions::ForceVideoDecoderVideoToolbox,
-    GStreamer::VideoDecoderOptions::ForceVideoDecoderVulkan,
+        VideoDecoder::ForceVideoDecoderVideoToolbox,
+        VideoDecoder::ForceVideoDecoderVulkan,
 #elif defined(Q_OS_MACOS)
-    GStreamer::VideoDecoderOptions::ForceVideoDecoderDirectX3D,
-    GStreamer::VideoDecoderOptions::ForceVideoDecoderVAAPI,
+        VideoDecoder::ForceVideoDecoderDirectX3D,
+        VideoDecoder::ForceVideoDecoderVAAPI,
 #elif defined(Q_OS_IOS)
-    GStreamer::VideoDecoderOptions::ForceVideoDecoderDirectX3D,
-    GStreamer::VideoDecoderOptions::ForceVideoDecoderVAAPI,
-    GStreamer::VideoDecoderOptions::ForceVideoDecoderNVIDIA,
-    GStreamer::VideoDecoderOptions::ForceVideoDecoderIntel,
+        VideoDecoder::ForceVideoDecoderDirectX3D,
+        VideoDecoder::ForceVideoDecoderVAAPI,
+        VideoDecoder::ForceVideoDecoderNVIDIA,
+        VideoDecoder::ForceVideoDecoderIntel,
 #endif
     };
 
-    for (const auto &value : removeForceVideoDecodeList) {
+    for (const auto& value : removeForceVideoDecodeList) {
         _nameToMetaDataMap[forceVideoDecoderName]->removeEnumInfo(value);
     }
-#endif
 }
 
 void VideoSettings::pruneUnavailableDecoders()
 {
-#ifdef QGC_GST_STREAMING
-    static const QList<GStreamer::VideoDecoderOptions> hardwareFamilies{
-        GStreamer::VideoDecoderOptions::ForceVideoDecoderNVIDIA,
-        GStreamer::VideoDecoderOptions::ForceVideoDecoderVAAPI,
-        GStreamer::VideoDecoderOptions::ForceVideoDecoderDirectX3D,
-        GStreamer::VideoDecoderOptions::ForceVideoDecoderVideoToolbox,
-        GStreamer::VideoDecoderOptions::ForceVideoDecoderIntel,
-        GStreamer::VideoDecoderOptions::ForceVideoDecoderVulkan,
+    if (!hasPipelineSettings()) {
+        return;
+    }
+    static const QList<VideoDecoder::Options> hardwareFamilies{
+        VideoDecoder::ForceVideoDecoderNVIDIA,    VideoDecoder::ForceVideoDecoderVAAPI,
+        VideoDecoder::ForceVideoDecoderDirectX3D, VideoDecoder::ForceVideoDecoderVideoToolbox,
+        VideoDecoder::ForceVideoDecoderIntel,     VideoDecoder::ForceVideoDecoderVulkan,
     };
 
-    const QList<GStreamer::VideoDecoderOptions> available = GStreamer::availableDecoderFamilies();
+    const QList<VideoDecoder::Options> available = VideoBackend::instance().availableDecoderFamilies();
     const auto metaIt = _nameToMetaDataMap.constFind(forceVideoDecoderName);
     if (metaIt == _nameToMetaDataMap.constEnd() || !metaIt.value()) {
         return;
@@ -360,7 +297,6 @@ void VideoSettings::pruneUnavailableDecoders()
         emit fact->enumsChanged();
     }
     if (!metaData->enumValues().contains(fact->rawValue())) {
-        fact->setRawValue(GStreamer::VideoDecoderOptions::ForceVideoDecoderDefault);
+        fact->setRawValue(VideoDecoder::ForceVideoDecoderDefault);
     }
-#endif
 }

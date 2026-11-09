@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """Run Android emulator boot smoke test for QGroundControl.
 
-The defaults are android-emulator-test's settings; it passes only the APK and package.
+Passes only when QGC logs its simple boot test's completion marker, so the APK must launch QGC with
+``--simple-boot-test --logging:Main`` (android.yml configures the emulator leg's APK with
+android-emulator-test's ``boot-test.cmake``), and its process then exits without crashing. The
+defaults are android-emulator-test's settings; it passes only the APK and package.
 """
 
 from __future__ import annotations
@@ -26,6 +29,20 @@ ADB_PROBE_TIMEOUT_SECONDS = 20
 ADB_READY_TIMEOUT_SECONDS = 360
 # Failure reports read logcat even when the device never became ready.
 LOGCAT_TIMEOUT_SECONDS = 60
+BOOT_TEST_COMPLETED = "Simple boot test completed"
+BOOT_TEST_FAILED = "Simple boot test failed"
+# QGC logs what failed its boot test, like the GStreamer self-test's findings, before the marker.
+GSTREAMER_SELF_TEST_CATEGORY = "Video.GStreamer.SelfTest"
+_BOOT_TEST_REPORT_PATTERN = re.compile(
+    rf"{re.escape(BOOT_TEST_FAILED)}|{re.escape(GSTREAMER_SELF_TEST_CATEGORY)}"
+)
+MAX_BOOT_TEST_REPORT_LINES = 20
+# After main() returns, Android destroys QGC's activity and Qt ends the process (exit-time teardown).
+EXIT_TIMEOUT_SECONDS = 30
+EXIT_CRASH_MESSAGE = "QGroundControl crashed after completing the boot test"
+# What a crashing process logs itself: libc's abort and fatal-signal reports, ART's uncaught exceptions.
+_APP_CRASH_PATTERN = re.compile(r"Fatal signal|FORTIFY:|FATAL EXCEPTION")
+MAX_CRASH_REPORT_LINES = 10
 
 
 def run_command(
@@ -86,6 +103,25 @@ def install_with_retries(apk_path: Path, retries: int, retry_delay: int) -> bool
     return False
 
 
+def grant_all_files_access(package_name: str) -> None:
+    """Grant the app all-files access before it starts.
+
+    QGC otherwise requests it at startup by opening the system settings over its window, which
+    then never gets a surface, so the boot test does not complete.
+    """
+    cmd = ["adb", "shell", "appops", "set", "--uid", package_name]
+    try:
+        result = run_command(
+            [*cmd, "MANAGE_EXTERNAL_STORAGE", "allow"], timeout=ADB_PROBE_TIMEOUT_SECONDS
+        )
+    except subprocess.TimeoutExpired:
+        gh_warning(f"Granting {package_name} all-files access timed out")
+        return
+    if result.returncode != 0:
+        detail = output_text(result.stderr).strip() or output_text(result.stdout).strip()
+        gh_warning(f"Cannot grant {package_name} all-files access: {detail}")
+
+
 def read_logcat() -> str:
     try:
         result = run_command(["adb", "logcat", "-d"], timeout=LOGCAT_TIMEOUT_SECONDS)
@@ -124,6 +160,12 @@ _GSTREAMER_FAILURE_PATTERN = re.compile(
 )
 
 
+def boot_test_report(content: str) -> list[str]:
+    """Return the last logcat lines of a failed boot test and of the GStreamer self-test."""
+    lines = [line for line in content.splitlines() if _BOOT_TEST_REPORT_PATTERN.search(line)]
+    return lines[-MAX_BOOT_TEST_REPORT_LINES:]
+
+
 def print_gstreamer_log_group(content: str, max_lines: int = 120) -> None:
     matches = [line for line in content.splitlines() if _GSTREAMER_LOG_PATTERN.search(line)]
     if not matches:
@@ -135,6 +177,10 @@ def print_gstreamer_log_group(content: str, max_lines: int = 120) -> None:
 
 
 _LOGCAT_TIME_PATTERN = re.compile(r"^(?P<timestamp>\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3})")
+# LogcatPoller's `-v time` format: "MM-DD HH:MM:SS.mmm L/Tag( PID): message".
+_LOGCAT_PID_PATTERN = re.compile(
+    r"^\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3} [VDIWEFS]/[^(]*\(\s*(?P<pid>\d+)\):"
+)
 
 
 def _extract_logcat_timestamp(line: str) -> str | None:
@@ -142,6 +188,30 @@ def _extract_logcat_timestamp(line: str) -> str | None:
     if not match:
         return None
     return match.group("timestamp")
+
+
+def logcat_pid(line: str) -> int | None:
+    match = _LOGCAT_PID_PATTERN.match(line)
+    return int(match.group("pid")) if match else None
+
+
+def boot_test_pid(content: str) -> int | None:
+    """Return the pid of the process that logged the boot test's completion marker."""
+    for line in content.splitlines():
+        if BOOT_TEST_COMPLETED in line:
+            return logcat_pid(line)
+    return None
+
+
+def crash_lines(content: str, pid: int) -> list[str]:
+    """Return the lines reporting a crash of process *pid*: its own and crash_dump's."""
+    dump_pattern = re.compile(rf"performing dump of process {pid}\b|\bpid: {pid}, tid: ")
+    return [
+        line
+        for line in content.splitlines()
+        if (logcat_pid(line) == pid and _APP_CRASH_PATTERN.search(line))
+        or dump_pattern.search(line)
+    ]
 
 
 class LogcatPoller:
@@ -210,6 +280,42 @@ def app_running_from_process_table(package_name: str, process_table: str) -> boo
     return False
 
 
+def pid_in_process_table(pid: int, process_table: str) -> bool:
+    """Report whether `ps -A` output, whose second column is the PID, lists *pid*."""
+    return any(line.split()[1:2] == [str(pid)] for line in process_table.splitlines())
+
+
+def watch_app_exit(logcat_content: str, timeout: int) -> tuple[list[str], str]:
+    """Read logcat until the boot-tested process exits, for at most *timeout* seconds.
+
+    Returns the lines reporting a crash of that process and the attempt's logcat. A process that
+    is still running at the end only warns.
+    """
+    pid = boot_test_pid(logcat_content)
+    if pid is None:
+        gh_warning(f"No pid on the '{BOOT_TEST_COMPLETED}' logcat line; not watching the app exit")
+        return [], logcat_content
+
+    print(f"Watching QGroundControl (pid {pid}) exit (timeout: {timeout}s)...")
+    poller = LogcatPoller()
+    content = ""
+    for _ in range(timeout):
+        running = pid_in_process_table(pid, get_process_table())
+        content, delta = poller.poll()
+        crashes = crash_lines(delta, pid)
+        if crashes or not running:
+            if not crashes:
+                # Let logd take what the process and crash_dump logged as it ended.
+                time.sleep(1)
+                content, delta = poller.poll()
+                crashes = crash_lines(delta, pid)
+            return crashes, content or logcat_content
+        time.sleep(1)
+
+    gh_warning(f"QGroundControl (pid {pid}) was still running {timeout}s after the boot test")
+    return [], content or logcat_content
+
+
 def emit_failure(
     message: str,
     log_output: Path,
@@ -237,12 +343,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Android package name",
     )
     parser.add_argument("--timeout", type=int, default=120, help="Timeout in seconds")
-    parser.add_argument(
-        "--stability-window",
-        type=int,
-        default=20,
-        help="Seconds app must remain alive after launch",
-    )
     parser.add_argument(
         "--log-output",
         type=Path,
@@ -273,13 +373,18 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=2,
         help="Number of launch attempts before failing the boot test",
     )
+    parser.add_argument(
+        "--exit-timeout",
+        type=int,
+        default=EXIT_TIMEOUT_SECONDS,
+        help="Seconds to watch the app exit after the boot test completes",
+    )
     return parser.parse_args(argv)
 
 
 def run_boot_attempt(
     package_name: str,
     timeout: int,
-    stability_window: int,
     app_launch_pattern: re.Pattern[str],
     app_log_pattern: re.Pattern[str],
     crash_signature_pattern: re.Pattern[str],
@@ -313,7 +418,6 @@ def run_boot_attempt(
 
     print(f"Waiting for boot test to complete (timeout: {timeout}s)...")
     app_launched = False
-    process_running_since: float | None = None
     app_seen_running_once = False
     consecutive_not_running = 0
 
@@ -321,19 +425,23 @@ def run_boot_attempt(
         logcat_content, logcat_delta = logcat_poller.poll()
         saw_app_logs = bool(app_log_pattern.search(logcat_delta))
 
-        if "Simple boot test completed" in logcat_delta:
+        if BOOT_TEST_FAILED in logcat_delta:
+            return (
+                False,
+                "QGroundControl's simple boot test failed",
+                None,
+                logcat_content,
+                app_log_pattern,
+            )
+        if BOOT_TEST_COMPLETED in logcat_delta:
             print(f"Boot test completed successfully in {second}s")
             return True, None, None, logcat_content, app_log_pattern
 
         process_table = get_process_table()
         is_running = app_running_from_process_table(package_name, process_table)
         if is_running:
-            if process_running_since is None:
-                process_running_since = time.monotonic()
             app_seen_running_once = True
             consecutive_not_running = 0
-        else:
-            process_running_since = None
 
         launch_detected_in_log = bool(app_launch_pattern.search(logcat_delta))
         if not app_launched and (launch_detected_in_log or is_running or saw_app_logs):
@@ -344,10 +452,7 @@ def run_boot_attempt(
                 launch_source = "running process"
             else:
                 launch_source = "application logs"
-            print(
-                f"App launch detected ({launch_source}); waiting for "
-                f"{stability_window}s stability window or simple boot completion marker."
-            )
+            print(f"App launch detected ({launch_source}); waiting for '{BOOT_TEST_COMPLETED}'.")
 
         has_relevant_crash = any(
             crash_signature_pattern.search(line) and crash_context_pattern.search(line)
@@ -381,32 +486,27 @@ def run_boot_attempt(
             if app_seen_running_once and consecutive_not_running >= 5:
                 return (
                     False,
-                    "App process exited during stability check",
+                    f"App process exited before logging '{BOOT_TEST_COMPLETED}'",
                     None,
                     logcat_content,
                     crash_log_pattern,
                 )
 
-            if (
-                process_running_since is not None
-                and time.monotonic() - process_running_since >= stability_window
-            ):
-                print(
-                    f"Boot test passed: app remained running for {stability_window}s after launch."
-                )
-                return True, None, None, logcat_content, app_log_pattern
-
         if second == timeout:
-            timeout_notice = None
-            if app_launched:
-                timeout_notice = "App launched but did not satisfy the stability/marker checks."
-            return (
-                False,
-                f"Boot test timed out after {timeout}s",
-                timeout_notice,
-                logcat_content,
-                app_log_pattern,
-            )
+            message = f"Boot test timed out after {timeout}s"
+            notice = None
+            if is_running:
+                message = (
+                    f"QGroundControl is running but did not log '{BOOT_TEST_COMPLETED}' "
+                    f"within {timeout}s"
+                )
+                notice = (
+                    "The APK must launch QGroundControl with --simple-boot-test --logging:Main "
+                    "(configure it with -C .github/actions/android-emulator-test/boot-test.cmake)."
+                )
+            elif app_launched:
+                message = f"App launched but did not log '{BOOT_TEST_COMPLETED}' within {timeout}s"
+            return (False, message, notice, logcat_content, app_log_pattern)
 
         time.sleep(1)
 
@@ -461,6 +561,7 @@ def main(argv: list[str] | None = None) -> int:
             args.log_output,
             app_log_pattern,
         )
+    grant_all_files_access(args.package)
 
     final_error_message = "Boot test did not reach a passing condition"
     final_notice = None
@@ -472,7 +573,6 @@ def main(argv: list[str] | None = None) -> int:
         passed, message, notice, logcat_content, log_pattern = run_boot_attempt(
             package_name=args.package,
             timeout=args.timeout,
-            stability_window=args.stability_window,
             app_launch_pattern=app_launch_pattern,
             app_log_pattern=app_log_pattern,
             crash_signature_pattern=crash_signature_pattern,
@@ -481,7 +581,13 @@ def main(argv: list[str] | None = None) -> int:
         )
 
         if passed:
+            # A crash at exit is QGC's, not the emulator's, so a new attempt must not hide it.
+            crashes, logcat_content = watch_app_exit(logcat_content, args.exit_timeout)
             write_log(args.log_output, logcat_content)
+            if crashes:
+                gh_error("\n".join([EXIT_CRASH_MESSAGE, *crashes[:MAX_CRASH_REPORT_LINES]]))
+                print_log_group(logcat_content, crash_log_pattern)
+                return 1
             print_log_group(logcat_content, app_log_pattern)
             print_gstreamer_log_group(logcat_content)
             print(f"Emulator boot test passed for {args.package}")
@@ -503,7 +609,7 @@ def main(argv: list[str] | None = None) -> int:
         final_logcat = read_logcat()
 
     write_log(args.log_output, final_logcat)
-    gh_error(final_error_message)
+    gh_error("\n".join([final_error_message, *boot_test_report(final_logcat)]))
     if final_notice:
         gh_notice(final_notice)
     print_log_group(final_logcat, final_log_pattern)

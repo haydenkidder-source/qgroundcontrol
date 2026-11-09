@@ -38,6 +38,7 @@
 #include "QGCVersionCheck.h"
 #include "SettingsManager.h"
 #include "Vehicle.h"
+#include "VideoBackend.h"
 #include "VideoManager.h"
 #include "qgc_version.h"
 
@@ -245,9 +246,9 @@ void QGCApplication::init()
     }
 
     if (_simpleBootTest) {
-        // Since GStream builds are so problematic we initialize video during the simple boot test
-        // to make sure it works and verfies plugin availability.
-        const bool videoInitialized = _initVideo();
+        // Since GStreamer builds are so problematic, the simple boot test initializes video and proves that the
+        // packaged runtime decodes and records.
+        const bool videoInitialized = _initVideo() && VideoBackend::instance().selfTest();
         const bool qmlRootLoaded = _initQmlRootWindow();
         _bootTestPassed = videoInitialized && qmlRootLoaded;
     } else if (!_runningUnitTests) {
@@ -257,10 +258,6 @@ void QGCApplication::init()
 
 bool QGCApplication::_initVideo()
 {
-#ifdef QGC_GST_STREAMING
-    qCDebug(QGCApplicationLog) << "Using default graphics API for appsink → VideoOutput video path";
-#endif
-
     QGCCorePlugin::instance();  // CorePlugin must be initialized before VideoManager for Video Cleanup
     VideoManager* videoManager = VideoManager::instance();
     videoManager->startVideoBackendInit();

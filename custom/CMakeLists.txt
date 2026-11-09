@@ -501,4 +501,48 @@ if(QGC_BUILD_TESTING)
         RESOURCE_LOCK
         Settings
     )
+    # COP video sessions and the standard-receiver gate are tested against upstream's fake receiver.
+    cmake_language(
+        DEFER
+        DIRECTORY
+        "${CMAKE_SOURCE_DIR}"
+        CALL
+        target_sources
+        QGCUnitTests
+        PRIVATE
+        "${CMAKE_SOURCE_DIR}/${QGC_CUSTOM_DIR}/test/COPVideoSessionTest.cc"
+        "${CMAKE_SOURCE_DIR}/${QGC_CUSTOM_DIR}/test/COPVideoSessionTest.h"
+        "${CMAKE_SOURCE_DIR}/test/VideoManager/VideoManagerPortTest.cc"
+        "${CMAKE_SOURCE_DIR}/test/VideoManager/VideoManagerPortTest.h"
+    )
+    cmake_language(
+        DEFER
+        DIRECTORY
+        "${CMAKE_SOURCE_DIR}"
+        CALL
+        target_include_directories
+        QGCUnitTests
+        PRIVATE
+        "${CMAKE_SOURCE_DIR}/test/VideoManager"
+    )
+    cmake_language(
+        DEFER
+        DIRECTORY
+        "${CMAKE_SOURCE_DIR}"
+        CALL
+        add_qgc_test
+        COPVideoSessionTest
+        LABELS
+        Unit
+    )
+    cmake_language(
+        DEFER
+        DIRECTORY
+        "${CMAKE_SOURCE_DIR}"
+        CALL
+        add_qgc_test
+        VideoManagerPortTest
+        LABELS
+        Unit
+    )
 endif()

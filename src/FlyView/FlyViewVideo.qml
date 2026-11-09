@@ -2,27 +2,20 @@ import QtQuick
 
 import QGroundControl
 import QGroundControl.Controls
+import QGroundControl.VideoManager
 
 Item {
     id: _root
 
     property Item pipView
+    /// Height the Fly View toolbar covers at the top of the full-size video.
+    property real topInset: 0
     property Item pipState: videoPipState
 
     PipState {
         id:         videoPipState
         pipView:    _root.pipView
         isDark:     true
-
-        onWindowAboutToOpen: {
-            QGroundControl.videoManager.stopVideo()
-            videoStartDelay.start()
-        }
-
-        onWindowAboutToClose: {
-            QGroundControl.videoManager.stopVideo()
-            videoStartDelay.start()
-        }
 
         onStateChanged: {
             if (pipState.state !== pipState.fullState) {
@@ -31,19 +24,12 @@ Item {
         }
     }
 
-    Timer {
-        id:           videoStartDelay
-        interval:     2000;
-        running:      false
-        repeat:       false
-        onTriggered:  QGroundControl.videoManager.startVideo()
-    }
-
     //-- Video Streaming
-    FlightDisplayViewVideo {
-        id:             videoStreaming
-        anchors.fill:   parent
-        useSmallFont:   _root.pipState.state !== _root.pipState.fullState
+    VideoView {
+        id:                 videoStreaming
+        anchors.fill:       parent
+        useSmallFont:       _root.pipState.state !== _root.pipState.fullState
+        thermalPipTopInset: _root.pipState.state === _root.pipState.fullState ? _root.topInset : 0
         visible:        QGroundControl.videoManager.isStreamSource || QGroundControl.videoManager.isUvc
     }
 
@@ -71,15 +57,15 @@ Item {
     OnScreenGimbalController {
         id:                      onScreenGimbalController
         anchors.fill:            parent
-        cameraTrackingEnabled:   !!(videoStreaming._camera && videoStreaming._camera.trackingEnabled)
+        cameraTrackingEnabled:   !!(videoStreaming.camera && videoStreaming.camera.trackingEnabled)
     }
 
     OnScreenCameraTrackingController {
         id:                      cameraTrackingController
         anchors.fill:            parent
-        camera:                  videoStreaming._camera
-        videoWidth:              videoStreaming.getWidth()
-        videoHeight:             videoStreaming.getHeight()
+        camera:                  videoStreaming.camera
+        videoWidth:              videoStreaming.videoWidth
+        videoHeight:             videoStreaming.videoHeight
     }
 
     MouseArea {
