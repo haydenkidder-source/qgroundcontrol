@@ -32,6 +32,23 @@ into command-timeout behavior on this same mesh, which also flagged this exact r
    independent of the sysid mapping. Reassigning a radio's port means editing that vehicle's
    link; the sysid mapping does not change, and vice versa.
 
+## Preferring one link
+
+On the bench, open Analyze > Vehicle Links and tick "Preferred" beside the UDP link on
+that vehicle's card. Leave it unticked to keep the existing link behavior.
+First automatic selection, at startup or when attached later, needs 6 seconds of steady communication.
+Keep a second link connected: when UDP communication is lost, QGC fails over as soon as
+it detects the loss. After failover, UDP must stay steady for the configured hold before
+QGC returns (15 seconds by default). Change "Wait before returning (seconds)" at the top
+of the page to a value from 5 to 300. Repeated losses within a minute of returning double
+the wait, up to 5 minutes. Visible parameter, mission, fence and rally transfers and pending
+MAVLink signing changes also delay the return.
+To pick a link by hand, open main status and choose it under "Primary Link".
+That choice holds until the preferred link loses and regains communication again, even
+when picked during an outage; unticking and re-ticking "Preferred" resets the history,
+and picking the preferred link itself clears the hold.
+Watch for "Primary" on the link and `"<vehicle>: communication back on <link>"` on return.
+
 ## Current port assignments
 
 Tracked internally, not in this repo - actual sysid/port/link-name assignments for the fleet are
