@@ -67,8 +67,10 @@ void LinkPreferencePolicyTest::_primaryChangeClassification()
     if (previousStatus == QStringLiteral("empty-primary")) {
         state.primaryName.clear();
     }
-    LinkPreferencePolicy policy(timing());
-    policy.observe(state, 0);
+    const auto testTiming = timing();
+    LinkPreferencePolicy policy(testTiming);
+    // Isolate classification of the next primary change from the initial snapshot.
+    policy.observe(state, 0, true);
     if (previousStatus == QStringLiteral("lost")) {
         state.linkStatuses[0] = QStringLiteral("lost");
         policy.observe(state, 1);
@@ -80,13 +82,18 @@ void LinkPreferencePolicyTest::_primaryChangeClassification()
         state.linkStatuses.removeFirst();
     }
     state.primaryName = QStringLiteral("Backup B");
+    QCOMPARE(LinkPreferencePolicy::preferredHealthy(state), !preferredLost);
     policy.observe(state, 2, false, primarySignal);
     state.linkStatuses[state.linkNames.indexOf(state.preferredName)].clear();
-    policy.observe(state, 3);
+    constexpr qint64 recoveryTime = 3;
+    policy.observe(state, recoveryTime);
+    QVERIFY(LinkPreferencePolicy::preferredHealthy(state));
+    // Outlast both initial settling and failover recovery without introducing a new loss.
+    const qint64 afterHold = recoveryTime + qMax(testTiming.initialSettleMs, testTiming.baseHoldMs) + 1;
     if (previousStatus == QStringLiteral("healthy")) {
-        QVERIFY(policy.evaluate(state, 1000).isEmpty());
+        QVERIFY(policy.evaluate(state, afterHold).isEmpty());
     } else {
-        QCOMPARE(policy.evaluate(state, 1000), state.preferredName);
+        QCOMPARE(policy.evaluate(state, afterHold), state.preferredName);
     }
 }
 

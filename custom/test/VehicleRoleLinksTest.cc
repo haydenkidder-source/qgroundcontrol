@@ -161,7 +161,8 @@ void VehicleRoleLinksTest::_preferredLinksPersistAndStayUnique()
     QVERIFY(controller.preferredLinkConfigNameForSysid(257).isEmpty());
     controller.setFailbackHoldSeconds(42);
     QCOMPARE(QSettings().value(QStringLiteral("Custom/LinkPreference/FailbackHoldSeconds")).toInt(), 42);
-    QFile savedFile(SettingsManager::instance()->appSettings()->settingsSavePath() + QStringLiteral("/VehicleRoles.json"));
+    QFile savedFile(SettingsManager::instance()->appSettings()->settingsSavePath() +
+                    QStringLiteral("/VehicleRoles.json"));
     QVERIFY(savedFile.open(QIODevice::ReadOnly));
     const auto saved = QJsonDocument::fromJson(savedFile.readAll());
     QVERIFY(saved.isArray());

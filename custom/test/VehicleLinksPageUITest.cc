@@ -9,6 +9,7 @@
 #include <QtQml/QQmlApplicationEngine>
 #include <QtQuick/QQuickItem>
 #include <QtQuick/QQuickWindow>
+#include <QtTest/QSignalSpy>
 #include <QtTest/QTest>
 
 #include "AppSettings.h"
@@ -381,17 +382,26 @@ void VehicleLinksPageUITest::_preferredAndStatusTagsFollowVehicle()
 
             QCOMPARE(links->linkNames().indexOf(QStringLiteral("UI Secondary")), 1);
             QCOMPARE(links->linkNames().indexOf(QStringLiteral("UI UDP")), 2);
-            secondary->disconnect();
-            QTRY_COMPARE_WITH_TIMEOUT(links->linkNames().size(), 2, TestTimeout::longMs());
-            QCOMPARE(links->linkNames().indexOf(QStringLiteral("UI UDP")), 1);
             QQuickItem* const secondaryRowPrimary = _requireItem(QStringLiteral("vehicleLinkPrimary_%1_2").arg(sysid));
             QQuickItem* const secondaryRowLost = _requireItem(QStringLiteral("vehicleLinkLost_%1_2").arg(sysid));
             QVERIFY(secondaryRowPrimary && secondaryRowLost);
-            // Removing a secondary shifts UDP; the following loss must still update the UDP row.
+            secondary->setCommLost(true);
+            QTRY_VERIFY_WITH_TIMEOUT(secondaryRowLost->isVisible(), TestTimeout::longMs());
+            QVERIFY(!secondaryRowPrimary->isVisible());
+            QVERIFY(secondPrimary->isVisible() && !secondLost->isVisible());
+            QSignalSpy primaryChanges(links, &VehicleLinkManager::primaryLinkChanged);
+            QSignalSpy statusChanges(links, &VehicleLinkManager::linkStatusesChanged);
+            secondary->disconnect();
+            QTRY_COMPARE_WITH_TIMEOUT(links->linkNames().size(), 2, TestTimeout::longMs());
+            QCOMPARE(links->linkNames().indexOf(QStringLiteral("UI UDP")), 1);
+            // No later signal repairs a stale pre-erase snapshot while UDP stays healthy and primary.
             QTRY_VERIFY_WITH_TIMEOUT(!secondaryRowLost->isVisible(), TestTimeout::shortMs());
             QVERIFY(!secondaryRowPrimary->isVisible());
             QVERIFY(!secondLost->isVisible());
             QVERIFY(!firstPrimary->isVisible() && secondPrimary->isVisible());
+            QCOMPARE(links->primaryLinkName(), QStringLiteral("UI UDP"));
+            QVERIFY(primaryChanges.isEmpty());
+            QCOMPARE(statusChanges.count(), 1);  // Only linkNamesChanged's pre-erase status notification.
 
             ignoreLogMessage("Vehicle.StandardModes", QtWarningMsg,
                              QRegularExpression(QStringLiteral("Failed to retrieve available modes")));
