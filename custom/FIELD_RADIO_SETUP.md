@@ -39,15 +39,46 @@ that vehicle's card. Leave it unticked to keep the existing link behavior.
 First automatic selection, at startup or when attached later, needs 6 seconds of steady communication.
 Keep a second link connected: when UDP communication is lost, QGC fails over as soon as
 it detects the loss. After failover, UDP must stay steady for the configured hold before
-QGC returns (15 seconds by default). Change "Wait before returning (seconds)" at the top
+QGC returns (60 seconds by default). Change "Wait before returning (seconds)" at the top
 of the page to a value from 5 to 300. Repeated losses within a minute of returning double
-the wait, up to 5 minutes. Visible parameter, mission, fence and rally transfers and pending
-MAVLink signing changes also delay the return.
+the wait, up to 5 minutes. Parameter loading and writes, mission, fence and rally transfers,
+and pending MAVLink signing changes also delay the return.
+A vehicle connected while already armed no longer blocks return just because its parameter download was skipped.
 To pick a link by hand, open main status and choose it under "Primary Link".
 That choice holds until the preferred link loses and regains communication again, even
 when picked during an outage; unticking and re-ticking "Preferred" resets the history,
 and picking the preferred link itself clears the hold.
 Watch for "Primary" on the link and `"<vehicle>: communication back on <link>"` on return.
+
+For a vehicle with two or more links in its card, the line under the link list tells you
+what automatic return is waiting for. It uses your actual link names:
+
+- "Automatic return is off. Tick Preferred on one link to turn it on." Nothing is selected
+  automatically until you tick a link.
+- "UDP is not connected to this vehicle right now." The preferred link is configured but
+  has not attached to this vehicle.
+- "Using UDP, the preferred link." The return is complete, or this link was already in use.
+- "UDP has no communication. Staying on RFD." The preferred link is attached but silent;
+  normal failover still handles the loss. With no primary, it says "UDP has no communication."
+- "UDP is back. Returning to it in 60 s if it stays steady." The countdown shows the actual
+  wait left, rounded up to a whole second. At startup it counts down the 6-second first
+  selection; after failover it uses your configured wait and any extra wait from repeated losses.
+  Extra wait adds "(longer than usual because it dropped again soon after the last return)" to the countdown.
+- "Staying on RFD because you picked it. Returns to UDP after it drops out and comes back."
+  Your manual choice is held until the preferred link loses and regains communication again.
+- "Return paused until the vehicle finishes connecting." The steady wait has elapsed, but
+  initial connection is still finishing.
+- "Return paused while a parameter, mission, fence, rally or signing transfer is running."
+  The steady wait has elapsed, but a transfer or signing change is still busy.
+- "Returning to UDP..." The switch is being requested.
+
+If the return does not happen, first check that a link is ticked Preferred on this vehicle.
+Read the line for a countdown, "paused", or the message saying your manual choice is held.
+If it is paused, check whether parameters are still loading or being written, a mission,
+fence or rally transfer is running, or a signing change is pending. Let that finish.
+If your manual choice is held, wait for another loss and recovery of the preferred link,
+or pick the preferred link yourself. If it is not connected, check that the radio is
+connected to this vehicle rather than another one.
 
 ## Current port assignments
 

@@ -8,6 +8,11 @@ class LinkPreferencePolicyTest : public UnitTest
 
 private slots:
     void _initialSettleOutlastsLossDetection();
+    void _transferActive_data();
+    void _transferActive();
+    void _debugState();
+    void _statusAndDecision_data();
+    void _statusAndDecision();
     void _primaryChangeClassification_data();
     void _primaryChangeClassification();
     void _outagePickRelease_data();

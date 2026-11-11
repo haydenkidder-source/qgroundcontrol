@@ -25,16 +25,23 @@ private slots:
     void _signingPendingAtDeadline_data();
     void _signingPendingAtDeadline();
     void _reusedSysidStartsWithFreshHistory();
+    void _productionClockReturnsAfterHold();
+    void _armedConnectionCanReturn();
+    void _returnStatusAndNotifications();
+    void _returnStatusText_data();
+    void _returnStatusText();
+    void _statusObserverCanPauseReturn();
 
 private:
-    SharedLinkInterfacePtr _startLink(const QString& name, quint32 sysid);
-    Vehicle* _startPair(quint32 sysid = 4294967295U);
+    SharedLinkInterfacePtr _startLink(const QString& name, quint32 sysid, bool startArmed = false);
+    Vehicle* _startPair(quint32 sysid = 4294967295U, bool productionClock = false);
     /// The vehicle keeps loading parameters after its initial connect; the controller waits for that, so must a test.
     bool _waitUntilIdle(Vehicle* vehicle);
 
     QTemporaryDir _directory;
     QVariant _savePath;
     QVariant _audioMuted;
+    QVariant _failbackHold;
     VehicleRoleController* _roles = nullptr;
     LinkPreferenceController* _preference = nullptr;
     QList<SharedLinkConfigurationPtr> _configs;

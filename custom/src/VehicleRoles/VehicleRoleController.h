@@ -5,6 +5,7 @@
 #include <QtCore/QStringList>
 #include <QtQmlIntegration/QtQmlIntegration>
 
+class LinkPreferenceController;
 class QmlObjectListModel;
 class Vehicle;
 
@@ -129,6 +130,7 @@ class VehicleRoleController : public QObject
     Q_PROPERTY(QStringList availableRoles READ availableRoles CONSTANT)
     Q_PROPERTY(
         int failbackHoldSeconds READ failbackHoldSeconds WRITE setFailbackHoldSeconds NOTIFY failbackHoldSecondsChanged)
+    Q_PROPERTY(int linkReturnStatusRevision READ linkReturnStatusRevision NOTIFY linkReturnStatusChanged)
 
 public:
     explicit VehicleRoleController(QObject* parent = nullptr);
@@ -136,6 +138,10 @@ public:
     int failbackHoldSeconds() const { return _failbackHoldSeconds; }
 
     void setFailbackHoldSeconds(int seconds);
+
+    int linkReturnStatusRevision() const { return _linkReturnStatusRevision; }
+
+    Q_INVOKABLE QString linkReturnStatus(quint32 sysid) const;
 
     QmlObjectListModel* roleEntries() const { return _roleEntries; }
 
@@ -207,6 +213,7 @@ public:
 signals:
     void linkPreferencesChanged();
     void failbackHoldSecondsChanged();
+    void linkReturnStatusChanged();
 
 private:
     void _load();
@@ -215,5 +222,7 @@ private:
     VehicleRoleLinkEntry* _linkAt(int index, int linkIndex) const;
 
     QmlObjectListModel* _roleEntries = nullptr;
-    int _failbackHoldSeconds = 15;
+    int _failbackHoldSeconds = 60;
+    LinkPreferenceController* _linkPreference = nullptr;
+    int _linkReturnStatusRevision = 0;
 };

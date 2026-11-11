@@ -27,6 +27,8 @@ struct LinkPreferenceController::State : QObject
 
     QPointer<Vehicle> vehicle;
     LinkPreferencePolicy policy;
+    LinkPreferencePolicy::Gate lastGate = LinkPreferencePolicy::Gate::Off;
+    bool gateLogged = false;
     bool switching = false;
     bool queued = false;
 };
@@ -112,7 +114,8 @@ qint64 LinkPreferenceController::_now() const
     return _clock.elapsed();
 }
 
-LinkPreferencePolicy::Input LinkPreferenceController::_input(Vehicle* vehicle) const
+LinkPreferencePolicy::Input LinkPreferenceController::_input(Vehicle* vehicle,
+                                                             LinkPreferencePolicy::TransferFlags* transferFlags) const
 {
     if (!vehicle || !_roles) {
         return {};
@@ -127,14 +130,22 @@ LinkPreferencePolicy::Input LinkPreferenceController::_input(Vehicle* vehicle) c
     }
     auto* signing = vehicle->signingController();
     // Public progress covers visible refreshes, but is not an aggregate parameter-read busy flag.
+    const LinkPreferencePolicy::TransferFlags flags{.parametersReady = parameters->parametersReady(),
+                                                    .pendingWrites = parameters->pendingWrites(),
+                                                    .loadProgressActive = parameters->loadProgress() > 0,
+                                                    .missionBusy = mission->inProgress(),
+                                                    .fenceBusy = fence->inProgress(),
+                                                    .rallyBusy = rally->inProgress(),
+                                                    .signingPending = signing && signing->signingStatus().pending()};
+    if (transferFlags) {
+        *transferFlags = flags;
+    }
     return {.preferredName = _roles->preferredLinkConfigNameForSysid(vehicle->id()),
             .linkNames = links->linkNames(),
             .linkStatuses = links->linkStatuses(),
             .primaryName = links->primaryLinkName(),
             .initialConnectDone = vehicle->isInitialConnectComplete(),
-            .transferActive = !parameters->parametersReady() || parameters->pendingWrites() ||
-                              parameters->loadProgress() > 0 || mission->inProgress() || fence->inProgress() ||
-                              rally->inProgress() || (signing && signing->signingStatus().pending())};
+            .transferActive = LinkPreferencePolicy::transferActive(flags)};
 }
 
 void LinkPreferenceController::_observe(State* state, bool primarySignal)
@@ -154,7 +165,7 @@ void LinkPreferenceController::_refresh()
         }
         const auto input = _input(state->vehicle);
         attached = attached || (!input.preferredName.isEmpty() && input.linkNames.contains(input.preferredName));
-        qint64 baseHoldMs = _roles ? _roles->failbackHoldSeconds() * 1000LL : 15000;
+        qint64 baseHoldMs = _roles ? _roles->failbackHoldSeconds() * 1000LL : 60000;
 #ifdef QGC_UNITTEST_BUILD
         if (_testNow >= 0) {
             baseHoldMs = _timing.baseHoldMs;
@@ -178,6 +189,104 @@ void LinkPreferenceController::_refresh()
     } else {
         _timer.stop();
     }
+    _updateStatuses();
+}
+
+QString LinkPreferenceController::_statusText(const LinkPreferencePolicy::Input& input,
+                                              const LinkPreferencePolicy::Status& status) const
+{
+    switch (status.gate) {
+        case LinkPreferencePolicy::Gate::Off:
+            return tr("Automatic return is off. Tick Preferred on one link to turn it on.");
+        case LinkPreferencePolicy::Gate::NotAttached:
+            return tr("%1 is not connected to this vehicle right now.").arg(input.preferredName);
+        case LinkPreferencePolicy::Gate::OnPreferred:
+            return tr("Using %1, the preferred link.").arg(input.preferredName);
+        case LinkPreferencePolicy::Gate::PreferredDown:
+            if (input.primaryName.isEmpty()) {
+                return tr("%1 has no communication.").arg(input.preferredName);
+            }
+            return tr("%1 has no communication. Staying on %2.").arg(input.preferredName, input.primaryName);
+        case LinkPreferencePolicy::Gate::HeldByHand:
+            return tr("Staying on %1 because you picked it. Returns to %2 after it drops out and comes back.")
+                .arg(input.primaryName, input.preferredName);
+        case LinkPreferencePolicy::Gate::Waiting:
+            if (status.extendedHold) {
+                return tr("%1 is back. Returning to it in %2 s if it stays steady (longer than usual because it "
+                          "dropped again soon after the last return).")
+                    .arg(input.preferredName)
+                    .arg(qMax(qint64(1), (status.remainingMs + 999) / 1000));
+            }
+            return tr("%1 is back. Returning to it in %2 s if it stays steady.")
+                .arg(input.preferredName)
+                .arg(qMax(qint64(1), (status.remainingMs + 999) / 1000));
+        case LinkPreferencePolicy::Gate::WaitingForConnect:
+            return tr("Return paused until the vehicle finishes connecting.");
+        case LinkPreferencePolicy::Gate::PausedForTransfer:
+            return tr("Return paused while a parameter, mission, fence, rally or signing transfer is running.");
+        case LinkPreferencePolicy::Gate::Ready:
+        case LinkPreferencePolicy::Gate::Switching:
+            return tr("Returning to %1...").arg(input.preferredName);
+    }
+    return {};
+}
+
+const char* LinkPreferenceController::_gateName(LinkPreferencePolicy::Gate gate)
+{
+    switch (gate) {
+        case LinkPreferencePolicy::Gate::Off:
+            return "Off";
+        case LinkPreferencePolicy::Gate::NotAttached:
+            return "NotAttached";
+        case LinkPreferencePolicy::Gate::OnPreferred:
+            return "OnPreferred";
+        case LinkPreferencePolicy::Gate::PreferredDown:
+            return "PreferredDown";
+        case LinkPreferencePolicy::Gate::HeldByHand:
+            return "HeldByHand";
+        case LinkPreferencePolicy::Gate::Waiting:
+            return "Waiting";
+        case LinkPreferencePolicy::Gate::WaitingForConnect:
+            return "WaitingForConnect";
+        case LinkPreferencePolicy::Gate::PausedForTransfer:
+            return "PausedForTransfer";
+        case LinkPreferencePolicy::Gate::Ready:
+            return "Ready";
+        case LinkPreferencePolicy::Gate::Switching:
+            return "Switching";
+    }
+    return "Unknown";
+}
+
+void LinkPreferenceController::_updateStatuses()
+{
+    QHash<quint32, QString> texts;
+    const qint64 now = _now();
+    for (auto* state : _states) {
+        if (state->vehicle) {
+            LinkPreferencePolicy::TransferFlags flags;
+            const auto input = _input(state->vehicle, &flags);
+            const auto status = state->policy.status(input, now);
+            if (!state->gateLogged || state->lastGate != status.gate) {
+                state->gateLogged = true;
+                state->lastGate = status.gate;
+                qCDebug(LinkPreferenceLog)
+                    << "sysid:" << state->vehicle->id() << "gate:" << _gateName(status.gate)
+                    << "preferred:" << input.preferredName << "primary:" << input.primaryName
+                    << "linkNames:" << input.linkNames << "linkStatuses:" << input.linkStatuses
+                    << "initialConnectDone:" << input.initialConnectDone << "parametersReady:" << flags.parametersReady
+                    << "pendingWrites:" << flags.pendingWrites << "loadProgressActive:" << flags.loadProgressActive
+                    << "missionBusy:" << flags.missionBusy << "fenceBusy:" << flags.fenceBusy
+                    << "rallyBusy:" << flags.rallyBusy << "signingPending:" << flags.signingPending
+                    << state->policy.debugState() << "remainingMs:" << status.remainingMs;
+            }
+            texts.insert(state->vehicle->id(), _statusText(input, status));
+        }
+    }
+    if (_statusTexts != texts) {
+        _statusTexts = texts;
+        emit linkReturnStatusChanged();
+    }
 }
 
 void LinkPreferenceController::_evaluate(State* state)
@@ -185,20 +294,18 @@ void LinkPreferenceController::_evaluate(State* state)
     if (!state || !state->vehicle || !_roles || QCoreApplication::closingDown()) {
         return;
     }
-    const QString target = state->policy.evaluate(_input(state->vehicle), _now());
-    if (target.isEmpty()) {
-        return;
-    }
-    const auto current = _input(state->vehicle);
-    if (current.preferredName != target || !LinkPreferencePolicy::preferredHealthy(current) ||
-        !current.initialConnectDone || current.transferActive) {
-        state->policy.cancelPendingSwitch();
-        return;
-    }
     QPointer<State> guard(state);
     QPointer<Vehicle> vehicle = state->vehicle;
-    if (!vehicle) {
+    const QString target = state->policy.evaluate(_input(vehicle), _now());
+    _updateStatuses();
+    if (!guard || !vehicle || !_roles || target.isEmpty()) {
+        return;
+    }
+    const auto current = _input(vehicle);
+    if (current.preferredName != target ||
+        state->policy.status(current, _now()).gate != LinkPreferencePolicy::Gate::Switching) {
         state->policy.cancelPendingSwitch();
+        _updateStatuses();
         return;
     }
     state->switching = true;
@@ -209,6 +316,7 @@ void LinkPreferenceController::_evaluate(State* state)
     state->switching = false;
     if (vehicle->vehicleLinkManager()->primaryLinkName() != target) {
         state->policy.cancelPendingSwitch();
+        _updateStatuses();
         return;
     }
     QString label = _roles->nameForSysid(vehicle->id());

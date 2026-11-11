@@ -204,7 +204,8 @@ void VehicleRoleLinksTest::_loadPreferences_data()
 {
     QTest::addColumn<int>("savedHold");
     QTest::addColumn<int>("expectedHold");
-    QTest::newRow("legacy-links-without-preferred") << 0 << 15;
+    QTest::newRow("legacy-links-without-preferred") << 0 << 60;
+    QTest::newRow("saved-old-default") << 15 << 15;
     QTest::newRow("clamp-low") << 1 << 5;
     QTest::newRow("clamp-high") << 900 << 300;
 }

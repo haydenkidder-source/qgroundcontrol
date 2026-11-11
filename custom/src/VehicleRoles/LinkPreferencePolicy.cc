@@ -18,6 +18,21 @@ bool LinkPreferencePolicy::preferredHealthy(const Input& input)
            input.linkNames.count(input.preferredName) == 1 && input.linkStatuses[index].isEmpty();
 }
 
+bool LinkPreferencePolicy::transferActive(const TransferFlags& flags)
+{
+    // Readiness can remain false after an armed/skipped or failed initial download.
+    return flags.pendingWrites || flags.loadProgressActive || flags.missionBusy || flags.fenceBusy || flags.rallyBusy ||
+           flags.signingPending;
+}
+
+QString LinkPreferencePolicy::debugState() const
+{
+    return QStringLiteral("manualOverride=%1 failoverSeen=%2 effectiveHoldMs=%3")
+        .arg(_manualOverride)
+        .arg(_failoverSeen)
+        .arg(_failoverSeen ? _holdMs : _timing.initialSettleMs);
+}
+
 void LinkPreferencePolicy::setBaseHoldMs(qint64 milliseconds)
 {
     if (_timing.baseHoldMs != milliseconds) {
@@ -91,15 +106,44 @@ void LinkPreferencePolicy::observe(const Input& input, qint64 now, bool policySw
     _lastPrimary = input.primaryName;
 }
 
+LinkPreferencePolicy::Status LinkPreferencePolicy::status(const Input& input, qint64 now) const
+{
+    if (input.preferredName.isEmpty()) {
+        return {Gate::Off};
+    }
+    if (!input.linkNames.contains(input.preferredName)) {
+        return {Gate::NotAttached};
+    }
+    if (input.primaryName == input.preferredName) {
+        return {Gate::OnPreferred};
+    }
+    if (!preferredHealthy(input)) {
+        return {Gate::PreferredDown};
+    }
+    if (_manualOverride) {
+        return {Gate::HeldByHand};
+    }
+    const qint64 hold = _failoverSeen ? _holdMs : _timing.initialSettleMs;
+    const qint64 remaining = _healthySince < 0 ? hold : hold - (now - _healthySince);
+    if (remaining > 0) {
+        return {Gate::Waiting, remaining, _failoverSeen && _holdMs > _timing.baseHoldMs};
+    }
+    if (!input.initialConnectDone) {
+        return {Gate::WaitingForConnect};
+    }
+    if (input.transferActive) {
+        return {Gate::PausedForTransfer};
+    }
+    if (_switchPending) {
+        return {Gate::Switching};
+    }
+    return {Gate::Ready};
+}
+
 QString LinkPreferencePolicy::evaluate(const Input& input, qint64 now)
 {
     observe(input, now);
-    if (!preferredHealthy(input) || input.primaryName == input.preferredName || _manualOverride || _switchPending ||
-        !input.initialConnectDone || input.transferActive) {
-        return {};
-    }
-    const qint64 hold = _failoverSeen ? _holdMs : _timing.initialSettleMs;
-    if (_healthySince < 0 || now - _healthySince < hold) {
+    if (status(input, now).gate != Gate::Ready) {
         return {};
     }
     _switchPending = true;

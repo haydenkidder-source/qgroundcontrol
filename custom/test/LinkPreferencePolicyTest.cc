@@ -20,6 +20,7 @@ LinkPreferencePolicy::Input input()
 
 void LinkPreferencePolicyTest::_initialSettleOutlastsLossDetection()
 {
+    QCOMPARE(LinkPreferencePolicy::Timing{}.baseHoldMs, qint64(60000));
     auto state = input();
     LinkPreferencePolicy policy;
     policy.observe(state, 0);
@@ -33,6 +34,156 @@ void LinkPreferencePolicyTest::_initialSettleOutlastsLossDetection()
     state.linkStatuses[1] = QStringLiteral("lost");
     silentLink.observe(state, 4500);
     QVERIFY(silentLink.evaluate(state, 6000).isEmpty());
+}
+
+void LinkPreferencePolicyTest::_transferActive_data()
+{
+    QTest::addColumn<bool>("parametersReady");
+    QTest::addColumn<bool>("pendingWrites");
+    QTest::addColumn<bool>("loadProgressActive");
+    QTest::addColumn<bool>("missionBusy");
+    QTest::addColumn<bool>("fenceBusy");
+    QTest::addColumn<bool>("rallyBusy");
+    QTest::addColumn<bool>("signingPending");
+    QTest::addColumn<bool>("active");
+    QTest::newRow("armed-or-failed-download") << false << false << false << false << false << false << false << false;
+    QTest::newRow("ready-idle") << true << false << false << false << false << false << false << false;
+    QTest::newRow("parameter-write") << false << true << false << false << false << false << false << true;
+    QTest::newRow("parameter-load") << false << false << true << false << false << false << false << true;
+    QTest::newRow("ready-but-loading") << true << false << true << false << false << false << false << true;
+    QTest::newRow("mission") << false << false << false << true << false << false << false << true;
+    QTest::newRow("fence") << false << false << false << false << true << false << false << true;
+    QTest::newRow("rally") << false << false << false << false << false << true << false << true;
+    QTest::newRow("signing") << false << false << false << false << false << false << true << true;
+}
+
+void LinkPreferencePolicyTest::_transferActive()
+{
+    QFETCH(bool, parametersReady);
+    QFETCH(bool, pendingWrites);
+    QFETCH(bool, loadProgressActive);
+    QFETCH(bool, missionBusy);
+    QFETCH(bool, fenceBusy);
+    QFETCH(bool, rallyBusy);
+    QFETCH(bool, signingPending);
+    QFETCH(bool, active);
+    const LinkPreferencePolicy::TransferFlags flags{.parametersReady = parametersReady,
+                                                    .pendingWrites = pendingWrites,
+                                                    .loadProgressActive = loadProgressActive,
+                                                    .missionBusy = missionBusy,
+                                                    .fenceBusy = fenceBusy,
+                                                    .rallyBusy = rallyBusy,
+                                                    .signingPending = signingPending};
+    QCOMPARE(LinkPreferencePolicy::transferActive(flags), active);
+
+    auto state = input();
+    state.transferActive = LinkPreferencePolicy::transferActive(flags);
+    LinkPreferencePolicy policy(timing());
+    policy.observe(state, 0);
+    QCOMPARE(policy.status(state, 3).gate,
+             active ? LinkPreferencePolicy::Gate::PausedForTransfer : LinkPreferencePolicy::Gate::Ready);
+    QCOMPARE(policy.evaluate(state, 3), active ? QString() : state.preferredName);
+}
+
+void LinkPreferencePolicyTest::_debugState()
+{
+    auto state = input();
+    LinkPreferencePolicy policy(timing());
+    policy.observe(state, 0);
+    QCOMPARE(policy.debugState(), QStringLiteral("manualOverride=0 failoverSeen=0 effectiveHoldMs=3"));
+    policy.observe(state, 1, false, true);
+    QCOMPARE(policy.debugState(), QStringLiteral("manualOverride=1 failoverSeen=0 effectiveHoldMs=3"));
+    state.primaryName = state.preferredName;
+    policy.observe(state, 2);
+    QCOMPARE(policy.debugState(), QStringLiteral("manualOverride=0 failoverSeen=0 effectiveHoldMs=3"));
+    state.linkStatuses[1] = QStringLiteral("lost");
+    policy.observe(state, 3);
+    QCOMPARE(policy.debugState(), QStringLiteral("manualOverride=0 failoverSeen=1 effectiveHoldMs=15"));
+    policy.setBaseHoldMs(42);
+    QCOMPARE(policy.debugState(), QStringLiteral("manualOverride=0 failoverSeen=1 effectiveHoldMs=42"));
+}
+
+void LinkPreferencePolicyTest::_statusAndDecision_data()
+{
+    QTest::addColumn<QString>("scenario");
+    QTest::addColumn<int>("expectedGate");
+    QTest::addColumn<qint64>("now");
+    QTest::addColumn<qint64>("remainingMs");
+    const auto row = [](const char* name, LinkPreferencePolicy::Gate gate, qint64 now = 6000, qint64 remainingMs = 0) {
+        QTest::newRow(name) << QString::fromLatin1(name) << int(gate) << now << remainingMs;
+    };
+    row("off", LinkPreferencePolicy::Gate::Off);
+    row("not-attached", LinkPreferencePolicy::Gate::NotAttached);
+    row("on-preferred", LinkPreferencePolicy::Gate::OnPreferred);
+    row("preferred-down", LinkPreferencePolicy::Gate::PreferredDown);
+    row("held-by-hand", LinkPreferencePolicy::Gate::HeldByHand);
+    row("initial-hold-minus-one", LinkPreferencePolicy::Gate::Waiting, 5999, 1);
+    row("initial-hold", LinkPreferencePolicy::Gate::Ready);
+    row("return-hold-minus-one", LinkPreferencePolicy::Gate::Waiting, 60001, 1);
+    row("return-hold", LinkPreferencePolicy::Gate::Ready, 60002);
+    row("waiting-before-connect", LinkPreferencePolicy::Gate::Waiting, 5999, 1);
+    row("waiting-during-transfer", LinkPreferencePolicy::Gate::Waiting, 5999, 1);
+    row("waiting-for-connect", LinkPreferencePolicy::Gate::WaitingForConnect);
+    row("paused-for-transfer", LinkPreferencePolicy::Gate::PausedForTransfer);
+    row("switching", LinkPreferencePolicy::Gate::Switching, 6001);
+    row("transfer-before-switch", LinkPreferencePolicy::Gate::PausedForTransfer, 6001);
+    row("connect-before-switch", LinkPreferencePolicy::Gate::WaitingForConnect, 6001);
+}
+
+void LinkPreferencePolicyTest::_statusAndDecision()
+{
+    QFETCH(QString, scenario);
+    QFETCH(int, expectedGate);
+    QFETCH(qint64, now);
+    QFETCH(qint64, remainingMs);
+    auto state = input();
+    LinkPreferencePolicy policy;
+    if (scenario.startsWith(QStringLiteral("return-hold"))) {
+        state.primaryName = state.preferredName;
+        policy.observe(state, 0);
+        state.linkStatuses[1] = QStringLiteral("lost");
+        policy.observe(state, 1);
+        state.primaryName = QStringLiteral("RFD");
+        policy.observe(state, 1);
+        state.linkStatuses[1].clear();
+        policy.observe(state, 2);
+    } else {
+        policy.observe(state, 0);
+    }
+    if (scenario == QStringLiteral("off")) {
+        state.preferredName.clear();
+    } else if (scenario == QStringLiteral("not-attached")) {
+        state.linkNames.removeLast();
+        state.linkStatuses.removeLast();
+    } else if (scenario == QStringLiteral("on-preferred")) {
+        state.primaryName = state.preferredName;
+    } else if (scenario == QStringLiteral("preferred-down")) {
+        state.linkStatuses[1] = QStringLiteral("lost");
+    } else if (scenario == QStringLiteral("held-by-hand")) {
+        policy.observe(state, 1, false, true);
+    } else if (scenario == QStringLiteral("waiting-for-connect") ||
+               scenario == QStringLiteral("waiting-before-connect")) {
+        state.initialConnectDone = false;
+    } else if (scenario == QStringLiteral("paused-for-transfer") ||
+               scenario == QStringLiteral("waiting-during-transfer")) {
+        state.transferActive = true;
+    } else if (scenario == QStringLiteral("switching") || scenario.endsWith(QStringLiteral("before-switch"))) {
+        QCOMPARE(policy.evaluate(state, 6000), state.preferredName);
+        state.transferActive = scenario == QStringLiteral("transfer-before-switch");
+        state.initialConnectDone = scenario != QStringLiteral("connect-before-switch");
+    }
+    policy.observe(state, now);
+    const auto& readOnlyPolicy = policy;
+    const auto status = readOnlyPolicy.status(state, now);
+    QCOMPARE(int(status.gate), expectedGate);
+    QCOMPARE(status.remainingMs, remainingMs);
+    QVERIFY(!status.extendedHold);
+    QCOMPARE(policy.evaluate(state, now),
+             status.gate == LinkPreferencePolicy::Gate::Ready ? state.preferredName : QString());
+    if (status.gate == LinkPreferencePolicy::Gate::Ready) {
+        QCOMPARE(policy.status(state, now).gate, LinkPreferencePolicy::Gate::Switching);
+        QVERIFY(policy.evaluate(state, now).isEmpty());
+    }
 }
 
 void LinkPreferencePolicyTest::_primaryChangeClassification_data()
@@ -213,14 +364,14 @@ void LinkPreferencePolicyTest::_continuousHealthAndPendingSwitch()
     policy.observe(state, 10002);
     state.linkStatuses[1].clear();
     QVERIFY(policy.evaluate(state, 11000).isEmpty());
-    QVERIFY(policy.evaluate(state, 25999).isEmpty());
+    QVERIFY(policy.evaluate(state, 70999).isEmpty());
     state.linkStatuses[1] = QStringLiteral("lost");
-    QVERIFY(policy.evaluate(state, 26000).isEmpty());
+    QVERIFY(policy.evaluate(state, 71000).isEmpty());
     state.linkStatuses[1].clear();
-    QVERIFY(policy.evaluate(state, 27000).isEmpty());
-    QVERIFY(policy.evaluate(state, 41999).isEmpty());
-    QCOMPARE(policy.evaluate(state, 42000), state.preferredName);
-    QVERIFY(policy.evaluate(state, 50000).isEmpty());
+    QVERIFY(policy.evaluate(state, 72000).isEmpty());
+    QVERIFY(policy.evaluate(state, 131999).isEmpty());
+    QCOMPARE(policy.evaluate(state, 132000), state.preferredName);
+    QVERIFY(policy.evaluate(state, 140000).isEmpty());
 }
 
 void LinkPreferencePolicyTest::_secondaryLossBeforeFirstSelection()
@@ -273,8 +424,12 @@ void LinkPreferencePolicyTest::_flapWindow()
     state.linkStatuses[1].clear();
     const auto recovery = 18 + dropAfter;
     policy.observe(state, recovery);
+    const auto waiting = policy.status(state, recovery);
+    QCOMPARE(waiting.gate, LinkPreferencePolicy::Gate::Waiting);
+    QCOMPARE(waiting.extendedHold, hold > 15);
     QVERIFY(policy.evaluate(state, recovery + hold - 1).isEmpty());
     QCOMPARE(policy.evaluate(state, recovery + hold), state.preferredName);
+    QVERIFY(!policy.status(state, recovery + hold).extendedHold);
 }
 
 void LinkPreferencePolicyTest::_manualChoiceAndStockFailover_data()
@@ -375,38 +530,42 @@ void LinkPreferencePolicyTest::_flappingBackoffAndStableReset()
 {
     auto state = input();
     state.primaryName = state.preferredName;
-    LinkPreferencePolicy policy(timing());
+    LinkPreferencePolicy policy;
     qint64 now = 0;
     policy.observe(state, now);
-    qint64 hold = 15;
-    for (int failure = 0; failure < 7; ++failure) {
+    QVERIFY(!policy.status(state, now).extendedHold);
+    for (qint64 hold : {60000, 120000, 240000, 300000, 300000}) {
         state.linkStatuses[1] = QStringLiteral("lost");
         policy.observe(state, ++now);
+        QVERIFY(!policy.status(state, now).extendedHold);
         state.primaryName = QStringLiteral("RFD");
         policy.observe(state, now);
         state.linkStatuses[1].clear();
         policy.observe(state, ++now);
+        QCOMPARE(policy.status(state, now).remainingMs, hold);
+        QCOMPARE(policy.status(state, now).extendedHold, hold > 60000);
+        QVERIFY(policy.debugState().contains(QStringLiteral("effectiveHoldMs=%1").arg(hold)));
         QVERIFY(policy.evaluate(state, now + hold - 1).isEmpty());
         now += hold;
         QCOMPARE(policy.evaluate(state, now), state.preferredName);
+        QVERIFY(!policy.status(state, now).extendedHold);
         state.primaryName = state.preferredName;
         policy.observe(state, now, true);
-        hold = qMin(hold * 2, qint64(300));
     }
     state.primaryName = QStringLiteral("RFD");
     policy.observe(state, ++now);
-    now += 300;
+    now += 300000;
     policy.observe(state, now);
     state.linkStatuses[1] = QStringLiteral("lost");
     policy.observe(state, ++now);
     state.linkStatuses[1].clear();
     policy.observe(state, ++now);
-    QVERIFY(policy.evaluate(state, now + 299).isEmpty());
-    now += 300;
+    QVERIFY(policy.evaluate(state, now + 299999).isEmpty());
+    now += 300000;
     QCOMPARE(policy.evaluate(state, now), state.preferredName);
     state.primaryName = state.preferredName;
     policy.observe(state, now, true);
-    now += 300;
+    now += 300000;
     policy.observe(state, now);
     state.linkStatuses[1] = QStringLiteral("lost");
     policy.observe(state, ++now);
@@ -414,8 +573,10 @@ void LinkPreferencePolicyTest::_flappingBackoffAndStableReset()
     policy.observe(state, now);
     state.linkStatuses[1].clear();
     policy.observe(state, ++now);
-    QVERIFY(policy.evaluate(state, now + 14).isEmpty());
-    QCOMPARE(policy.evaluate(state, now + 15), state.preferredName);
+    QCOMPARE(policy.status(state, now).remainingMs, qint64(60000));
+    QVERIFY(!policy.status(state, now).extendedHold);
+    QVERIFY(policy.evaluate(state, now + 59999).isEmpty());
+    QCOMPARE(policy.evaluate(state, now + 60000), state.preferredName);
 }
 
 void LinkPreferencePolicyTest::_preferenceChangeResetsHistory()

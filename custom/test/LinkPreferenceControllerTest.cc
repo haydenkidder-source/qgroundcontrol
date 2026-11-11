@@ -1,13 +1,17 @@
 #include "LinkPreferenceControllerTest.h"
 
 #include <QtCore/QDir>
+#include <QtCore/QElapsedTimer>
 #include <QtCore/QRegularExpression>
+#include <QtCore/QScopeGuard>
+#include <QtCore/QSettings>
 #include <QtTest/QSignalSpy>
 
 #include "AppSettings.h"
 #include "GeoFenceManager.h"
 #include "LinkManager.h"
 #include "LinkPreferenceController.h"
+#include "MavlinkSettings.h"
 #include "MissionManager.h"
 #include "MultiVehicleManager.h"
 #include "ParameterManager.h"
@@ -24,6 +28,9 @@
 void LinkPreferenceControllerTest::init()
 {
     CommsTest::init();
+    QSettings settingsStore;
+    _failbackHold = settingsStore.value(QStringLiteral("Custom/LinkPreference/FailbackHoldSeconds"));
+    settingsStore.remove(QStringLiteral("Custom/LinkPreference/FailbackHoldSeconds"));
     ignoreLogMessage("Vehicle.StandardModes", QtWarningMsg,
                      QRegularExpression(QStringLiteral("Failed to retrieve available modes")));
     QVERIFY(_directory.isValid());
@@ -38,7 +45,6 @@ void LinkPreferenceControllerTest::init()
     _roles = new VehicleRoleController(this);
     _preference = _roles->findChild<LinkPreferenceController*>();
     QVERIFY(_preference);
-    _preference->setTimingForTesting({.initialSettleMs = 3, .baseHoldMs = 15}, 0);
 }
 
 void LinkPreferenceControllerTest::cleanup()
@@ -53,16 +59,27 @@ void LinkPreferenceControllerTest::cleanup()
     auto* settings = SettingsManager::instance()->appSettings();
     settings->savePath()->setRawValue(_savePath);
     settings->audioMuted()->setRawValue(_audioMuted);
+    QSettings settingsStore;
+    if (_failbackHold.isValid()) {
+        settingsStore.setValue(QStringLiteral("Custom/LinkPreference/FailbackHoldSeconds"), _failbackHold);
+    } else {
+        settingsStore.remove(QStringLiteral("Custom/LinkPreference/FailbackHoldSeconds"));
+    }
     CommsTest::cleanup();
 }
 
-SharedLinkInterfacePtr LinkPreferenceControllerTest::_startLink(const QString& name, quint32 sysid)
+SharedLinkInterfacePtr LinkPreferenceControllerTest::_startLink(const QString& name, quint32 sysid, bool startArmed)
 {
     auto* mockConfig = new MockConfiguration(name);
     SharedLinkConfigurationPtr config(mockConfig);
     mockConfig->setDynamic(true);
     mockConfig->setIncrementVehicleId(false);
     mockConfig->setSystemId(sysid);
+    if (startArmed) {
+        // ArduPilot skips the download outright, independent of any PX4 parameter cache.
+        mockConfig->setFirmwareType(MAV_AUTOPILOT_ARDUPILOTMEGA);
+        mockConfig->setStartArmed(true);
+    }
     _configs.append(config);
     if (!linkManager()->createConnectedLink(config)) {
         return {};
@@ -82,8 +99,11 @@ bool LinkPreferenceControllerTest::_waitUntilIdle(Vehicle* vehicle)
         TestTimeout::longMs(), QStringLiteral("transfers idle"));
 }
 
-Vehicle* LinkPreferenceControllerTest::_startPair(quint32 sysid)
+Vehicle* LinkPreferenceControllerTest::_startPair(quint32 sysid, bool productionClock)
 {
+    if (!productionClock) {
+        _preference->setTimingForTesting({.initialSettleMs = 3, .baseHoldMs = 15}, 0);
+    }
     _backup = _startLink(QStringLiteral("RFD"), sysid);
     if (!_backup) {
         return nullptr;
@@ -106,6 +126,199 @@ Vehicle* LinkPreferenceControllerTest::_startPair(quint32 sysid)
     _roles->addLink(0, QStringLiteral("UDP"), QStringLiteral("UDP"));
     _roles->setLinkPreferred(0, 1, true);
     return vehicle;
+}
+
+void LinkPreferenceControllerTest::_productionClockReturnsAfterHold()
+{
+    _roles->setFailbackHoldSeconds(5);
+    Vehicle* const vehicle = _startPair(1, true);
+    QVERIFY(vehicle);
+    auto* links = vehicle->vehicleLinkManager();
+    auto* preferred = qobject_cast<MockLink*>(_preferred.get());
+    QVERIFY(preferred);
+    QTRY_COMPARE_WITH_TIMEOUT(links->primaryLinkName(), QStringLiteral("UDP"), TestTimeout::longMs());
+    expectLogMessage("API.QGCApplication.AppMessage", QtDebugMsg,
+                     QRegularExpression(QStringLiteral("Switching communication to secondary link")));
+    preferred->setCommLost(true);
+    QTRY_COMPARE_WITH_TIMEOUT(links->primaryLinkName(), QStringLiteral("RFD"), TestTimeout::longMs());
+    verifyExpectedLogMessage();
+    QElapsedTimer recovery;
+    recovery.start();
+    preferred->setCommLost(false);
+    const QRegularExpression nearlyDue(
+        QStringLiteral("^UDP is back\\. Returning to it in [12] s if it stays steady\\.$"));
+    // A countdown near the deadline is a positive barrier; an early return also ends the wait and fails below.
+    QTRY_VERIFY_WITH_TIMEOUT(nearlyDue.match(_roles->linkReturnStatus(vehicle->id())).hasMatch() ||
+                                 links->primaryLinkName() == QStringLiteral("UDP"),
+                             TestTimeout::longMs());
+    QCOMPARE(links->primaryLinkName(), QStringLiteral("RFD"));
+    QVERIFY(recovery.elapsed() >= 2500);
+    QTRY_COMPARE_WITH_TIMEOUT(links->primaryLinkName(), QStringLiteral("UDP"), TestTimeout::longMs());
+    QVERIFY(recovery.elapsed() >= 4500);
+    QCOMPARE(_roles->linkReturnStatus(vehicle->id()), QStringLiteral("Using UDP, the preferred link."));
+}
+
+void LinkPreferenceControllerTest::_armedConnectionCanReturn()
+{
+    auto* skipWhenArmed = SettingsManager::instance()->mavlinkSettings()->noInitialDownloadWhenArmed();
+    const QVariant previousSkipWhenArmed = skipWhenArmed->rawValue();
+    const auto restoreSkipWhenArmed =
+        qScopeGuard([skipWhenArmed, previousSkipWhenArmed]() { skipWhenArmed->setRawValue(previousSkipWhenArmed); });
+    skipWhenArmed->setRawValue(true);
+    _preference->setTimingForTesting({.initialSettleMs = 3, .baseHoldMs = 15}, 0);
+    _backup = _startLink(QStringLiteral("RFD"), 1, true);
+    QVERIFY(_backup);
+    Vehicle* const vehicle = waitForVehicleConnect(TestTimeout::longMs());
+    QVERIFY(vehicle);
+    QTRY_VERIFY_WITH_TIMEOUT(vehicle->isInitialConnectComplete(), TestTimeout::longMs());
+    QVERIFY(vehicle->armed());
+    auto* parameters = vehicle->parameterManager();
+    QVERIFY(parameters->parameterDownloadSkipped());
+    QVERIFY(!parameters->parametersReady());
+    _preferred = _startLink(QStringLiteral("UDP"), 1, true);
+    QVERIFY(_preferred);
+    auto* links = vehicle->vehicleLinkManager();
+    QTRY_COMPARE_WITH_TIMEOUT(links->linkNames().size(), 2, TestTimeout::longMs());
+    _roles->addEntry(vehicle->id(), QStringLiteral("Rover"), QStringLiteral("Scout"), 0);
+    _roles->addLink(0, QStringLiteral("RFD"), QStringLiteral("RFD"));
+    _roles->addLink(0, QStringLiteral("UDP"), QStringLiteral("UDP"));
+    _roles->setLinkPreferred(0, 1, true);
+    _preference->evaluateForTesting(3);
+    QCOMPARE(links->primaryLinkName(), QStringLiteral("UDP"));
+
+    auto* preferred = qobject_cast<MockLink*>(_preferred.get());
+    QVERIFY(preferred);
+    expectLogMessage("API.QGCApplication.AppMessage", QtDebugMsg,
+                     QRegularExpression(QStringLiteral("Switching communication to secondary link")));
+    preferred->setCommLost(true);
+    QTRY_COMPARE_WITH_TIMEOUT(links->primaryLinkName(), QStringLiteral("RFD"), TestTimeout::longMs());
+    verifyExpectedLogMessage();
+    _preference->evaluateForTesting(100);
+    preferred->setCommLost(false);
+    QTRY_VERIFY_WITH_TIMEOUT(links->linkStatuses()
+                                 .value(links->linkNames().indexOf(QStringLiteral("UDP")), QStringLiteral("missing"))
+                                 .isEmpty(),
+                             TestTimeout::longMs());
+    _preference->evaluateForTesting(114);
+    QCOMPARE(links->primaryLinkName(), QStringLiteral("RFD"));
+    _preference->evaluateForTesting(115);
+    QCOMPARE(links->primaryLinkName(), QStringLiteral("UDP"));
+    QCOMPARE(_roles->linkReturnStatus(vehicle->id()), QStringLiteral("Using UDP, the preferred link."));
+    QVERIFY(vehicle->armed());
+    QVERIFY(!parameters->parametersReady());
+}
+
+void LinkPreferenceControllerTest::_returnStatusAndNotifications()
+{
+    Vehicle* const vehicle = _startPair();
+    QVERIFY(vehicle);
+    const quint32 sysid = vehicle->id();
+    auto* links = vehicle->vehicleLinkManager();
+    auto* parameters = vehicle->parameterManager();
+    _roles->setLinkPreferred(0, 1, false);
+    QCOMPARE(_roles->linkReturnStatus(sysid),
+             QStringLiteral("Automatic return is off. Tick Preferred on one link to turn it on."));
+    QVERIFY(_roles->linkReturnStatus(123).isEmpty());
+    _preference->setTimingForTesting({.initialSettleMs = 2500, .baseHoldMs = 60000}, 0);
+    QSignalSpy changes(_roles, &VehicleRoleController::linkReturnStatusChanged);
+    QStringList observedTexts;
+    QObject observer;
+    connect(_roles, &VehicleRoleController::linkReturnStatusChanged, &observer,
+            [this, sysid, &observedTexts]() { observedTexts.append(_roles->linkReturnStatus(sysid)); });
+    const int revision = _roles->linkReturnStatusRevision();
+    _roles->setLinkPreferred(0, 1, true);
+    QCOMPARE(_roles->linkReturnStatus(sysid),
+             QStringLiteral("UDP is back. Returning to it in 3 s if it stays steady."));
+    QCOMPARE(changes.count(), 1);
+    QCOMPARE(_roles->linkReturnStatusRevision(), revision + 1);
+    _preference->evaluateForTesting(1);
+    QCOMPARE(changes.count(), 1);  // Same rounded-up second does not notify.
+    _preference->evaluateForTesting(501);
+    QCOMPARE(_roles->linkReturnStatus(sysid),
+             QStringLiteral("UDP is back. Returning to it in 2 s if it stays steady."));
+    QCOMPARE(changes.count(), 2);
+    _preference->evaluateForTesting(2499);
+    QCOMPARE(_roles->linkReturnStatus(sysid),
+             QStringLiteral("UDP is back. Returning to it in 1 s if it stays steady."));
+    QCOMPARE(links->primaryLinkName(), QStringLiteral("RFD"));
+    parameters->setPendingWritesForTest(true);
+    _preference->evaluateForTesting(2500);
+    QCOMPARE(_roles->linkReturnStatus(sysid),
+             QStringLiteral("Return paused while a parameter, mission, fence, rally or signing transfer is running."));
+    QCOMPARE(links->primaryLinkName(), QStringLiteral("RFD"));
+    parameters->setPendingWritesForTest(false);
+    QTRY_COMPARE_WITH_TIMEOUT(_roles->linkReturnStatus(sysid), QStringLiteral("Using UDP, the preferred link."),
+                              TestTimeout::shortMs());
+    QCOMPARE(links->primaryLinkName(), QStringLiteral("UDP"));
+    QVERIFY(observedTexts.contains(QStringLiteral("Returning to UDP...")));
+    const int countOnPreferred = changes.count();
+    _preference->evaluateForTesting(10000);
+    QCOMPARE(changes.count(), countOnPreferred);
+    QCOMPARE(_roles->linkReturnStatusRevision(), revision + changes.count());
+    disconnectAllLinks();
+    QTRY_VERIFY_WITH_TIMEOUT(_roles->linkReturnStatus(sysid).isEmpty(), TestTimeout::longMs());
+}
+
+void LinkPreferenceControllerTest::_returnStatusText_data()
+{
+    QTest::addColumn<int>("gate");
+    QTest::addColumn<qint64>("remainingMs");
+    QTest::addColumn<bool>("extendedHold");
+    QTest::addColumn<QString>("primaryName");
+    QTest::addColumn<QString>("expectedText");
+    QTest::newRow("usual-wait") << int(LinkPreferencePolicy::Gate::Waiting) << qint64(117001) << false
+                                << QStringLiteral("RFD")
+                                << QStringLiteral("UDP is back. Returning to it in 118 s if it stays steady.");
+    QTest::newRow("extended-wait")
+        << int(LinkPreferencePolicy::Gate::Waiting) << qint64(117001) << true << QStringLiteral("RFD")
+        << QStringLiteral(
+               "UDP is back. Returning to it in 118 s if it stays steady (longer than usual because it "
+               "dropped again soon after the last return).");
+    QTest::newRow("down-with-primary") << int(LinkPreferencePolicy::Gate::PreferredDown) << qint64(0) << false
+                                       << QStringLiteral("RFD")
+                                       << QStringLiteral("UDP has no communication. Staying on RFD.");
+    QTest::newRow("down-without-primary") << int(LinkPreferencePolicy::Gate::PreferredDown) << qint64(0) << false
+                                          << QString() << QStringLiteral("UDP has no communication.");
+}
+
+void LinkPreferenceControllerTest::_returnStatusText()
+{
+    QFETCH(int, gate);
+    QFETCH(qint64, remainingMs);
+    QFETCH(bool, extendedHold);
+    QFETCH(QString, primaryName);
+    QFETCH(QString, expectedText);
+    LinkPreferencePolicy::Input state;
+    state.preferredName = QStringLiteral("UDP");
+    state.primaryName = primaryName;
+    const LinkPreferencePolicy::Status status{
+        .gate = LinkPreferencePolicy::Gate(gate), .remainingMs = remainingMs, .extendedHold = extendedHold};
+    QCOMPARE(_preference->_statusText(state, status), expectedText);
+}
+
+void LinkPreferenceControllerTest::_statusObserverCanPauseReturn()
+{
+    Vehicle* const vehicle = _startPair();
+    QVERIFY(vehicle);
+    auto* parameters = vehicle->parameterManager();
+    bool pauseRequested = false;
+    QObject observer;
+    connect(
+        _roles, &VehicleRoleController::linkReturnStatusChanged, &observer,
+        [this, vehicle, parameters, &pauseRequested]() {
+            if (!pauseRequested && _roles->linkReturnStatus(vehicle->id()) == QStringLiteral("Returning to UDP...")) {
+                pauseRequested = true;
+                parameters->setPendingWritesForTest(true);
+            }
+        });
+    _preference->evaluateForTesting(3);
+    QVERIFY(pauseRequested);
+    QCOMPARE(vehicle->vehicleLinkManager()->primaryLinkName(), QStringLiteral("RFD"));
+    QCOMPARE(_roles->linkReturnStatus(vehicle->id()),
+             QStringLiteral("Return paused while a parameter, mission, fence, rally or signing transfer is running."));
+    parameters->setPendingWritesForTest(false);
+    QTRY_COMPARE_WITH_TIMEOUT(vehicle->vehicleLinkManager()->primaryLinkName(), QStringLiteral("UDP"),
+                              TestTimeout::shortMs());
 }
 
 void LinkPreferenceControllerTest::_settleFailoverFailbackAndManualChoice_data()
@@ -157,6 +370,8 @@ void LinkPreferenceControllerTest::_settleFailoverFailbackAndManualChoice()
     _preference->evaluateForTesting(1000);
     QCOMPARE(links->primaryLinkName(), QStringLiteral("RFD"));
     QCOMPARE(notifications.count(), 2);
+    QCOMPARE(_roles->linkReturnStatus(sysid),
+             QStringLiteral("Staying on RFD because you picked it. Returns to UDP after it drops out and comes back."));
 }
 
 void LinkPreferenceControllerTest::_lostAndOtherVehicleLinksAreNeverSelected()
@@ -173,6 +388,7 @@ void LinkPreferenceControllerTest::_lostAndOtherVehicleLinksAreNeverSelected()
     _preference->evaluateForTesting(1000);
     QCOMPARE(links->primaryLinkName(), QStringLiteral("RFD"));
     QCOMPARE(primaryChanges.count(), 0);
+    QCOMPARE(_roles->linkReturnStatus(vehicle->id()), QStringLiteral("UDP has no communication. Staying on RFD."));
 
     // A preference must belong to this vehicle even when another vehicle is active.
     expectAppMessage(QRegularExpression(QStringLiteral("Connected to Vehicle")));
@@ -192,6 +408,8 @@ void LinkPreferenceControllerTest::_lostAndOtherVehicleLinksAreNeverSelected()
     _roles->setLinkPreferred(0, 1, true);
     _preference->evaluateForTesting(2000);
     _preference->evaluateForTesting(3000);
+    QCOMPARE(_roles->linkReturnStatus(vehicle->id()),
+             QStringLiteral("Other UDP is not connected to this vehicle right now."));
     QCOMPARE(primaryChanges.count(), 0);
     QCOMPARE(links->primaryLinkName(), QStringLiteral("RFD"));
     QCOMPARE(other->vehicleLinkManager()->primaryLinkName(), otherPrimary);
@@ -316,6 +534,8 @@ void LinkPreferenceControllerTest::_transferBusyAtDeadline()
     }
     _preference->evaluateForTesting(3);
     QCOMPARE(links->primaryLinkName(), QStringLiteral("RFD"));
+    QCOMPARE(_roles->linkReturnStatus(vehicle->id()),
+             QStringLiteral("Return paused while a parameter, mission, fence, rally or signing transfer is running."));
     if (transfer < 0) {
         parameters->setPendingWritesForTest(false);
     } else {
@@ -357,6 +577,8 @@ void LinkPreferenceControllerTest::_signingPendingAtDeadline()
     _preference->evaluateForTesting(3);
     QCOMPARE(links->primaryLinkName(), QStringLiteral("RFD"));
     QVERIFY(facade->signingStatus().pending());
+    QCOMPARE(_roles->linkReturnStatus(vehicle->id()),
+             QStringLiteral("Return paused while a parameter, mission, fence, rally or signing transfer is running."));
     QSignalSpy statusChanges(facade, &VehicleSigningController::signingStatusChanged);
     expectLogMessage("MAVLink.SigningController", QtWarningMsg,
                      QRegularExpression(disabling ? QStringLiteral("Signing disable not confirmed")

@@ -223,6 +223,15 @@ void VehicleLinksPageUITest::_connectedVehicleIsOfferedForOneClickSetup()
             QTRY_COMPARE_WITH_TIMEOUT(roles->roleForSysid(sysid), QStringLiteral("Copter"), TestTimeout::mediumMs());
             QCOMPARE(roles->nameForSysid(sysid), QStringLiteral("Mapper"));
             QVERIFY(findVisibleItem(_rootItem, QStringLiteral("vehicleCard_%1").arg(sysid), TestTimeout::mediumMs()));
+            roles->addLink(0, QStringLiteral("Radio"), QStringLiteral("Vehicle Links setup"));
+            QCOMPARE(vehicle->vehicleLinkManager()->linkNames().size(), 1);
+            QQuickItem* const returnStatus = _requireItem(QStringLiteral("vehicleReturnStatus_%1").arg(sysid));
+            QVERIFY(returnStatus);
+            QTRY_COMPARE_WITH_TIMEOUT(
+                returnStatus->property("text").toString(),
+                QStringLiteral("Automatic return is off. Tick Preferred on one link to turn it on."),
+                TestTimeout::shortMs());
+            QVERIFY(!returnStatus->isVisible());
             // Set up now, so it is no longer offered
             QTRY_VERIFY_WITH_TIMEOUT(findVisibleItem(_rootItem, QStringLiteral("setUpRow_%1").arg(sysid), 0) == nullptr,
                                      TestTimeout::mediumMs());
@@ -363,6 +372,15 @@ void VehicleLinksPageUITest::_preferredAndStatusTagsFollowVehicle()
             roles->addEntry(otherSysid, QStringLiteral("Plane"), QStringLiteral("Other"), 0);
             roles->addLink(1, QStringLiteral("UDP"), QStringLiteral("UI UDP"));
             QVERIFY(_openPage());
+            QQuickItem* const returnStatus = _requireItem(QStringLiteral("vehicleReturnStatus_%1").arg(sysid));
+            QVERIFY(returnStatus);
+            QTRY_VERIFY_WITH_TIMEOUT(returnStatus->isVisible(), TestTimeout::shortMs());
+            QCOMPARE(returnStatus->property("text").toString(),
+                     QStringLiteral("Automatic return is off. Tick Preferred on one link to turn it on."));
+            QQuickItem* const otherReturnStatus =
+                _requireItem(QStringLiteral("vehicleReturnStatus_%1").arg(otherSysid));
+            QVERIFY(otherReturnStatus);
+            QVERIFY(!otherReturnStatus->isVisible());
             QQuickItem* const firstPrimary = _requireItem(QStringLiteral("vehicleLinkPrimary_%1_0").arg(sysid));
             QQuickItem* const secondPrimary = _requireItem(QStringLiteral("vehicleLinkPrimary_%1_1").arg(sysid));
             QQuickItem* const secondLost = _requireItem(QStringLiteral("vehicleLinkLost_%1_1").arg(sysid));
@@ -376,8 +394,13 @@ void VehicleLinksPageUITest::_preferredAndStatusTagsFollowVehicle()
                                         QStringLiteral("vehicleLinksFlickable")));
             QCOMPARE(roles->preferredLinkConfigNameForSysid(sysid), QStringLiteral("UI UDP"));
             QVERIFY(roles->preferredLinkConfigNameForSysid(otherSysid).isEmpty());
+            QTRY_COMPARE_WITH_TIMEOUT(returnStatus->property("text").toString(),
+                                      QStringLiteral("UI UDP is back. Returning to it in 1 s if it stays steady."),
+                                      TestTimeout::shortMs());
             preference->evaluateForTesting(3);
             QTRY_VERIFY_WITH_TIMEOUT(secondPrimary->isVisible(), TestTimeout::shortMs());
+            QTRY_COMPARE_WITH_TIMEOUT(returnStatus->property("text").toString(),
+                                      QStringLiteral("Using UI UDP, the preferred link."), TestTimeout::shortMs());
             QVERIFY(!firstPrimary->isVisible());
 
             QCOMPARE(links->linkNames().indexOf(QStringLiteral("UI Secondary")), 1);
@@ -436,6 +459,8 @@ void VehicleLinksPageUITest::_preferredAndStatusTagsFollowVehicle()
             QTRY_COMPARE_WITH_TIMEOUT(MultiVehicleManager::instance()->vehicles()->count(), 0, TestTimeout::longMs());
             QTRY_VERIFY_WITH_TIMEOUT(!firstPrimary->isVisible(), TestTimeout::shortMs());
             QTRY_VERIFY_WITH_TIMEOUT(!notAttached->isVisible(), TestTimeout::shortMs());
+            QTRY_VERIFY_WITH_TIMEOUT(returnStatus->property("text").toString().isEmpty(), TestTimeout::shortMs());
+            QVERIFY(!returnStatus->isVisible());
             QVERIFY(!secondPrimary->isVisible() && !secondLost->isVisible());
             QTRY_VERIFY_WITH_TIMEOUT(!backup, TestTimeout::longMs());
         });
