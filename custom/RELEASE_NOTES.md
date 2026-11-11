@@ -1,5 +1,90 @@
 # Release notes
 
+## v1.13.0
+
+**Test build.** The UDP changes pass the automated Unit and Integration suites and a lab
+burst benchmark, but have not run on the real Microhard mesh and radios. These
+diagnostics are to find why file and parameter transfers are slow over UDP while serial
+is fine. Treat v1.13.0 as a test build until the owner has accepted it on the bench.
+
+Based on v1.12.1 plus the changes below, with no upstream merge. v1.13.0 also includes
+the UDP disconnect fix (PR 53), which was merged after v1.12.1 but never released.
+
+### Fixes in the fork
+
+- **Disconnect while a UDP link is starting**: Disconnect before binding was ignored,
+  leaving the link connected. Deleting it left a hidden link holding the port. Both now
+  end the link and free the port. Connect twice no longer duplicates a connection's
+  link.
+- **Empty UDP datagram**: one zero-length datagram used to stop reception until
+  reconnecting, though the link looked connected. Empty datagrams are now skipped
+  quietly and never added as send targets.
+- **UDP receive buffer**: each link now asks for 4 MiB after binding, up from the OS
+  default (about 208 KB on Linux; Windows default unknown). Lab bursts of 1000 and 5000
+  full-size frames lost up to 330 and 1,914 frames before, none after. The link uses
+  whatever size the OS allows.
+
+### New in the fork
+
+- **FTP downloads** (`Vehicle.FTPManager`): one `FTP download summary:` per download,
+  including parameter files: `remoteFile`, `result` (empty = success), `elapsedMs`,
+  `bytesWritten`, `fileSize`, `packetsAccepted`, `duplicatePackets`, `latePackets`,
+  `holesCreated`, `holeBytes`, `holeRepairRequests`, `burstRequests`, `burstTimeouts`,
+  `holeRepairTimeouts`, `otherTimeouts`, `sessionReopens`, `smallestChunk`,
+  `largestChunk` (239 bytes normally, 91 on radio, 78 on signed radio),
+  `primaryLinkName`, `primaryLinkIsRadio`, `primaryLinkChanges`,
+  `averageBytesPerSecond`. Many repair requests and timeouts with low throughput mean
+  loss; no holes and low throughput mean a slow path. `primaryLinkChanges` above 0 means
+  the transfer changed links. These logs appear only for enabled categories and cost
+  almost nothing.
+- **UDP traffic** (`Comms.UDPLink`): `UDP socket buffers:` at connection gives requested
+  and actual receive buffer and send buffer. While datagrams flow, `UDP stats:` once per
+  second gives `rxDatagrams`, `rxBytes`, `emptyDatagrams`, `drains`, `largestDrain`
+  (datagrams read per pass), `writeCalls`, `writeAttempts` (above `writeCalls` means
+  packets go to more than one destination), `txDatagrams`, `txBytes`, `learnedTargets`,
+  `writeFailures`, `largestArrivalGapMs` (longest gap between received datagrams in that
+  second).
+- **Main thread stalls** (`Custom.MainThreadStall`): `Main thread stalled for N ms` when
+  the main thread runs more than 250 ms late, at most once per second. One line right
+  after startup is normal.
+
+### Capturing a slow transfer
+
+1. Before connecting, open Application Settings > App Log Viewer > Categories and enable
+   `Vehicle.FTPManager`, `Comms.UDPLink` and `Custom.MainThreadStall`.
+2. Note which links are connected and which is Primary. Run the transfer over UDP and
+   note the time, then over serial.
+3. Open Settings > Telemetry > Link Status and note loss per link.
+4. On Windows, run `netstat -s -p udp` before and after. A rising "Receive Errors" count
+   means Windows dropped datagrams.
+5. Click Save on App Log Viewer to save the log.
+
+### Changes to know about
+
+- **UDP receive buffer**: memory is used only while datagrams are queued.
+- **FTP timing**: unchanged. A lost packet still costs a 3 second wait, with 6 retries.
+  No setting was added or moved.
+
+### Known issues
+
+- **Return guard**: only visible parameter, mission, fence and rally transfers
+  and pending MAVLink signing changes delay return. Individual parameter reads,
+  arm, takeoff and guided commands are not tracked, so a return can coincide with them.
+- **Wait history**: fully removing a vehicle forgets its return-wait history.
+- **Video handover**: after switching between a vehicle tab and the COP overview,
+  a tile can show "Stream unavailable; retrying" for a few seconds while the other
+  receiver releases the UDP port.
+- **3D View test**: the stock test needs a 3D View button the fork does not show.
+  It remains excluded in CI.
+- **Hardware checks**: video and Plan UI tests have not run on real hardware.
+  The return logic and new status line have only been exercised against simulated
+  links, not real radios.
+- **Slow UDP transfers**: the cause is not established; this release adds measurement
+  and the buffer change, not a speed fix.
+- **UDP send targets**: every endpoint the link has received from still gets every
+  outgoing packet, and none expire.
+- **FTP loss recovery**: loss still costs 3 seconds; pieces are re-requested one by one.
+
 ## v1.12.1
 
 **Test build.** The changes pass the automated Unit and Integration suites, but
