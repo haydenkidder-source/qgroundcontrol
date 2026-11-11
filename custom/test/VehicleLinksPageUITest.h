@@ -14,6 +14,7 @@ class VehicleLinksPageUITest : public QmlUITestBase
 private slots:
     void init() override;
     void cleanup() override;
+    void _settingsPlacementAndAnalyzeRemoval();
     void _emptyPageSaysWhatToDo();
     void _vehicleAddedByHandGetsACard_data();
     void _vehicleAddedByHandGetsACard();

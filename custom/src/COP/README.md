@@ -6,7 +6,7 @@ passes itself to each loaded item's `hostWindow` property; navigation uses its e
 validation guard and view-switch functions.
 
 COP is the landing page. Vehicle tabs retain first-seen order in `QSettings` and include
-saved vehicle entries (Analyze > Vehicle Links). A role change updates existing labels.
+saved vehicle entries (Application Settings > Vehicle Links). A role change updates existing labels.
 Selecting a tab does not change the active vehicle. **Assume Control** selects a connected
 vehicle, or remembers one system ID to select when it connects. The pending request can be
 cancelled. This action changes QGC's active vehicle; it does not arm, change flight mode,

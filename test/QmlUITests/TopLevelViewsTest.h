@@ -27,4 +27,5 @@ private slots:
 
 private:
     QQuickItem* _clickSettingsButton(const QString& pageName);
+    bool _clickSettingsSection(QQuickItem* sectionButton, const QString& sectionName);
 };

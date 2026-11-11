@@ -282,7 +282,7 @@ jobs:
           junit-output: junit-results-analysis-${{ matrix.tool }}.xml
           ctest-output: sanitizer-output.txt
           include-labels: 'Unit|Integration'
-          exclude-labels: 'Flaky|Network|NoSanitizer'
+          exclude-labels: 'Flaky|Network|NoSanitizer|StockUI'
           parallel: '1'
 
       - name: Upload Output

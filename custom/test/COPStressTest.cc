@@ -1,6 +1,7 @@
 #include "COPStressTest.h"
 
 #include <QtCore/QDir>
+#include <QtCore/QRegularExpression>
 #include <QtCore/QSettings>
 #include <QtCore/QTimer>
 #include <QtQml/QQmlApplicationEngine>
@@ -221,6 +222,11 @@ void COPStressUITest::cleanup()
 
 void COPStressUITest::_threeVehicleChurn()
 {
+    // Instrumented MockLinks can exhaust the HOME_POSITION interval request retries.
+    ignoreLogMessage("Vehicle.MavCommandQueue", QtWarningMsg,
+                     QRegularExpression(QStringLiteral("^\"Giving up sending command after max retries: "
+                                                       "MAV_CMD_SET_MESSAGE_INTERVAL message: HOME_POSITION\"$")));
+
     startUI();
     QVERIFY(!QTest::currentTestFailed());
     LinkManager::instance()->setConnectionsAllowed();
@@ -365,6 +371,11 @@ void COPStressUITest::_lastControlRequestWins()
 
 void COPStressUITest::_disconnectOtherPreservesControl()
 {
+    // Instrumented MockLinks can exhaust the HOME_POSITION interval request retries.
+    ignoreLogMessage("Vehicle.MavCommandQueue", QtWarningMsg,
+                     QRegularExpression(QStringLiteral("^\"Giving up sending command after max retries: "
+                                                       "MAV_CMD_SET_MESSAGE_INTERVAL message: HOME_POSITION\"$")));
+
     startUI();
     QVERIFY(!QTest::currentTestFailed());
     LinkManager::instance()->setConnectionsAllowed();
@@ -429,8 +440,10 @@ void COPStressUITest::_navigationAndLayout()
     }
 
     _window->resize(1280, 1000);
+    QVERIFY(clickToolSelectDropdownButton(QStringLiteral("toolbar_viewSettings")));
+    QVERIFY(clickButtonScrolled(QStringLiteral("settingsButton_Vehicle Links"), QStringLiteral("settings_buttonList")));
+    QVERIFY(findVisibleItem(_rootItem, QStringLiteral("vehicleLinksFlickable")));
     QVERIFY(clickToolSelectDropdownButton(QStringLiteral("toolbar_viewAnalyze")));
-    QVERIFY(clickButton(QStringLiteral("analyzeButton_Vehicle Links")));
     QVERIFY(clickToolSelectDropdownButton(QStringLiteral("toolbar_viewSettings")));
     QVERIFY(clickToolSelectDropdownButton(QStringLiteral("toolbar_viewConfigure")));
     QVERIFY(clickToolSelectDropdownButton(QStringLiteral("toolbar_viewPlan")));

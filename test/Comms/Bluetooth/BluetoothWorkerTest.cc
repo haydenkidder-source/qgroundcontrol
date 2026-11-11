@@ -108,6 +108,12 @@ void BluetoothWorkerTest::_testWriteWhileDisconnectedEmitsError()
 
 void BluetoothWorkerTest::_testConnectWhileConnectedWarns()
 {
+    // BlueZ may be installed without an adapter on headless runners.
+    ignoreLogMessage("qt.bluetooth.bluez", QtWarningMsg,
+                     QRegularExpression(QStringLiteral("^HCI icotl HCIGETCONNLIST: \"No such device\"$")));
+    ignoreLogMessage("qt.bluetooth.bluez", QtWarningMsg,
+                     QRegularExpression(QStringLiteral("^Cannot find hci dev for \"00:00:00:00:00:00\"$")));
+
     BluetoothConfiguration config("TestBT_doubleConnect");
 
     // Use BLE worker — Classic would attempt a real socket
@@ -218,6 +224,10 @@ void BluetoothWorkerTest::_testDestroyClassicWorker()
 
 void BluetoothWorkerTest::_testDestroyBleWorker()
 {
+    // BLE setup probes the adapter even when the runner has none.
+    ignoreLogMessage("qt.bluetooth.bluez", QtWarningMsg,
+                     QRegularExpression(QStringLiteral("^Cannot find hci dev for \"00:00:00:00:00:00\"$")));
+
     BluetoothConfiguration config("TestBT_destroyBle");
     config.setMode(BluetoothConfiguration::BluetoothMode::ModeLowEnergy);
 

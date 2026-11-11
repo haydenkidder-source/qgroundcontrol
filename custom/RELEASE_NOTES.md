@@ -1,5 +1,57 @@
 # Release notes
 
+## v1.12.1
+
+**Test build.** The changes pass the automated Unit and Integration suites, but
+the return-to-preferred-link logic has not yet been bench-tested on the real
+vehicles and radios. Treat v1.12.1 as a test build until the owner has accepted it
+on the bench.
+
+Based on v1.12.0 plus the changes below, with no upstream merge. Every v1.12.0
+behavior is kept except where Changes to know about says otherwise.
+
+### Fixes in the fork
+
+Bench follow-up to the first multilink test:
+
+- **Return wait**: now 60 seconds by default, up from 15. The 5 to 300 second range
+  is unchanged, and a wait saved earlier is kept. Repeated drops still lengthen
+  the wait: with the default setting, 60, 120, 240, then up to 300 seconds.
+- **Return after connecting**: connecting while armed or a failed parameter
+  download no longer blocks return for good. The return used to wait for a
+  parameter load that would never happen.
+- **Return status**: each vehicle with two or more links shows a line on Vehicle
+  Links: automatic return off, a countdown, paused for a transfer or while the
+  vehicle finishes connecting, or a longer wait after repeated drops. Each state
+  change is also logged under `Custom.LinkPreference`.
+- **Vehicle Links location**: moved from Analyze to Application Settings, directly
+  under Comm Links. Comm Links itself is unchanged.
+
+### Changes to know about
+
+- **Preferred link always wins**: picking another link by hand no longer holds
+  it. In v1.12.0, a hand-picked link stayed selected until the preferred link
+  dropped and came back. Leaving a healthy preferred link now starts the full
+  return wait from that moment, with the status line counting down; it does not
+  snap back instantly. The configured link must not be overridable by hand, so
+  the system stays predictable.
+- **Vehicle Links**: now under Application Settings, not Analyze.
+
+### Known issues
+
+- **Return guard**: only visible parameter, mission, fence and rally transfers
+  and pending MAVLink signing changes delay return. Individual parameter reads,
+  arm, takeoff and guided commands are not tracked, so a return can coincide with them.
+- **Wait history**: fully removing a vehicle forgets its return-wait history.
+- **Video handover**: after switching between a vehicle tab and the COP overview,
+  a tile can show "Stream unavailable; retrying" for a few seconds while the other
+  receiver releases the UDP port.
+- **3D View test**: the stock test needs a 3D View button the fork does not show.
+  It remains excluded in CI.
+- **Hardware checks**: video and Plan UI tests have not run on real hardware.
+  The return logic and new status line have only been exercised against simulated
+  links, not real radios.
+
 ## v1.12.0
 
 **Test build.** The merged upstream work and new features pass the automated Unit

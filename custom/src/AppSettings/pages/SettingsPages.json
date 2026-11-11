@@ -9,6 +9,12 @@
             "icon": "qrc:/res/gear-white.svg",
             "pageDefinition": "Custom.SettingsUI.json",
             "insertAfter": "General"
+        },
+        {
+            "name": "Vehicle Links",
+            "url": "qrc:/qml/Custom/VehicleRoles/VehicleLinksPage.qml",
+            "icon": "qrc:/InstrumentValueIcons/drone.svg",
+            "insertAfter": "Comm Links"
         }
     ]
 }

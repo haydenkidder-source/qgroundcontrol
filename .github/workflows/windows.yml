@@ -324,6 +324,7 @@ jobs:
           QSG_RHI_PREFER_SOFTWARE_RENDERER: '1'
         with:
           include-labels: 'Unit|Integration'
+          exclude-labels: 'Flaky|Network|StockUI'
           tests-regex: '^(Gst|GStreamer[A-Z.]|Video|Subtitle|QGCVideo|QtMultimedia|QtVideo|UVC|StreamSupervisor|RecordingPlan)'
           junit-output: junit-gstreamer.xml
           ctest-output: gstreamer-output.txt

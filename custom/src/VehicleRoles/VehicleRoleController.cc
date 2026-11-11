@@ -92,9 +92,18 @@ VehicleRoleController::VehicleRoleController(QObject* parent)
     : QObject(parent)
     , _roleEntries(new QmlObjectListModel(this))
 {
-    _failbackHoldSeconds = qBound(5, QSettings().value(kFailbackHoldKey, 15).toInt(), 300);
+    _failbackHoldSeconds = qBound(5, QSettings().value(kFailbackHoldKey, 60).toInt(), 300);
     _load();
-    new LinkPreferenceController(this);
+    _linkPreference = new LinkPreferenceController(this);
+    connect(_linkPreference, &LinkPreferenceController::linkReturnStatusChanged, this, [this]() {
+        ++_linkReturnStatusRevision;
+        emit linkReturnStatusChanged();
+    });
+}
+
+QString VehicleRoleController::linkReturnStatus(quint32 sysid) const
+{
+    return _linkPreference ? _linkPreference->linkReturnStatus(sysid) : QString();
 }
 
 int VehicleRoleController::_indexForSysid(quint32 sysid) const

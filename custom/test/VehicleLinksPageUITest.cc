@@ -75,9 +75,50 @@ QQuickItem* VehicleLinksPageUITest::_requireItem(const QString& objectName) cons
 bool VehicleLinksPageUITest::_openPage()
 {
     _window->resize(1280, 1000);
-    return clickToolSelectDropdownButton(QStringLiteral("toolbar_viewAnalyze")) &&
-           clickButton(QStringLiteral("analyzeButton_Vehicle Links")) &&
+    return clickToolSelectDropdownButton(QStringLiteral("toolbar_viewSettings")) &&
+           clickButtonScrolled(QStringLiteral("settingsButton_Vehicle Links"), QStringLiteral("settings_buttonList")) &&
            findVisibleItem(_rootItem, QStringLiteral("vehicleLinksFlickable"), TestTimeout::mediumMs()) != nullptr;
+}
+
+void VehicleLinksPageUITest::_settingsPlacementAndAnalyzeRemoval()
+{
+    startUI();
+    QVERIFY(!QTest::currentTestFailed());
+    QVERIFY(_openPage());
+
+    QQuickItem* const commLinksButton = findVisibleItem(_rootItem, QStringLiteral("settingsButton_Comm Links"));
+    QQuickItem* const vehicleLinksButton = findVisibleItem(_rootItem, QStringLiteral("settingsButton_Vehicle Links"));
+    QVERIFY(commLinksButton && vehicleLinksButton);
+    QQuickItem* const commLinksColumn = commLinksButton->parentItem();
+    QQuickItem* const vehicleLinksColumn = vehicleLinksButton->parentItem();
+    QVERIFY(commLinksColumn && vehicleLinksColumn);
+    QCOMPARE(commLinksColumn->parentItem(), vehicleLinksColumn->parentItem());
+    QVERIFY(commLinksColumn->property("index").isValid());
+    QVERIFY(vehicleLinksColumn->property("index").isValid());
+    QCOMPARE(vehicleLinksColumn->property("index").toInt(), commLinksColumn->property("index").toInt() + 1);
+    QTRY_VERIFY_WITH_TIMEOUT(vehicleLinksButton->mapToScene(QPointF()).y() > commLinksButton->mapToScene(QPointF()).y(),
+                             TestTimeout::shortMs());
+
+    QQuickItem* const rightPanel = findVisibleItem(_rootItem, QStringLiteral("settings_rightPanel"));
+    QQuickItem* const flickable = findVisibleItem(_rootItem, QStringLiteral("vehicleLinksFlickable"));
+    QVERIFY(rightPanel && flickable);
+    QTRY_VERIFY_WITH_TIMEOUT(flickable->width() > 0 && flickable->height() > 0, TestTimeout::shortMs());
+    QTRY_VERIFY_WITH_TIMEOUT(rightPanel->mapRectToScene(rightPanel->boundingRect())
+                                 .contains(flickable->mapRectToScene(flickable->boundingRect())),
+                             TestTimeout::shortMs());
+
+    QVERIFY(clickButtonScrolled(QStringLiteral("settingsButton_Comm Links"), QStringLiteral("settings_buttonList")));
+    QQuickItem* const commLinksPage = findVisibleItem(_rootItem, QStringLiteral("settingsPage_CommLinks"));
+    QVERIFY(commLinksPage);
+    QVERIFY(findVisibleItem(commLinksPage, QStringLiteral("settingsGroup_AutoConnect")));
+    QVERIFY(findVisibleItem(commLinksPage, QStringLiteral("settingsCheckBox_autoConnectUDP")));
+    QVERIFY(clickButtonScrolled(QStringLiteral("settingsButton_Vehicle Links"), QStringLiteral("settings_buttonList")));
+    QVERIFY(findVisibleItem(_rootItem, QStringLiteral("vehicleLinksFlickable")));
+
+    QVERIFY(clickToolSelectDropdownButton(QStringLiteral("toolbar_viewAnalyze")));
+    QVERIFY(findVisibleItem(_rootItem, QStringLiteral("analyzeButton_App Log Viewer")));
+    QVERIFY(findVisibleItem(_rootItem, QStringLiteral("analyzeButton_Exclusion Zones")));
+    QVERIFY(!findItem(_rootItem, QStringLiteral("analyzeButton_Vehicle Links")));
 }
 
 void VehicleLinksPageUITest::_emptyPageSaysWhatToDo()
@@ -223,6 +264,15 @@ void VehicleLinksPageUITest::_connectedVehicleIsOfferedForOneClickSetup()
             QTRY_COMPARE_WITH_TIMEOUT(roles->roleForSysid(sysid), QStringLiteral("Copter"), TestTimeout::mediumMs());
             QCOMPARE(roles->nameForSysid(sysid), QStringLiteral("Mapper"));
             QVERIFY(findVisibleItem(_rootItem, QStringLiteral("vehicleCard_%1").arg(sysid), TestTimeout::mediumMs()));
+            roles->addLink(0, QStringLiteral("Radio"), QStringLiteral("Vehicle Links setup"));
+            QCOMPARE(vehicle->vehicleLinkManager()->linkNames().size(), 1);
+            QQuickItem* const returnStatus = _requireItem(QStringLiteral("vehicleReturnStatus_%1").arg(sysid));
+            QVERIFY(returnStatus);
+            QTRY_COMPARE_WITH_TIMEOUT(
+                returnStatus->property("text").toString(),
+                QStringLiteral("Automatic return is off. Tick Preferred on one link to turn it on."),
+                TestTimeout::shortMs());
+            QVERIFY(!returnStatus->isVisible());
             // Set up now, so it is no longer offered
             QTRY_VERIFY_WITH_TIMEOUT(findVisibleItem(_rootItem, QStringLiteral("setUpRow_%1").arg(sysid), 0) == nullptr,
                                      TestTimeout::mediumMs());
@@ -363,6 +413,15 @@ void VehicleLinksPageUITest::_preferredAndStatusTagsFollowVehicle()
             roles->addEntry(otherSysid, QStringLiteral("Plane"), QStringLiteral("Other"), 0);
             roles->addLink(1, QStringLiteral("UDP"), QStringLiteral("UI UDP"));
             QVERIFY(_openPage());
+            QQuickItem* const returnStatus = _requireItem(QStringLiteral("vehicleReturnStatus_%1").arg(sysid));
+            QVERIFY(returnStatus);
+            QTRY_VERIFY_WITH_TIMEOUT(returnStatus->isVisible(), TestTimeout::shortMs());
+            QCOMPARE(returnStatus->property("text").toString(),
+                     QStringLiteral("Automatic return is off. Tick Preferred on one link to turn it on."));
+            QQuickItem* const otherReturnStatus =
+                _requireItem(QStringLiteral("vehicleReturnStatus_%1").arg(otherSysid));
+            QVERIFY(otherReturnStatus);
+            QVERIFY(!otherReturnStatus->isVisible());
             QQuickItem* const firstPrimary = _requireItem(QStringLiteral("vehicleLinkPrimary_%1_0").arg(sysid));
             QQuickItem* const secondPrimary = _requireItem(QStringLiteral("vehicleLinkPrimary_%1_1").arg(sysid));
             QQuickItem* const secondLost = _requireItem(QStringLiteral("vehicleLinkLost_%1_1").arg(sysid));
@@ -376,8 +435,13 @@ void VehicleLinksPageUITest::_preferredAndStatusTagsFollowVehicle()
                                         QStringLiteral("vehicleLinksFlickable")));
             QCOMPARE(roles->preferredLinkConfigNameForSysid(sysid), QStringLiteral("UI UDP"));
             QVERIFY(roles->preferredLinkConfigNameForSysid(otherSysid).isEmpty());
+            QTRY_COMPARE_WITH_TIMEOUT(returnStatus->property("text").toString(),
+                                      QStringLiteral("Returning to UI UDP in 1 s if it stays steady."),
+                                      TestTimeout::shortMs());
             preference->evaluateForTesting(3);
             QTRY_VERIFY_WITH_TIMEOUT(secondPrimary->isVisible(), TestTimeout::shortMs());
+            QTRY_COMPARE_WITH_TIMEOUT(returnStatus->property("text").toString(),
+                                      QStringLiteral("Using UI UDP, the preferred link."), TestTimeout::shortMs());
             QVERIFY(!firstPrimary->isVisible());
 
             QCOMPARE(links->linkNames().indexOf(QStringLiteral("UI Secondary")), 1);
@@ -436,6 +500,8 @@ void VehicleLinksPageUITest::_preferredAndStatusTagsFollowVehicle()
             QTRY_COMPARE_WITH_TIMEOUT(MultiVehicleManager::instance()->vehicles()->count(), 0, TestTimeout::longMs());
             QTRY_VERIFY_WITH_TIMEOUT(!firstPrimary->isVisible(), TestTimeout::shortMs());
             QTRY_VERIFY_WITH_TIMEOUT(!notAttached->isVisible(), TestTimeout::shortMs());
+            QTRY_VERIFY_WITH_TIMEOUT(returnStatus->property("text").toString().isEmpty(), TestTimeout::shortMs());
+            QVERIFY(!returnStatus->isVisible());
             QVERIFY(!secondPrimary->isVisible() && !secondLost->isVisible());
             QTRY_VERIFY_WITH_TIMEOUT(!backup, TestTimeout::longMs());
         });

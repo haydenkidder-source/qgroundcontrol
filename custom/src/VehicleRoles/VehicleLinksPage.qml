@@ -407,10 +407,22 @@ AnalyzePage {
                             QGCLabel {
                                 Layout.fillWidth: true
                                 wrapMode: Text.WordWrap
-                                text: qsTr("QGC returns to the preferred link after a steady connection. " +
-                                           "Repeated losses make the wait longer. Picking another link, even during " +
-                                           "an outage, holds that link until the preferred link loses and regains " +
-                                           "communication again.")
+                                text: qsTr("The preferred link always wins once it has been steady for the wait " +
+                                           "set at the top of this page (60 seconds by default). A link that drops " +
+                                           "again soon after a return makes the next wait longer. Picking another " +
+                                           "link by hand does not stick, even during an outage. Nothing happens " +
+                                           "until a link is ticked Preferred.")
+                            }
+
+                            QGCLabel {
+                                objectName: "vehicleReturnStatus_" + _entry.sysid
+                                Layout.fillWidth: true
+                                wrapMode: Text.WordWrap
+                                text: {
+                                    _controller.linkReturnStatusRevision
+                                    return _controller.linkReturnStatus(_entry.sysid)
+                                }
+                                visible: _entry.links.count >= 2 && text !== ""
                             }
 
                             RowLayout {
