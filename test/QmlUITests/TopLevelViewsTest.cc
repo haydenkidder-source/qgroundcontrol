@@ -124,6 +124,17 @@ QQuickItem* TopLevelViewsTest::_clickSettingsButton(const QString& pageName)
     return button;
 }
 
+bool TopLevelViewsTest::_clickSettingsSection(QQuickItem* sectionButton, const QString& sectionName)
+{
+    if (!scrollIntoView(sectionButton, QStringLiteral("settings_buttonList"))) {
+        QTest::qFail(
+            qPrintable(QStringLiteral("Failed to scroll settings section button into view: %1").arg(sectionName)),
+            __FILE__, __LINE__);
+        return false;
+    }
+    return _clickItemAt(sectionButton, 0.5, 0.5, QStringLiteral("section ") + sectionName);
+}
+
 void TopLevelViewsTest::_testNavigateViews()
 {
     startUI();
@@ -206,7 +217,7 @@ void TopLevelViewsTest::_testSettingsSectionVisibility()
 
     QQuickItem* settingsSection = nullptr;
     QTRY_VERIFY((settingsSection = findVisibleSectionButton(videoButton->parentItem(), QStringLiteral("Settings"))));
-    QVERIFY(_clickItemAt(settingsSection, 0.5, 0.5, QStringLiteral("section Settings")));
+    QVERIFY(_clickSettingsSection(settingsSection, QStringLiteral("Settings")));
 
     QVERIFY(findVisibleItem(_rootItem, QStringLiteral("settingsGroup_Settings")));
 
@@ -280,7 +291,7 @@ void TopLevelViewsTest::_testSettingsSectionCollapseToSingle()
     // Select the always-visible "Video Source" section
     QQuickItem* sourceSection = nullptr;
     QTRY_VERIFY((sourceSection = findVisibleSectionButton(videoButton->parentItem(), QStringLiteral("Video Source"))));
-    QVERIFY(_clickItemAt(sourceSection, 0.5, 0.5, QStringLiteral("section Video Source")));
+    QVERIFY(_clickSettingsSection(sourceSection, QStringLiteral("Video Source")));
     QTRY_VERIFY(!videoButton->property("checked").toBool());
 
     // Disabling the source hides all other sections, leaving only "Video Source"
