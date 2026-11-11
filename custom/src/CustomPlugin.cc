@@ -4,9 +4,11 @@
 #include <QtQml/QQmlApplicationEngine>
 #include <QtQml/QQmlFile>
 
+#include "AppMessages.h"
 #include "AppSettings.h"
 #include "COPController.h"
 #include "CustomSettings.h"
+#include "MainThreadStallMonitor.h"
 #include "PerimeterScanComplexItem.h"
 #include "PerimeterScanPlanCreator.h"
 #include "QGCLoggingCategory.h"
@@ -42,6 +44,9 @@ CustomPlugin::CustomPlugin(QObject* parent)
     qCDebug(CustomLog) << this;
 
     (void) connect(this, &QGCCorePlugin::showAdvancedUIChanged, this, &CustomPlugin::_advancedChanged);
+    if (!QGC::runningUnitTests()) {
+        new MainThreadStallMonitor(this);
+    }
 }
 
 QGCCorePlugin* CustomPlugin::instance()

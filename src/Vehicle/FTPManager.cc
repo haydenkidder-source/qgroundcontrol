@@ -91,6 +91,17 @@ bool FTPManager::download(uint8_t fromCompId, const QString& fromURI, const QStr
     _setStateMachine(rgDownloadStateMachine, std::size(rgDownloadStateMachine));
 
     _downloadState.active = true;
+    _downloadStats = DownloadStats{};
+    _downloadStats.remoteFile = _downloadState.fullPathOnVehicle;
+    _downloadTimer.start();
+    {
+        const SharedLinkInterfacePtr primaryLink =
+            _vehicle ? _vehicle->vehicleLinkManager()->primaryLink().lock() : nullptr;
+        _downloadPrimaryLink = primaryLink.get();
+        _downloadPrimaryLinkName = primaryLink ? primaryLink->linkConfiguration()->name() : QString();
+        _downloadStats.primaryLinkIsRadio = primaryLink && primaryLink->isRadioLink();
+    }
+    _downloadStats.primaryLinkName = _downloadPrimaryLinkName;
     _startStateMachine();
 
     return true;
@@ -303,6 +314,30 @@ void FTPManager::_downloadComplete(const QString& errorMsg)
     // open never acked: the server may have opened it after we gave up.
     if (!errorMsg.isEmpty()) {
         _sendResetSessionsNoAck();
+    }
+    if (_downloadState.active) {
+        _downloadStats.result = errorMsg;
+        _downloadStats.elapsedMs = _downloadTimer.elapsed();
+        _downloadStats.averageBytesPerSecond =
+            _downloadStats.elapsedMs > 0
+                ? static_cast<double>(_downloadStats.bytesWritten) * 1000.0 / _downloadStats.elapsedMs
+                : 0.0;
+        qCInfo(FTPManagerLog).nospace()
+            << "FTP download summary:" << " remoteFile=" << _downloadStats.remoteFile
+            << " result=" << _downloadStats.result << " elapsedMs=" << _downloadStats.elapsedMs
+            << " bytesWritten=" << _downloadStats.bytesWritten << " fileSize=" << _downloadStats.fileSize
+            << " packetsAccepted=" << _downloadStats.packetsAccepted
+            << " duplicatePackets=" << _downloadStats.duplicatePackets << " latePackets=" << _downloadStats.latePackets
+            << " holesCreated=" << _downloadStats.holesCreated << " holeBytes=" << _downloadStats.holeBytes
+            << " holeRepairRequests=" << _downloadStats.holeRepairRequests
+            << " burstRequests=" << _downloadStats.burstRequests << " burstTimeouts=" << _downloadStats.burstTimeouts
+            << " holeRepairTimeouts=" << _downloadStats.holeRepairTimeouts
+            << " otherTimeouts=" << _downloadStats.otherTimeouts << " sessionReopens=" << _downloadStats.sessionReopens
+            << " smallestChunk=" << _downloadStats.smallestChunk << " largestChunk=" << _downloadStats.largestChunk
+            << " primaryLinkName=" << _downloadStats.primaryLinkName
+            << " primaryLinkIsRadio=" << _downloadStats.primaryLinkIsRadio
+            << " primaryLinkChanges=" << _downloadStats.primaryLinkChanges
+            << " averageBytesPerSecond=" << _downloadStats.averageBytesPerSecond;
     }
     _downloadState.active = false;
 
@@ -686,6 +721,11 @@ void FTPManager::_advanceStateMachine(void)
 
 void FTPManager::_ackOrNakTimeout(void)
 {
+    if (_downloadState.active &&
+        _rgStateMachine[_currentStateMachineIndex].timeoutFn != &FTPManager::_burstReadFileTimeout &&
+        _rgStateMachine[_currentStateMachineIndex].timeoutFn != &FTPManager::_fillMissingBlocksTimeout) {
+        ++_downloadStats.otherTimeouts;
+    }
     (this->*_rgStateMachine[_currentStateMachineIndex].timeoutFn)();
 }
 
@@ -772,6 +812,7 @@ void FTPManager::_openFileROAckOrNak(const MavlinkFTP::Request* ackOrNak)
 
         _downloadState.sessionId        = ackOrNak->hdr.session;
         _downloadState.fileSize         = ackOrNak->openFileLength;
+        _downloadStats.fileSize = _downloadState.fileSize;
         _downloadState.expectedOffset   = 0;
 
         _downloadState.file.setFileName(_downloadState.toDir.filePath(_downloadState.fileName));
@@ -855,7 +896,11 @@ void FTPManager::_burstReadFileAckOrNak(const MavlinkFTP::Request* ackOrNak)
                     return;
                 }
                 _downloadState.bytesWritten += ackOrNak->hdr.size;
+                _downloadStats.bytesWritten += ackOrNak->hdr.size;
+                ++_downloadStats.packetsAccepted;
+                ++_downloadStats.latePackets;
             } else {
+                ++_downloadStats.duplicatePackets;
                 qCDebug(FTPManagerLog) << "_burstReadFileAckOrNak: duplicate packet at offset" << ackOrNak->hdr.offset;
             }
             _ackOrNakTimeoutTimer.start();
@@ -871,6 +916,8 @@ void FTPManager::_burstReadFileAckOrNak(const MavlinkFTP::Request* ackOrNak)
             missingData.offset          = _downloadState.expectedOffset;
             missingData.cBytesMissing   = ackOrNak->hdr.offset - _downloadState.expectedOffset;
             _downloadState.rgMissingData.append(missingData);
+            ++_downloadStats.holesCreated;
+            _downloadStats.holeBytes += missingData.cBytesMissing;
             qCDebug(FTPManagerLog) << "_handleBurstReadFileAck: adding missing data offset:cBytesMissing" << missingData.offset << missingData.cBytesMissing;
         }
 
@@ -881,6 +928,8 @@ void FTPManager::_burstReadFileAckOrNak(const MavlinkFTP::Request* ackOrNak)
             return;
         }
         _downloadState.bytesWritten += ackOrNak->hdr.size;
+        _downloadStats.bytesWritten += ackOrNak->hdr.size;
+        ++_downloadStats.packetsAccepted;
         _downloadState.expectedOffset = ackOrNak->hdr.offset + ackOrNak->hdr.size;
 
         if (ackOrNak->hdr.burstComplete) {
@@ -961,6 +1010,7 @@ void FTPManager::_downloadSessionLost(void)
         return;
     }
 
+    ++_downloadStats.sessionReopens;
     qCDebug(FTPManagerLog) << "_downloadSessionLost: re-opening to resume at offset" << _downloadState.expectedOffset << "reopenCount" << _downloadState.sessionReopenCount;
     _downloadState.resumeStateIndex = _currentStateMachineIndex;
     // Back to the front of the machine: ResetSessions then OpenFileRO, which jumps back to resumeStateIndex
@@ -970,6 +1020,7 @@ void FTPManager::_downloadSessionLost(void)
 
 void FTPManager::_burstReadFileTimeout(void)
 {
+    ++_downloadStats.burstTimeouts;
     if (++_downloadState.retryCount > _maxRetry) {
         qCDebug(FTPManagerLog) << QString("_burstReadFileTimeout retries exceeded");
         _downloadComplete(tr("Download failed"));
@@ -1168,6 +1219,8 @@ void FTPManager::_fillMissingBlocksAckOrNak(const MavlinkFTP::Request* ackOrNak)
             return;
         }
         _downloadState.bytesWritten += ackOrNak->hdr.size;
+        _downloadStats.bytesWritten += ackOrNak->hdr.size;
+        ++_downloadStats.packetsAccepted;
 
         MissingData_t& missingData = _downloadState.rgMissingData.first();
         missingData.offset += ackOrNak->hdr.size;
@@ -1206,6 +1259,7 @@ void FTPManager::_fillMissingBlocksAckOrNak(const MavlinkFTP::Request* ackOrNak)
 
 void FTPManager::_fillMissingBlocksTimeout(void)
 {
+    ++_downloadStats.holeRepairTimeouts;
     if (++_downloadState.retryCount > _maxRetry) {
         qCDebug(FTPManagerLog) << QString("_fillMissingBlocksTimeout retries exceeded");
         _downloadComplete(tr("Download failed"));
@@ -1301,6 +1355,7 @@ void FTPManager::_clearStaleSessionsTimeout(void)
 void FTPManager::_sendResetSessionsNoAck(void)
 {
     SharedLinkInterfacePtr sharedLink = _vehicle->vehicleLinkManager()->primaryLink().lock();
+    _observeDownloadPrimaryLink(sharedLink.get());
     if (!sharedLink) {
         return;
     }
@@ -1325,12 +1380,39 @@ void FTPManager::_sendResetSessionsNoAck(void)
     _vehicle->sendMessageOnLinkThreadSafe(sharedLink.get(), message);
 }
 
+void FTPManager::_observeDownloadPrimaryLink(const LinkInterface* link)
+{
+    if (!_downloadState.active) {
+        return;
+    }
+    const QString linkName = link ? link->linkConfiguration()->name() : QString();
+    if (link != _downloadPrimaryLink || linkName != _downloadPrimaryLinkName) {
+        ++_downloadStats.primaryLinkChanges;
+        _downloadPrimaryLink = link;
+        _downloadPrimaryLinkName = linkName;
+    }
+}
+
 void FTPManager::_sendRequestExpectAck(MavlinkFTP::Request* request)
 {
     _ackOrNakTimeoutTimer.start();
 
     SharedLinkInterfacePtr sharedLink = _vehicle->vehicleLinkManager()->primaryLink().lock();
+    _observeDownloadPrimaryLink(sharedLink.get());
     if (sharedLink) {
+        if (_downloadState.active) {
+            const bool burstRequest = request->hdr.opcode == MavlinkFTP::kCmdBurstReadFile;
+            const bool repairRequest = request->hdr.opcode == MavlinkFTP::kCmdReadFile;
+            if (burstRequest || repairRequest) {
+                _downloadStats.burstRequests += burstRequest;
+                _downloadStats.holeRepairRequests += repairRequest;
+                const int requestedChunk = request->hdr.size;
+                if (_downloadStats.smallestChunk == 0 || requestedChunk < _downloadStats.smallestChunk) {
+                    _downloadStats.smallestChunk = requestedChunk;
+                }
+                _downloadStats.largestChunk = qMax(_downloadStats.largestChunk, requestedChunk);
+            }
+        }
         request->hdr.seqNumber = _expectedIncomingSeqNumber + 1;    // Outgoing is 1 past last incoming
         _expectedIncomingSeqNumber += 2;
 

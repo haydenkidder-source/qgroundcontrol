@@ -1,12 +1,14 @@
 #pragma once
 
-#include "MAVLinkFTP.h"
-
-#include <QtCore/QObject>
 #include <QtCore/QDir>
+#include <QtCore/QElapsedTimer>
 #include <QtCore/QFile>
+#include <QtCore/QObject>
 #include <QtCore/QTimer>
+
+#include "MAVLinkFTP.h"
 class Vehicle;
+class LinkInterface;
 
 class FTPManager : public QObject
 {
@@ -16,6 +18,35 @@ class FTPManager : public QObject
 
 public:
     FTPManager(Vehicle* vehicle);
+
+    struct DownloadStats
+    {
+        QString remoteFile;
+        QString result;
+        qint64 elapsedMs = 0;
+        quint64 bytesWritten = 0;
+        quint64 fileSize = 0;
+        quint64 packetsAccepted = 0;
+        quint64 duplicatePackets = 0;
+        quint64 latePackets = 0;
+        quint64 holesCreated = 0;
+        quint64 holeBytes = 0;
+        quint64 holeRepairRequests = 0;
+        quint64 burstRequests = 0;
+        quint64 burstTimeouts = 0;
+        quint64 holeRepairTimeouts = 0;
+        quint64 otherTimeouts = 0;
+        quint64 sessionReopens = 0;
+        int smallestChunk = 0;
+        int largestChunk = 0;
+        QString primaryLinkName;
+        bool primaryLinkIsRadio = false;
+        quint64 primaryLinkChanges = 0;
+        double averageBytesPerSecond = 0;
+    };
+
+    /// Updated during a download and retained until the next download starts.
+    const DownloadStats& lastDownloadStats() const { return _downloadStats; }
 
     /// Downloads the specified file.
     ///     @param fromCompId Component id of the component to download from. If fromCompId is MAV_COMP_ID_ALL,
@@ -234,6 +265,7 @@ private:
     void    _setStateMachine            (const StateFunctions_t* rgStates, size_t cStates);
     QString _errorMsgFromNak            (const MavlinkFTP::Request* nak);
     void    _sendRequestExpectAck       (MavlinkFTP::Request* request);
+    void _observeDownloadPrimaryLink(const LinkInterface* link);
     void    _downloadCompleteNoError    (void) { _downloadComplete(QString()); }
     void    _downloadComplete           (const QString& errorMsg);
     void    _fillRequestDataWithString(MavlinkFTP::Request* request, const QString& str);
@@ -272,6 +304,10 @@ private:
     uint8_t                 _ftpCompId = MAV_COMP_ID_AUTOPILOT1;
     QList<StateFunctions_t> _rgStateMachine;
     DownloadState_t         _downloadState;
+    DownloadStats _downloadStats;
+    QElapsedTimer _downloadTimer;
+    const LinkInterface* _downloadPrimaryLink = nullptr;
+    QString _downloadPrimaryLinkName;
     ListDirectoryState_t    _listDirectoryState;
     DeleteFileState_t       _deleteState;
     UploadState_t           _uploadState;

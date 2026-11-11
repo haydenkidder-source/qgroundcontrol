@@ -139,6 +139,15 @@ void FTPManagerTest::_testDownloadUri()
     const QList<QVariant> arguments = spyDownloadComplete.takeFirst();
     QVERIFY2(arguments[1].toString().isEmpty(), qPrintable(arguments[1].toString()));
 
+    const FTPManager::DownloadStats& stats = ftpManager->lastDownloadStats();
+    QCOMPARE(stats.bytesWritten, stats.fileSize);
+    QCOMPARE(stats.bytesWritten, static_cast<quint64>(QFileInfo(arguments[0].toString()).size()));
+    QVERIFY(stats.packetsAccepted > 0);
+    QCOMPARE(stats.holesCreated, quint64(0));
+    QCOMPARE(stats.holeRepairRequests, quint64(0));
+    QCOMPARE(stats.burstTimeouts + stats.holeRepairTimeouts + stats.otherTimeouts, quint64(0));
+    QVERIFY(stats.result.isEmpty());
+
     if (absolutePath) {
         QFile expectedFile(QStringLiteral(":MockLink/General.MetaData.json"));
         QVERIFY(expectedFile.open(QIODevice::ReadOnly));
@@ -287,6 +296,10 @@ void FTPManagerTest::_testLostPackets()
     // void downloadComplete   (const QString& file, const QString& errorMsg);
     QList<QVariant> arguments = spyDownloadComplete.takeFirst();
     QVERIFY(arguments[1].toString().isEmpty());
+    const FTPManager::DownloadStats& stats = ftpManager->lastDownloadStats();
+    QCOMPARE(stats.bytesWritten, static_cast<quint64>(fileSize));
+    QCOMPARE(stats.fileSize, static_cast<quint64>(fileSize));
+    QVERIFY(stats.result.isEmpty());
     _verifyFileSizeAndDelete(arguments[0].toString(), fileSize);
     _disconnectMockLink();
 }
@@ -403,6 +416,7 @@ void FTPManagerTest::_testDownloadResumesAfterSessionExpiredInBurst()
     QString downloadedPath;
     QCOMPARE(_downloadSizeFile(fileSize, &downloadedPath), QString());
     QCOMPARE(mockFtp->openFileROCount(), 2);
+    QCOMPARE(_vehicle->ftpManager()->lastDownloadStats().sessionReopens, quint64(1));
     _verifyFileContentsAndDelete(downloadedPath, fileSize);
     _disconnectMockLink();
 }
@@ -440,6 +454,12 @@ void FTPManagerTest::_testFillMissingBlockSurvivesRepeatedTimeouts()
 
     QString downloadedPath;
     QCOMPARE(_downloadSizeFile(fileSize, &downloadedPath), QString());
+    const FTPManager::DownloadStats& stats = _vehicle->ftpManager()->lastDownloadStats();
+    QVERIFY(stats.holesCreated > 0);
+    QVERIFY(stats.holeRepairRequests > 0);
+    QVERIFY(stats.holeRepairRequests > stats.holeRepairTimeouts);
+    QVERIFY(stats.holeRepairTimeouts >= 5);
+    QCOMPARE(stats.bytesWritten, static_cast<quint64>(fileSize));
     _verifyFileContentsAndDelete(downloadedPath, fileSize);
     _disconnectMockLink();
 }
@@ -531,6 +551,10 @@ void FTPManagerTest::_testLateBurstPacketIsKept()
     QString downloadedPath;
     QCOMPARE(_downloadSizeFile(fileSize, &downloadedPath), QString());
     QCOMPARE(mockFtp->readFileCount(), 0);
+    const FTPManager::DownloadStats& stats = _vehicle->ftpManager()->lastDownloadStats();
+    QVERIFY(stats.holesCreated > 0);
+    QCOMPARE(stats.latePackets, quint64(1));
+    QCOMPARE(stats.holeRepairRequests, quint64(0));
     _verifyFileContentsAndDelete(downloadedPath, fileSize);
     _disconnectMockLink();
 }

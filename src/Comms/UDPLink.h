@@ -1,18 +1,20 @@
 #pragma once
 
-#include "LinkConfiguration.h"
-#include "LinkInterface.h"
+#include <atomic>
 
 #include <QtCore/QByteArray>
+#include <QtCore/QElapsedTimer>
 #include <QtCore/QList>
 #include <QtCore/QMutex>
 #include <QtCore/QString>
 #include <QtNetwork/QHostAddress>
 
-#include <atomic>
+#include "LinkConfiguration.h"
+#include "LinkInterface.h"
 
 class QUdpSocket;
 class QThread;
+class QTimer;
 
 /*===========================================================================*/
 
@@ -140,8 +142,28 @@ private slots:
     void _onSocketReadyRead();
     void _onSocketBytesWritten(qint64 bytes);
     void _onSocketErrorOccurred(QAbstractSocket::SocketError socketError);
+    void _logStats();
 
 private:
+    struct Counters
+    {
+        quint64 datagramsReceived = 0;
+        quint64 bytesReceived = 0;
+        quint64 emptyDatagrams = 0;
+        quint64 drains = 0;
+        quint64 largestDrain = 0;
+        quint64 writeCalls = 0;
+        quint64 writeAttempts = 0;
+        quint64 datagramsSent = 0;
+        quint64 bytesSent = 0;
+        quint64 learnedTargets = 0;
+        quint64 writeFailures = 0;
+
+        bool operator==(const Counters&) const = default;
+    };
+
+    void _recordDatagram(qint64 bytes);
+
     const UDPConfiguration *_udpConfig = nullptr;
     QUdpSocket *_socket = nullptr;
     QMutex _sessionTargetsMutex;
@@ -149,6 +171,13 @@ private:
     std::atomic<bool> _isConnected{false};
     bool _errorEmitted = false;
     QSet<QHostAddress> _localAddresses;
+    Counters _counters;
+    Counters _previousCounters;
+    QTimer* _statsTimer = nullptr;
+    QElapsedTimer _statsIntervalTimer;
+    QElapsedTimer _lastDatagramTimer;
+    qint64 _largestArrivalGapMs = 0;
+    quint64 _largestDrainThisInterval = 0;
 
     static const QHostAddress _multicastGroup;
 };
