@@ -141,6 +141,10 @@ bool LinkManager::createConnectedLink(SharedLinkConfigurationPtr &config)
 {
     config->setSuppressAutoReconnect(false);
 
+    if (config->link()) {
+        return true;
+    }
+
     SharedLinkInterfacePtr link = nullptr;
 
     switch(config->type()) {
