@@ -18,6 +18,8 @@ target_sources(
         MAVLinkSystemIdTest.h
         MAVLinkV1TrafficTest.cc
         MAVLinkV1TrafficTest.h
+        UDPLinkReceiveTest.cc
+        UDPLinkReceiveTest.h
 )
 
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
@@ -30,6 +32,7 @@ add_qgc_test(LogReplayLinkControllerTest LABELS Unit Comms)
 add_qgc_test(LogReplayLinkTest LABELS Unit Comms)
 add_qgc_test(MAVLinkSystemIdTest LABELS Integration Comms)
 add_qgc_test(MAVLinkV1TrafficTest LABELS Integration Comms)
+add_qgc_test(UDPLinkReceiveTest LABELS Integration Comms)
 if(NOT QGC_NO_SERIAL_LINK)
     add_subdirectory(Serial)
 endif()

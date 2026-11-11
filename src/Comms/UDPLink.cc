@@ -16,6 +16,7 @@ QGC_LOGGING_CATEGORY(UDPLinkLog, "Comms.UDPLink")
 
 namespace {
     constexpr int BUFFER_TRIGGER_SIZE = 10 * 1024;
+    constexpr int kReceiveBufferBytes = 4 * 1024 * 1024;
     constexpr int RECEIVE_TIME_LIMIT_MS = 50;
 
     bool containsTarget(const QList<std::shared_ptr<UDPClient>> &list, const QHostAddress &address, quint16 port)
@@ -357,6 +358,10 @@ void UDPWorker::connectLink()
         return;
     }
 
+    _socket->setSocketOption(QAbstractSocket::ReceiveBufferSizeSocketOption, kReceiveBufferBytes);
+    qCDebug(UDPLinkLog) << "Receive buffer bytes requested:" << kReceiveBufferBytes
+                        << "actual:" << _socket->socketOption(QAbstractSocket::ReceiveBufferSizeSocketOption);
+
     qCDebug(UDPLinkLog) << "Attempting to join multicast group:" << _multicastGroup.toString();
     const bool joinSuccess = _socket->joinMulticastGroup(_multicastGroup);
     if (!joinSuccess) {
@@ -437,7 +442,7 @@ void UDPWorker::_onSocketReadyRead()
     }
 
     const qint64 byteCount = _socket->pendingDatagramSize();
-    if (byteCount <= 0) {
+    if (byteCount < 0) {
         emit errorOccurred(tr("Could Not Read Data - No Data Available!"));
         return;
     }
@@ -447,9 +452,14 @@ void UDPWorker::_onSocketReadyRead()
     QElapsedTimer timer;
     timer.start();
     bool received = false;
+    bool receivedEmptyDatagram = false;
     while (_socket->hasPendingDatagrams()) {
         const QNetworkDatagram datagramIn = _socket->receiveDatagram();
-        if (datagramIn.isNull() || datagramIn.data().isEmpty()) {
+        if (datagramIn.isNull()) {
+            continue;
+        }
+        if (datagramIn.data().isEmpty()) {
+            receivedEmptyDatagram = true;
             continue;
         }
 
@@ -474,7 +484,9 @@ void UDPWorker::_onSocketReadyRead()
     }
 
     if (!received && buffer.isEmpty()) {
-        qCWarning(UDPLinkLog) << "No Data Available to Read!";
+        if (!receivedEmptyDatagram) {
+            qCWarning(UDPLinkLog) << "No Data Available to Read!";
+        }
         return;
     }
 
