@@ -24,7 +24,7 @@ into command-timeout behavior on this same mesh, which also flagged this exact r
    station IP, but a **distinct** destination port per vehicle. Do not let two radios share a
    destination port, even temporarily during testing.
 2. **In QGC**, add one UDP comm link per vehicle, each listening on its assigned port. Do this
-   from the vehicle's card on Analyze > Vehicle Links: add a link, choose "Create New Link...",
+   from the vehicle's card on Application Settings > Vehicle Links: add a link, choose "Create New Link...",
    pick UDP and set the port. Do not rely on a single UDP link (or autoconnect) to receive
    multiple vehicles' traffic on one port.
 3. Vehicle identification (which sysid is which vehicle) is the type and nickname on that same
@@ -34,7 +34,7 @@ into command-timeout behavior on this same mesh, which also flagged this exact r
 
 ## Preferring one link
 
-On the bench, open Analyze > Vehicle Links and tick "Preferred" beside the UDP link on
+On the bench, open Application Settings > Vehicle Links and tick "Preferred" beside the UDP link on
 that vehicle's card. Leave it unticked to keep the existing link behavior.
 First automatic selection, at startup or when attached later, needs 6 seconds of steady communication.
 Keep a second link connected: when UDP communication is lost, QGC fails over as soon as

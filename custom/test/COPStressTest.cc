@@ -440,8 +440,10 @@ void COPStressUITest::_navigationAndLayout()
     }
 
     _window->resize(1280, 1000);
+    QVERIFY(clickToolSelectDropdownButton(QStringLiteral("toolbar_viewSettings")));
+    QVERIFY(clickButtonScrolled(QStringLiteral("settingsButton_Vehicle Links"), QStringLiteral("settings_buttonList")));
+    QVERIFY(findVisibleItem(_rootItem, QStringLiteral("vehicleLinksFlickable")));
     QVERIFY(clickToolSelectDropdownButton(QStringLiteral("toolbar_viewAnalyze")));
-    QVERIFY(clickButton(QStringLiteral("analyzeButton_Vehicle Links")));
     QVERIFY(clickToolSelectDropdownButton(QStringLiteral("toolbar_viewSettings")));
     QVERIFY(clickToolSelectDropdownButton(QStringLiteral("toolbar_viewConfigure")));
     QVERIFY(clickToolSelectDropdownButton(QStringLiteral("toolbar_viewPlan")));

@@ -314,16 +314,12 @@ const QVariantList& CustomPlugin::analyzePages()
         pages.append(QVariant::fromValue(new QmlComponentInfo(
             tr("Exclusion Zones"),
             QUrl::fromUserInput(QStringLiteral("qrc:/qml/Custom/ExclusionZone/ExclusionZoneReviewPage.qml")), QUrl(), nullptr, false /* requiresVehicle - the vehicle picker needs to list all connected vehicles even if none is active */)));
+        // App Log Viewer is the last custom entry. AppLogViewerUITest clicks its on-screen position
+        // in a fixed 800x590 window; adding pages above it can move that click outside the window.
         pages.append(QVariant::fromValue(new QmlComponentInfo(
             tr("App Log Viewer"),
             QUrl::fromUserInput(QStringLiteral("qrc:/qml/Custom/AnalyzeView/AppLogViewerAnalyzePage.qml")),
             QUrl::fromUserInput(QStringLiteral("qrc:/InstrumentValueIcons/conversation.svg")), nullptr, false)));
-        // Appended last: AppLogViewerUITest clicks this list by a fixed on-screen position, which
-        // shifts down (off the test window's fixed 800x590 size) if a new page is inserted above it.
-        pages.append(QVariant::fromValue(new QmlComponentInfo(
-            tr("Vehicle Links"),
-            QUrl::fromUserInput(QStringLiteral("qrc:/qml/Custom/VehicleRoles/VehicleLinksPage.qml")), QUrl(), nullptr,
-            false /* requiresVehicle - vehicles and their links should be manageable before any vehicle connects */)));
         return pages;
     }();
 

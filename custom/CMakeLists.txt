@@ -268,7 +268,7 @@ qt_add_resources(
 # ============================================================================
 # Same reasoning as the Exclusion Zone page above: the C++ controller needs to compile into
 # ${CMAKE_PROJECT_NAME} directly (see CUSTOM_SOURCES below) for QML_ELEMENT/QML_SINGLETON to
-# register under the "QGC" module; the QML page is just a resource referenced by URL.
+# register under the "QGC" module; the QML page is a resource referenced by the SettingsPages.json overlay URL.
 
 set(VEHICLE_ROLES_QML_FILES ${CMAKE_CURRENT_SOURCE_DIR}/src/VehicleRoles/VehicleLinksPage.qml)
 qgc_set_qt_resource_alias(${VEHICLE_ROLES_QML_FILES})

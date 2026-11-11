@@ -75,9 +75,50 @@ QQuickItem* VehicleLinksPageUITest::_requireItem(const QString& objectName) cons
 bool VehicleLinksPageUITest::_openPage()
 {
     _window->resize(1280, 1000);
-    return clickToolSelectDropdownButton(QStringLiteral("toolbar_viewAnalyze")) &&
-           clickButton(QStringLiteral("analyzeButton_Vehicle Links")) &&
+    return clickToolSelectDropdownButton(QStringLiteral("toolbar_viewSettings")) &&
+           clickButtonScrolled(QStringLiteral("settingsButton_Vehicle Links"), QStringLiteral("settings_buttonList")) &&
            findVisibleItem(_rootItem, QStringLiteral("vehicleLinksFlickable"), TestTimeout::mediumMs()) != nullptr;
+}
+
+void VehicleLinksPageUITest::_settingsPlacementAndAnalyzeRemoval()
+{
+    startUI();
+    QVERIFY(!QTest::currentTestFailed());
+    QVERIFY(_openPage());
+
+    QQuickItem* const commLinksButton = findVisibleItem(_rootItem, QStringLiteral("settingsButton_Comm Links"));
+    QQuickItem* const vehicleLinksButton = findVisibleItem(_rootItem, QStringLiteral("settingsButton_Vehicle Links"));
+    QVERIFY(commLinksButton && vehicleLinksButton);
+    QQuickItem* const commLinksColumn = commLinksButton->parentItem();
+    QQuickItem* const vehicleLinksColumn = vehicleLinksButton->parentItem();
+    QVERIFY(commLinksColumn && vehicleLinksColumn);
+    QCOMPARE(commLinksColumn->parentItem(), vehicleLinksColumn->parentItem());
+    QVERIFY(commLinksColumn->property("index").isValid());
+    QVERIFY(vehicleLinksColumn->property("index").isValid());
+    QCOMPARE(vehicleLinksColumn->property("index").toInt(), commLinksColumn->property("index").toInt() + 1);
+    QTRY_VERIFY_WITH_TIMEOUT(vehicleLinksButton->mapToScene(QPointF()).y() > commLinksButton->mapToScene(QPointF()).y(),
+                             TestTimeout::shortMs());
+
+    QQuickItem* const rightPanel = findVisibleItem(_rootItem, QStringLiteral("settings_rightPanel"));
+    QQuickItem* const flickable = findVisibleItem(_rootItem, QStringLiteral("vehicleLinksFlickable"));
+    QVERIFY(rightPanel && flickable);
+    QTRY_VERIFY_WITH_TIMEOUT(flickable->width() > 0 && flickable->height() > 0, TestTimeout::shortMs());
+    QTRY_VERIFY_WITH_TIMEOUT(rightPanel->mapRectToScene(rightPanel->boundingRect())
+                                 .contains(flickable->mapRectToScene(flickable->boundingRect())),
+                             TestTimeout::shortMs());
+
+    QVERIFY(clickButtonScrolled(QStringLiteral("settingsButton_Comm Links"), QStringLiteral("settings_buttonList")));
+    QQuickItem* const commLinksPage = findVisibleItem(_rootItem, QStringLiteral("settingsPage_CommLinks"));
+    QVERIFY(commLinksPage);
+    QVERIFY(findVisibleItem(commLinksPage, QStringLiteral("settingsGroup_AutoConnect")));
+    QVERIFY(findVisibleItem(commLinksPage, QStringLiteral("settingsCheckBox_autoConnectUDP")));
+    QVERIFY(clickButtonScrolled(QStringLiteral("settingsButton_Vehicle Links"), QStringLiteral("settings_buttonList")));
+    QVERIFY(findVisibleItem(_rootItem, QStringLiteral("vehicleLinksFlickable")));
+
+    QVERIFY(clickToolSelectDropdownButton(QStringLiteral("toolbar_viewAnalyze")));
+    QVERIFY(findVisibleItem(_rootItem, QStringLiteral("analyzeButton_App Log Viewer")));
+    QVERIFY(findVisibleItem(_rootItem, QStringLiteral("analyzeButton_Exclusion Zones")));
+    QVERIFY(!findItem(_rootItem, QStringLiteral("analyzeButton_Vehicle Links")));
 }
 
 void VehicleLinksPageUITest::_emptyPageSaysWhatToDo()
