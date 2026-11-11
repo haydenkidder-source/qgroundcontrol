@@ -26,6 +26,13 @@ private slots:
     void _testUdpUnresolvedHostFailsConnect();
     void _testUdpUnresolvedHostAllowedStaysConnected();
     void _testUdpBindFailureDisconnects();
+    void _testUdpDisconnectEditReconnectOnNewPort();
+    void _testUdpDisconnectWhilePendingStartup();
+    void _testUdpRemoveConfigurationWhilePendingDoesNotOrphan();
+    void _testCreateConnectedLinkTwiceCreatesOneLink_data();
+    void _testCreateConnectedLinkTwiceCreatesOneLink();
+    void _testUdpDisconnectWithTrafficAndLearnedTarget();
+    void _testUdpAutoConnectStartedLinkDisconnectSuppresses();
     void _testUdpAutoConnectBindFailureReusesConfig();
     void _testForwardingLinkUnresolvedHostRetries();
     void _testSupportForwardingFailureAllowsRetry();
@@ -36,5 +43,10 @@ private:
     void _reconnect();
     void _expectUdpBindFailureLogs();
     void _verifyUdpBindFailureLogs();
+    static quint16 _unusedUdpPort();
+    static bool _udpPortIsFree(quint16 port);
+    SharedLinkConfigurationPtr _addUdpConfig(const QString& name, quint16 port);
+    QList<SharedLinkInterfacePtr> _udpLinksForConfig(const SharedLinkConfigurationPtr& config);
+    void _cleanupUdpConfig(const SharedLinkConfigurationPtr& config);
     QList<SharedLinkConfigurationPtr> _configsNamed(const char* name);
 };

@@ -1,8 +1,15 @@
 #include "LinkManagerTest.h"
 
 #include <algorithm>
+#include <memory>
 
+#include <QtCore/QCoreApplication>
+#include <QtCore/QEvent>
+#include <QtCore/QPointer>
 #include <QtCore/QScopeGuard>
+#include <QtCore/QSemaphore>
+#include <QtCore/QThread>
+#include <QtNetwork/QNetworkDatagram>
 #include <QtNetwork/QUdpSocket>
 #include <QtTest/QSignalSpy>
 #include <QtTest/QTest>
@@ -18,6 +25,174 @@
 #include <fcntl.h>
 #include <unistd.h>
 #endif
+
+namespace {
+class LinkManagerUdpStartupGate : public QObject
+{
+public:
+    explicit LinkManagerUdpStartupGate(bool enabled = true)
+    {
+        if (enabled) {
+            QCoreApplication::instance()->installEventFilter(this);
+        }
+    }
+
+    ~LinkManagerUdpStartupGate() override
+    {
+        QCoreApplication::instance()->removeEventFilter(this);
+        _release();
+    }
+
+    bool entered() const
+    {
+        return !_states.isEmpty() && std::ranges::all_of(_states, [](const auto& state) {
+            return state->queued && (state->entered.available() > 0);
+        });
+    }
+
+    bool releaseAndDrain()
+    {
+        bool queued = !_states.isEmpty();
+        for (const auto& state : _states) {
+            // This worker marker follows connectLink and any requested cancellation. Its main-thread
+            // marker also follows the queued connected/disconnected deliveries to UDPLink.
+            queued =
+                state->helper &&
+                QMetaObject::invokeMethod(
+                    state->helper.data(),
+                    [state] {
+                        (void) QMetaObject::invokeMethod(
+                            QCoreApplication::instance(), [state] { state->drained = true; }, Qt::QueuedConnection);
+                    },
+                    Qt::QueuedConnection) &&
+                queued;
+        }
+        _release();
+        return queued;
+    }
+
+    bool drained() const
+    {
+        return !_states.isEmpty() && std::ranges::all_of(_states, [](const auto& state) { return state->drained; });
+    }
+
+protected:
+    bool eventFilter(QObject* watched, QEvent* event) override
+    {
+        if (!_released && (event->type() == QEvent::ChildAdded) && qobject_cast<UDPLink*>(watched)) {
+            QObject* const child = static_cast<QChildEvent*>(event)->child();
+            // ChildAdded arrives during QObject construction, before the child can be cast to QThread.
+            // UDPLink names its thread before starting it or queuing connectLink.
+            (void) connect(child, &QObject::objectNameChanged, this, [this, child] {
+                auto* const workerThread = qobject_cast<QThread*>(child);
+                if (!workerThread) {
+                    return;
+                }
+                const auto state = std::make_shared<State>();
+                state->helper = new QObject;
+                state->helper->moveToThread(workerThread);
+                (void) connect(workerThread, &QThread::finished, state->helper.data(), &QObject::deleteLater);
+                state->queued = QMetaObject::invokeMethod(
+                    state->helper.data(),
+                    [state] {
+                        state->entered.release();
+                        state->resume.acquire();
+                    },
+                    Qt::QueuedConnection);
+                _states.append(state);
+            });
+        }
+        return QObject::eventFilter(watched, event);
+    }
+
+private:
+    struct State
+    {
+        QPointer<QObject> helper;
+        QSemaphore entered;
+        QSemaphore resume;
+        bool queued = false;
+        bool drained = false;
+    };
+
+    void _release()
+    {
+        if (!_released) {
+            _released = true;
+            for (const auto& state : _states) {
+                state->resume.release();
+            }
+        }
+    }
+
+    QList<std::shared_ptr<State>> _states;
+    bool _released = false;
+};
+}  // namespace
+
+quint16 LinkManagerTest::_unusedUdpPort()
+{
+    QUdpSocket reservation;
+    if (!reservation.bind(QHostAddress::AnyIPv4, 0, QAbstractSocket::DontShareAddress)) {
+        return 0;
+    }
+    const quint16 port = reservation.localPort();
+    reservation.close();
+    return (port == 14550) ? 0 : port;
+}
+
+bool LinkManagerTest::_udpPortIsFree(quint16 port)
+{
+    QUdpSocket probe;
+    return probe.bind(QHostAddress::AnyIPv4, port, QAbstractSocket::DontShareAddress);
+}
+
+SharedLinkConfigurationPtr LinkManagerTest::_addUdpConfig(const QString& name, quint16 port)
+{
+    // Multicast availability depends on the host's interfaces; these tests exercise loopback unicast.
+    ignoreLogMessage("Comms.UDPLink", QtWarningMsg,
+                     QRegularExpression(QStringLiteral("Failed to join multicast group")));
+    auto* const udpConfig = new UDPConfiguration(name);
+    udpConfig->setLocalPort(port);
+    return linkManager()->addConfiguration(udpConfig);
+}
+
+QList<SharedLinkInterfacePtr> LinkManagerTest::_udpLinksForConfig(const SharedLinkConfigurationPtr& config)
+{
+    QList<SharedLinkInterfacePtr> links;
+    for (const SharedLinkInterfacePtr& link : linkManager()->links()) {
+        if (link->linkConfiguration() == config) {
+            links.append(link);
+        }
+    }
+    return links;
+}
+
+void LinkManagerTest::_cleanupUdpConfig(const SharedLinkConfigurationPtr& config)
+{
+    config->setSuppressAutoReconnect(true);
+    // Poll even after a failed assertion; a released startup gate may still have a connect queued.
+    // Scan the registry because duplicate/orphaned links are no longer reachable through config->link().
+    const bool stopped = QTest::qWaitFor(
+        [this, &config] {
+            const auto links = _udpLinksForConfig(config);
+            for (const SharedLinkInterfacePtr& link : links) {
+                if (link->isConnected()) {
+                    link->disconnect();
+                }
+            }
+            return links.isEmpty() && !config->link();
+        },
+        TestTimeout::mediumMs());
+    const auto& configs = linkManager()->_rgLinkConfigs;
+    if (std::ranges::find(configs, config) != configs.end()) {
+        linkManager()->removeConfiguration(config.get());
+    }
+    QVERIFY2(stopped, "UDP cleanup left a registered link");
+    const auto* const udpConfig = qobject_cast<const UDPConfiguration*>(config.get());
+    QVERIFY(udpConfig);
+    QVERIFY2(_udpPortIsFree(udpConfig->localPort()), "UDP cleanup left the port occupied");
+}
 
 SharedLinkConfigurationPtr LinkManagerTest::_addMockConfig(const QString &name, bool dynamic, bool autoConnect)
 {
@@ -241,6 +416,200 @@ void LinkManagerTest::_testUdpBindFailureDisconnects()
     linkManager()->removeConfiguration(config.get());
 }
 
+void LinkManagerTest::_testUdpDisconnectEditReconnectOnNewPort()
+{
+    const quint16 portA = _unusedUdpPort();
+    QVERIFY(portA);
+    SharedLinkConfigurationPtr config = _addUdpConfig(QStringLiteral("EditReconnectUdp"), portA);
+    const auto cleanupConfig = qScopeGuard([this, config] { _cleanupUdpConfig(config); });
+    QVERIFY(linkManager()->createConnectedLink(config));
+    QTRY_VERIFY_WITH_TIMEOUT(config->link() && config->link()->isConnected(), TestTimeout::mediumMs());
+    QVERIFY(config->linkActive());
+    QVERIFY(!_udpPortIsFree(portA));
+
+    // Allocate B while A is still bound so the ephemeral allocator cannot give us A again.
+    const quint16 portB = _unusedUdpPort();
+    QVERIFY(portB);
+    QVERIFY(portA != portB);
+    linkManager()->disconnectLinkConfiguration(config.get());
+    QTRY_VERIFY_WITH_TIMEOUT(!config->link() && !config->linkActive(), TestTimeout::mediumMs());
+    QVERIFY(_udpPortIsFree(portA));
+
+    std::unique_ptr<LinkConfiguration> editedConfig(linkManager()->startConfigurationEditing(config.get()));
+    auto* const editedUdpConfig = qobject_cast<UDPConfiguration*>(editedConfig.get());
+    QVERIFY(editedUdpConfig);
+    editedUdpConfig->setLocalPort(portB);
+    linkManager()->endConfigurationEditing(config.get(), editedConfig.release());
+    QVERIFY(linkManager()->createConnectedLink(config));
+    QTRY_VERIFY_WITH_TIMEOUT(config->link() && config->link()->isConnected(), TestTimeout::mediumMs());
+    QVERIFY(config->linkActive());
+    QVERIFY(_udpPortIsFree(portA));
+    QVERIFY(!_udpPortIsFree(portB));
+}
+
+void LinkManagerTest::_testUdpDisconnectWhilePendingStartup()
+{
+    const quint16 port = _unusedUdpPort();
+    QVERIFY(port);
+    SharedLinkConfigurationPtr config = _addUdpConfig(QStringLiteral("PendingDisconnectUdp"), port);
+    const auto cleanupConfig = qScopeGuard([this, config] { _cleanupUdpConfig(config); });
+    LinkManagerUdpStartupGate startupGate;
+    QVERIFY(linkManager()->createConnectedLink(config));
+    const SharedLinkInterfacePtr link = linkManager()->sharedLinkInterfacePointerForLink(config->link());
+    QVERIFY(link);
+    QTRY_VERIFY_WITH_TIMEOUT(startupGate.entered(), TestTimeout::mediumMs());
+    QVERIFY(!link->isConnected());
+
+    linkManager()->disconnectLinkConfiguration(config.get());
+    QVERIFY(startupGate.releaseAndDrain());
+    QTRY_VERIFY_WITH_TIMEOUT(startupGate.drained(), TestTimeout::mediumMs());
+    QTRY_VERIFY_WITH_TIMEOUT(_udpLinksForConfig(config).isEmpty(), TestTimeout::mediumMs());
+    QVERIFY(!config->link());
+    QVERIFY(!config->linkActive());
+    QVERIFY(_udpPortIsFree(port));
+}
+
+void LinkManagerTest::_testUdpRemoveConfigurationWhilePendingDoesNotOrphan()
+{
+    const quint16 port = _unusedUdpPort();
+    QVERIFY(port);
+    SharedLinkConfigurationPtr config = _addUdpConfig(QStringLiteral("PendingRemoveUdp"), port);
+    const auto cleanupConfig = qScopeGuard([this, config] { _cleanupUdpConfig(config); });
+    LinkManagerUdpStartupGate startupGate;
+    QVERIFY(linkManager()->createConnectedLink(config));
+    const SharedLinkInterfacePtr link = linkManager()->sharedLinkInterfacePointerForLink(config->link());
+    QVERIFY(link);
+    QTRY_VERIFY_WITH_TIMEOUT(startupGate.entered(), TestTimeout::mediumMs());
+    QVERIFY(!link->isConnected());
+
+    linkManager()->removeConfiguration(config.get());
+    QVERIFY(!linkManager()->containsConfiguration(config->name()));
+    QVERIFY(startupGate.releaseAndDrain());
+    QTRY_VERIFY_WITH_TIMEOUT(startupGate.drained(), TestTimeout::mediumMs());
+    QTRY_VERIFY_WITH_TIMEOUT(_udpLinksForConfig(config).isEmpty(), TestTimeout::mediumMs());
+    QVERIFY(!config->link());
+    QVERIFY(!config->linkActive());
+    QVERIFY(_udpPortIsFree(port));
+}
+
+void LinkManagerTest::_testCreateConnectedLinkTwiceCreatesOneLink_data()
+{
+    QTest::addColumn<bool>("pending");
+    QTest::newRow("connected") << false;
+    QTest::newRow("pending") << true;
+}
+
+void LinkManagerTest::_testCreateConnectedLinkTwiceCreatesOneLink()
+{
+    QFETCH(bool, pending);
+    const quint16 port = _unusedUdpPort();
+    QVERIFY(port);
+    SharedLinkConfigurationPtr config = _addUdpConfig(QStringLiteral("DuplicateConnectUdp"), port);
+    const auto cleanupConfig = qScopeGuard([this, config] { _cleanupUdpConfig(config); });
+    LinkManagerUdpStartupGate startupGate(pending);
+    QVERIFY(linkManager()->createConnectedLink(config));
+    if (pending) {
+        QTRY_VERIFY_WITH_TIMEOUT(startupGate.entered(), TestTimeout::mediumMs());
+        QVERIFY(config->link());
+        QVERIFY(!config->link()->isConnected());
+    } else {
+        QTRY_VERIFY_WITH_TIMEOUT(config->link() && config->link()->isConnected(), TestTimeout::mediumMs());
+    }
+
+    // Either a successful no-op or a rejected duplicate is acceptable; the first link must survive.
+    (void) linkManager()->createConnectedLink(config);
+    const auto registeredLinks = _udpLinksForConfig(config);
+    const qsizetype registeredCount = registeredLinks.size();
+    if (pending) {
+        QTRY_VERIFY_WITH_TIMEOUT(startupGate.entered(), TestTimeout::mediumMs());
+        QVERIFY(config->link());
+        QVERIFY(!config->link()->isConnected());
+        QVERIFY(startupGate.releaseAndDrain());
+        QTRY_VERIFY_WITH_TIMEOUT(startupGate.drained(), TestTimeout::mediumMs());
+    }
+    QTRY_VERIFY_WITH_TIMEOUT(std::ranges::all_of(registeredLinks, [](const auto& link) { return link->isConnected(); }),
+                             TestTimeout::mediumMs());
+
+    linkManager()->disconnectLinkConfiguration(config.get());
+    // Exercise disconnect even on the known-bad duplicate path before reporting the count failure.
+    const bool disconnected = QTest::qWaitFor(
+        [this, &config] { return _udpLinksForConfig(config).isEmpty() && !config->link() && !config->linkActive(); },
+        TestTimeout::mediumMs());
+    const bool portFree = _udpPortIsFree(port);
+    QCOMPARE(registeredCount, qsizetype{1});
+    QVERIFY(disconnected);
+    QVERIFY(portFree);
+}
+
+void LinkManagerTest::_testUdpDisconnectWithTrafficAndLearnedTarget()
+{
+    const quint16 port = _unusedUdpPort();
+    QVERIFY(port);
+    SharedLinkConfigurationPtr config = _addUdpConfig(QStringLiteral("TrafficDisconnectUdp"), port);
+    const auto cleanupConfig = qScopeGuard([this, config] { _cleanupUdpConfig(config); });
+    QVERIFY(linkManager()->createConnectedLink(config));
+    QTRY_VERIFY_WITH_TIMEOUT(config->link() && config->link()->isConnected(), TestTimeout::mediumMs());
+    QSignalSpy receivedSpy(config->link(), &LinkInterface::bytesReceived);
+    QVERIFY(receivedSpy.isValid());
+    QUdpSocket peer;
+    QVERIFY(peer.bind(QHostAddress::LocalHost, 0, QAbstractSocket::DontShareAddress));
+    const QByteArray payload("udp-session-target");
+    for (int i = 0; i < 3; ++i) {
+        QCOMPARE(peer.writeDatagram(payload, QHostAddress::LocalHost, port), qint64(payload.size()));
+    }
+    const auto receivedBytes = [&receivedSpy] {
+        qsizetype size = 0;
+        for (const auto& arguments : receivedSpy) {
+            size += arguments.at(1).toByteArray().size();
+        }
+        return size;
+    };
+    QTRY_COMPARE_WITH_TIMEOUT(receivedBytes(), payload.size() * 3, TestTimeout::mediumMs());
+
+    // No configured targets: a reply can reach peer only through the learned session target.
+    const QByteArray reply("udp-learned-target-reply");
+    config->link()->writeBytesThreadSafe(reply.constData(), static_cast<int>(reply.size()));
+    bool replyReceived = false;
+    const auto receivedReply = [&peer, &reply, &replyReceived] {
+        while (peer.hasPendingDatagrams()) {
+            if (peer.receiveDatagram().data() == reply) {
+                replyReceived = true;
+            }
+        }
+        return replyReceived;
+    };
+    QTRY_VERIFY_WITH_TIMEOUT(receivedReply(), TestTimeout::mediumMs());
+
+    linkManager()->disconnectLinkConfiguration(config.get());
+    QTRY_VERIFY_WITH_TIMEOUT(!config->linkActive() && !config->link(), TestTimeout::mediumMs());
+    QVERIFY(_udpLinksForConfig(config).isEmpty());
+    QVERIFY(_udpPortIsFree(port));
+}
+
+void LinkManagerTest::_testUdpAutoConnectStartedLinkDisconnectSuppresses()
+{
+    const quint16 port = _unusedUdpPort();
+    QVERIFY(port);
+    SharedLinkConfigurationPtr config = _addUdpConfig(QStringLiteral("StartedAutoConnectUdp"), port);
+    const auto cleanupConfig = qScopeGuard([this, config] { _cleanupUdpConfig(config); });
+    config->setAutoConnect(true);
+    config->setAutoConnectStarted(true);
+    QVERIFY(linkManager()->createConnectedLink(config));
+    QTRY_VERIFY_WITH_TIMEOUT(config->link() && config->link()->isConnected(), TestTimeout::mediumMs());
+    QVERIFY(config->linkActive());
+
+    linkManager()->disconnectLinkConfiguration(config.get());
+    QTRY_VERIFY_WITH_TIMEOUT(!config->linkActive() && !config->link(), TestTimeout::mediumMs());
+    QVERIFY(config->suppressAutoReconnect());
+    for (int tick = 0; tick < 3; ++tick) {
+        _reconnect();
+        QVERIFY(!config->link());
+        QVERIFY(!config->linkActive());
+        QVERIFY(_udpLinksForConfig(config).isEmpty());
+    }
+    QVERIFY(_udpPortIsFree(port));
+}
+
 void LinkManagerTest::_testUdpAutoConnectBindFailureReusesConfig()
 {
     linkManager()->init();
@@ -387,7 +756,7 @@ void LinkManagerTest::_testDynamicUdpLinkIgnoresSameNamedUserLink()
     const QList<SharedLinkConfigurationPtr> configs = _configsNamed(LinkManager::_mavlinkForwardingLinkName);
     QCOMPARE(configs.size(), 2);
 
-    // Removing a config doesn't stop a UDP link that is still connecting, so let it connect first
+    // Let the UDP link connect before removal to keep this test focused on name handling.
     const auto dynamicIt =
         std::ranges::find_if(configs, [](const SharedLinkConfigurationPtr& c) { return c->isDynamic(); });
     QVERIFY(dynamicIt != configs.cend());

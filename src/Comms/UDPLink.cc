@@ -551,9 +551,8 @@ bool UDPLink::_connect()
 
 void UDPLink::disconnect()
 {
-    if (isConnected()) {
-        (void) QMetaObject::invokeMethod(_worker, "disconnectLink", Qt::QueuedConnection);
-    }
+    // Queue behind connectLink even while startup has not bound the socket yet.
+    (void) QMetaObject::invokeMethod(_worker, "disconnectLink", Qt::QueuedConnection);
 }
 
 void UDPLink::_onConnected()
