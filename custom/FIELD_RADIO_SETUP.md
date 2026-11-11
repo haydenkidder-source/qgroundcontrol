@@ -35,7 +35,7 @@ into command-timeout behavior on this same mesh, which also flagged this exact r
 ## Preferring one link
 
 On the bench, open Application Settings > Vehicle Links and tick "Preferred" beside the UDP link on
-that vehicle's card. Leave it unticked to keep the existing link behavior.
+that vehicle's card. Nothing happens automatically until a link is ticked Preferred.
 First automatic selection, at startup or when attached later, needs 6 seconds of steady communication.
 Keep a second link connected: when UDP communication is lost, QGC fails over as soon as
 it detects the loss. After failover, UDP must stay steady for the configured hold before
@@ -44,10 +44,11 @@ of the page to a value from 5 to 300. Repeated losses within a minute of returni
 the wait, up to 5 minutes. Parameter loading and writes, mission, fence and rally transfers,
 and pending MAVLink signing changes also delay the return.
 A vehicle connected while already armed no longer blocks return just because its parameter download was skipped.
-To pick a link by hand, open main status and choose it under "Primary Link".
-That choice holds until the preferred link loses and regains communication again, even
-when picked during an outage; unticking and re-ticking "Preferred" resets the history,
-and picking the preferred link itself clears the hold.
+The configured preferred link always wins once it has been steady for the wait, so the
+system is predictable. Picking another link under "Primary Link" in
+main status does not stick, even during an outage or when re-selecting the current link.
+Leaving a healthy preferred link starts a full return wait at that moment; choices during
+failover or recovery do not change the recovery countdown.
 Watch for "Primary" on the link and `"<vehicle>: communication back on <link>"` on return.
 
 For a vehicle with two or more links in its card, the line under the link list tells you
@@ -60,12 +61,11 @@ what automatic return is waiting for. It uses your actual link names:
 - "Using UDP, the preferred link." The return is complete, or this link was already in use.
 - "UDP has no communication. Staying on RFD." The preferred link is attached but silent;
   normal failover still handles the loss. With no primary, it says "UDP has no communication."
-- "UDP is back. Returning to it in 60 s if it stays steady." The countdown shows the actual
+- "Returning to UDP in 60 s if it stays steady." The countdown shows the actual
   wait left, rounded up to a whole second. At startup it counts down the 6-second first
-  selection; after failover it uses your configured wait and any extra wait from repeated losses.
+  selection; after failover or leaving a healthy preferred link it uses your configured wait
+  and any extra wait from repeated losses.
   Extra wait adds "(longer than usual because it dropped again soon after the last return)" to the countdown.
-- "Staying on RFD because you picked it. Returns to UDP after it drops out and comes back."
-  Your manual choice is held until the preferred link loses and regains communication again.
 - "Return paused until the vehicle finishes connecting." The steady wait has elapsed, but
   initial connection is still finishing.
 - "Return paused while a parameter, mission, fence, rally or signing transfer is running."
@@ -73,11 +73,10 @@ what automatic return is waiting for. It uses your actual link names:
 - "Returning to UDP..." The switch is being requested.
 
 If the return does not happen, first check that a link is ticked Preferred on this vehicle.
-Read the line for a countdown, "paused", or the message saying your manual choice is held.
+Read the line for a countdown, "paused", or a disconnected link.
 If it is paused, check whether parameters are still loading or being written, a mission,
 fence or rally transfer is running, or a signing change is pending. Let that finish.
-If your manual choice is held, wait for another loss and recovery of the preferred link,
-or pick the preferred link yourself. If it is not connected, check that the radio is
+If it is not connected, check that the radio is
 connected to this vehicle rather than another one.
 
 ## Current port assignments

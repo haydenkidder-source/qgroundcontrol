@@ -145,8 +145,7 @@ void LinkPreferenceControllerTest::_productionClockReturnsAfterHold()
     QElapsedTimer recovery;
     recovery.start();
     preferred->setCommLost(false);
-    const QRegularExpression nearlyDue(
-        QStringLiteral("^UDP is back\\. Returning to it in [12] s if it stays steady\\.$"));
+    const QRegularExpression nearlyDue(QStringLiteral("^Returning to UDP in [12] s if it stays steady\\.$"));
     // A countdown near the deadline is a positive barrier; an early return also ends the wait and fails below.
     QTRY_VERIFY_WITH_TIMEOUT(nearlyDue.match(_roles->linkReturnStatus(vehicle->id())).hasMatch() ||
                                  links->primaryLinkName() == QStringLiteral("UDP"),
@@ -227,19 +226,16 @@ void LinkPreferenceControllerTest::_returnStatusAndNotifications()
             [this, sysid, &observedTexts]() { observedTexts.append(_roles->linkReturnStatus(sysid)); });
     const int revision = _roles->linkReturnStatusRevision();
     _roles->setLinkPreferred(0, 1, true);
-    QCOMPARE(_roles->linkReturnStatus(sysid),
-             QStringLiteral("UDP is back. Returning to it in 3 s if it stays steady."));
+    QCOMPARE(_roles->linkReturnStatus(sysid), QStringLiteral("Returning to UDP in 3 s if it stays steady."));
     QCOMPARE(changes.count(), 1);
     QCOMPARE(_roles->linkReturnStatusRevision(), revision + 1);
     _preference->evaluateForTesting(1);
     QCOMPARE(changes.count(), 1);  // Same rounded-up second does not notify.
     _preference->evaluateForTesting(501);
-    QCOMPARE(_roles->linkReturnStatus(sysid),
-             QStringLiteral("UDP is back. Returning to it in 2 s if it stays steady."));
+    QCOMPARE(_roles->linkReturnStatus(sysid), QStringLiteral("Returning to UDP in 2 s if it stays steady."));
     QCOMPARE(changes.count(), 2);
     _preference->evaluateForTesting(2499);
-    QCOMPARE(_roles->linkReturnStatus(sysid),
-             QStringLiteral("UDP is back. Returning to it in 1 s if it stays steady."));
+    QCOMPARE(_roles->linkReturnStatus(sysid), QStringLiteral("Returning to UDP in 1 s if it stays steady."));
     QCOMPARE(links->primaryLinkName(), QStringLiteral("RFD"));
     parameters->setPendingWritesForTest(true);
     _preference->evaluateForTesting(2500);
@@ -268,12 +264,15 @@ void LinkPreferenceControllerTest::_returnStatusText_data()
     QTest::addColumn<QString>("expectedText");
     QTest::newRow("usual-wait") << int(LinkPreferencePolicy::Gate::Waiting) << qint64(117001) << false
                                 << QStringLiteral("RFD")
-                                << QStringLiteral("UDP is back. Returning to it in 118 s if it stays steady.");
-    QTest::newRow("extended-wait")
-        << int(LinkPreferencePolicy::Gate::Waiting) << qint64(117001) << true << QStringLiteral("RFD")
-        << QStringLiteral(
-               "UDP is back. Returning to it in 118 s if it stays steady (longer than usual because it "
-               "dropped again soon after the last return).");
+                                << QStringLiteral("Returning to UDP in 118 s if it stays steady.");
+    QTest::newRow("extended-wait") << int(LinkPreferencePolicy::Gate::Waiting) << qint64(117001) << true
+                                   << QStringLiteral("RFD")
+                                   << QStringLiteral(
+                                          "Returning to UDP in 118 s if it stays steady (longer than usual because it "
+                                          "dropped again soon after the last return).");
+    QTest::newRow("minimum-wait") << int(LinkPreferencePolicy::Gate::Waiting) << qint64(0) << false
+                                  << QStringLiteral("RFD")
+                                  << QStringLiteral("Returning to UDP in 1 s if it stays steady.");
     QTest::newRow("down-with-primary") << int(LinkPreferencePolicy::Gate::PreferredDown) << qint64(0) << false
                                        << QStringLiteral("RFD")
                                        << QStringLiteral("UDP has no communication. Staying on RFD.");
@@ -321,14 +320,14 @@ void LinkPreferenceControllerTest::_statusObserverCanPauseReturn()
                               TestTimeout::shortMs());
 }
 
-void LinkPreferenceControllerTest::_settleFailoverFailbackAndManualChoice_data()
+void LinkPreferenceControllerTest::_settleFailoverFailbackAndSecondaryChoice_data()
 {
     QTest::addColumn<quint32>("sysid");
     QTest::newRow("one") << quint32(1);
     QTest::newRow("uint32-max") << quint32(4294967295U);
 }
 
-void LinkPreferenceControllerTest::_settleFailoverFailbackAndManualChoice()
+void LinkPreferenceControllerTest::_settleFailoverFailbackAndSecondaryChoice()
 {
     QFETCH(quint32, sysid);
     Vehicle* const vehicle = _startPair(sysid);
@@ -367,11 +366,14 @@ void LinkPreferenceControllerTest::_settleFailoverFailbackAndManualChoice()
     QCOMPARE(links->primaryLinkName(), QStringLiteral("UDP"));
     QCOMPARE(notifications.count(), 2);
     links->setPrimaryLinkByName(QStringLiteral("RFD"));
-    _preference->evaluateForTesting(1000);
+    QCOMPARE(_roles->linkReturnStatus(sysid), QStringLiteral("Returning to UDP in 1 s if it stays steady."));
+    _preference->evaluateForTesting(129);
     QCOMPARE(links->primaryLinkName(), QStringLiteral("RFD"));
     QCOMPARE(notifications.count(), 2);
-    QCOMPARE(_roles->linkReturnStatus(sysid),
-             QStringLiteral("Staying on RFD because you picked it. Returns to UDP after it drops out and comes back."));
+    _preference->evaluateForTesting(130);
+    QCOMPARE(links->primaryLinkName(), QStringLiteral("UDP"));
+    QCOMPARE(notifications.count(), 3);
+    QCOMPARE(notifications.at(2).at(0).toString(), QStringLiteral("Scout: communication back on UDP"));
 }
 
 void LinkPreferenceControllerTest::_lostAndOtherVehicleLinksAreNeverSelected()
@@ -429,20 +431,91 @@ void LinkPreferenceControllerTest::_lostAndOtherVehicleLinksAreNeverSelected()
     _preference->evaluateForTesting(10000);
 }
 
-void LinkPreferenceControllerTest::_repickCurrentPrimary()
+void LinkPreferenceControllerTest::_healthyPreferredDepartureReturnsAfterWait()
 {
     Vehicle* const vehicle = _startPair();
     QVERIFY(vehicle);
     auto* links = vehicle->vehicleLinkManager();
+    _preference->setTimingForTesting(LinkPreferencePolicy::Timing{}, 0);
+    _preference->evaluateForTesting(6000);
+    QCOMPARE(links->primaryLinkName(), QStringLiteral("UDP"));
+    _preference->evaluateForTesting(16000);
+    QSignalSpy notifications(QGCCorePlugin::instance(), &QGCCorePlugin::operatorNotification);
+    links->setPrimaryLinkByName(QStringLiteral("RFD"));
+    QCOMPARE(links->primaryLinkName(), QStringLiteral("RFD"));
+    QCOMPARE(_roles->linkReturnStatus(vehicle->id()), QStringLiteral("Returning to UDP in 60 s if it stays steady."));
+    _preference->evaluateForTesting(16000);
+    QCOMPARE(links->primaryLinkName(), QStringLiteral("RFD"));
+    QCOMPARE(notifications.count(), 0);
+    _preference->evaluateForTesting(17001);
+    QCOMPARE(links->primaryLinkName(), QStringLiteral("RFD"));
+    QCOMPARE(_roles->linkReturnStatus(vehicle->id()), QStringLiteral("Returning to UDP in 59 s if it stays steady."));
+    _preference->evaluateForTesting(75999);
+    QCOMPARE(links->primaryLinkName(), QStringLiteral("RFD"));
+    QCOMPARE(_roles->linkReturnStatus(vehicle->id()), QStringLiteral("Returning to UDP in 1 s if it stays steady."));
+    QCOMPARE(notifications.count(), 0);
+    _preference->evaluateForTesting(76000);
+    QCOMPARE(links->primaryLinkName(), QStringLiteral("UDP"));
+    QCOMPARE(_roles->linkReturnStatus(vehicle->id()), QStringLiteral("Using UDP, the preferred link."));
+    QCOMPARE(notifications.count(), 1);
+    QCOMPARE(notifications.at(0).at(0).toString(), QStringLiteral("Scout: communication back on UDP"));
+    _preference->evaluateForTesting(76001);
+    QCOMPARE(notifications.count(), 1);
+}
+
+void LinkPreferenceControllerTest::_repickCurrentPrimary_data()
+{
+    QTest::addColumn<QString>("phase");
+    for (const char* name : {"initial-settle", "outage", "recovery"}) {
+        QTest::newRow(name) << QString::fromLatin1(name);
+    }
+}
+
+void LinkPreferenceControllerTest::_repickCurrentPrimary()
+{
+    QFETCH(QString, phase);
+    Vehicle* const vehicle = _startPair();
+    QVERIFY(vehicle);
+    auto* links = vehicle->vehicleLinkManager();
+    qint64 deadline = 3;
+    if (phase != QStringLiteral("initial-settle")) {
+        _preference->evaluateForTesting(3);
+        auto* preferred = qobject_cast<MockLink*>(_preferred.get());
+        QVERIFY(preferred);
+        expectLogMessage("API.QGCApplication.AppMessage", QtDebugMsg,
+                         QRegularExpression(QStringLiteral("Switching communication to secondary link")));
+        preferred->setCommLost(true);
+        QTRY_COMPARE_WITH_TIMEOUT(links->primaryLinkName(), QStringLiteral("RFD"), TestTimeout::longMs());
+        verifyExpectedLogMessage();
+        _preference->evaluateForTesting(100);
+        if (phase == QStringLiteral("outage")) {
+            links->setPrimaryLinkByName(QStringLiteral("RFD"));
+        }
+        preferred->setCommLost(false);
+        QTRY_VERIFY_WITH_TIMEOUT(
+            links->linkStatuses()
+                .value(links->linkNames().indexOf(QStringLiteral("UDP")), QStringLiteral("missing"))
+                .isEmpty(),
+            TestTimeout::longMs());
+        _preference->evaluateForTesting(105);
+        deadline = 115;
+    }
     QCOMPARE(links->primaryLinkName(), QStringLiteral("RFD"));
     QSignalSpy notifications(QGCCorePlugin::instance(), &QGCCorePlugin::operatorNotification);
     QSignalSpy primaryChanges(links, &VehicleLinkManager::primaryLinkChanged);
     links->setPrimaryLinkByName(QStringLiteral("RFD"));
     QCOMPARE(primaryChanges.count(), 1);
-    _preference->evaluateForTesting(1000);
+    _preference->evaluateForTesting(deadline - 1);
     QCOMPARE(links->primaryLinkName(), QStringLiteral("RFD"));
     QCOMPARE(primaryChanges.count(), 1);
     QCOMPARE(notifications.count(), 0);
+    _preference->evaluateForTesting(deadline);
+    QCOMPARE(links->primaryLinkName(), QStringLiteral("UDP"));
+    QCOMPARE(primaryChanges.count(), 2);
+    QCOMPARE(notifications.count(), 1);
+    _preference->evaluateForTesting(1000);
+    QCOMPARE(primaryChanges.count(), 2);
+    QCOMPARE(notifications.count(), 1);
 }
 
 void LinkPreferenceControllerTest::_reusedSysidStartsWithFreshHistory()

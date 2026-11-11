@@ -27,8 +27,7 @@ bool LinkPreferencePolicy::transferActive(const TransferFlags& flags)
 
 QString LinkPreferencePolicy::debugState() const
 {
-    return QStringLiteral("manualOverride=%1 failoverSeen=%2 effectiveHoldMs=%3")
-        .arg(_manualOverride)
+    return QStringLiteral("failoverSeen=%1 effectiveHoldMs=%2")
         .arg(_failoverSeen)
         .arg(_failoverSeen ? _holdMs : _timing.initialSettleMs);
 }
@@ -41,7 +40,7 @@ void LinkPreferencePolicy::setBaseHoldMs(qint64 milliseconds)
     }
 }
 
-void LinkPreferencePolicy::observe(const Input& input, qint64 now, bool policySwitch, bool primarySignal)
+void LinkPreferencePolicy::observe(const Input& input, qint64 now)
 {
     // A detached link keeps its history; only a preference change resets it.
     if (input.preferredName.isEmpty()) {
@@ -55,21 +54,6 @@ void LinkPreferencePolicy::observe(const Input& input, qint64 now, bool policySw
 
     const bool healthy = preferredHealthy(input);
     const bool primary = input.primaryName == _preferredName;
-    const auto previousIndex = input.linkNames.indexOf(_lastPrimary);
-    const bool previousHealthy = !_lastPrimary.isEmpty() && previousIndex >= 0 &&
-                                 previousIndex < input.linkStatuses.size() &&
-                                 input.linkStatuses[previousIndex].isEmpty();
-    const bool primaryChanged = _lastPrimary != input.primaryName;
-    // Only setPrimaryLinkByName emits primaryLinkChanged for an unchanged primary (an explicit re-pick).
-    const bool manualPick = !policySwitch && !input.primaryName.isEmpty() &&
-                            ((!primaryChanged && primarySignal) || (primaryChanged && previousHealthy));
-    if (primary || (_wasHealthy && !healthy)) {
-        _manualOverride = false;
-    }
-    if (!primary && manualPick) {
-        _manualOverride = true;
-        _switchPending = false;
-    }
     // Core clears the primary before removing its name from the link list.
     _preferredUsed = _preferredUsed || primary;
     if (!healthy) {
@@ -83,7 +67,12 @@ void LinkPreferencePolicy::observe(const Input& input, qint64 now, bool policySw
         _failoverSeen = _failoverSeen || _preferredUsed ||
                         (!_lastPrimary.isEmpty() && !input.primaryName.isEmpty() && _lastPrimary != input.primaryName);
     } else {
-        if (!_wasHealthy) {
+        // Leaving a healthy preferred primary starts a full return wait, just like failover.
+        const bool leftPreferred = _lastPrimary == _preferredName && !primary && !input.primaryName.isEmpty();
+        if (leftPreferred) {
+            _failoverSeen = true;
+        }
+        if (!_wasHealthy || leftPreferred) {
             _healthySince = now;
         }
         if (primary) {
@@ -119,9 +108,6 @@ LinkPreferencePolicy::Status LinkPreferencePolicy::status(const Input& input, qi
     }
     if (!preferredHealthy(input)) {
         return {Gate::PreferredDown};
-    }
-    if (_manualOverride) {
-        return {Gate::HeldByHand};
     }
     const qint64 hold = _failoverSeen ? _holdMs : _timing.initialSettleMs;
     const qint64 remaining = _healthySince < 0 ? hold : hold - (now - _healthySince);

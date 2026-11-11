@@ -436,7 +436,7 @@ void VehicleLinksPageUITest::_preferredAndStatusTagsFollowVehicle()
             QCOMPARE(roles->preferredLinkConfigNameForSysid(sysid), QStringLiteral("UI UDP"));
             QVERIFY(roles->preferredLinkConfigNameForSysid(otherSysid).isEmpty());
             QTRY_COMPARE_WITH_TIMEOUT(returnStatus->property("text").toString(),
-                                      QStringLiteral("UI UDP is back. Returning to it in 1 s if it stays steady."),
+                                      QStringLiteral("Returning to UI UDP in 1 s if it stays steady."),
                                       TestTimeout::shortMs());
             preference->evaluateForTesting(3);
             QTRY_VERIFY_WITH_TIMEOUT(secondPrimary->isVisible(), TestTimeout::shortMs());

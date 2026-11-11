@@ -29,7 +29,6 @@ struct LinkPreferenceController::State : QObject
     LinkPreferencePolicy policy;
     LinkPreferencePolicy::Gate lastGate = LinkPreferencePolicy::Gate::Off;
     bool gateLogged = false;
-    bool switching = false;
     bool queued = false;
 };
 
@@ -71,10 +70,7 @@ void LinkPreferenceController::_vehicleAdded(Vehicle* vehicle)
     };
     connect(links, &VehicleLinkManager::linkNamesChanged, state, changed);
     connect(links, &VehicleLinkManager::linkStatusesChanged, state, changed);
-    connect(links, &VehicleLinkManager::primaryLinkChanged, state, [this, state]() {
-        _observe(state, true);
-        _refresh();
-    });
+    connect(links, &VehicleLinkManager::primaryLinkChanged, state, changed);
     connect(links, &VehicleLinkManager::communicationLostChanged, state, changed);
     connect(vehicle, &Vehicle::initialConnectComplete, state, changed);
     if (auto* parameters = vehicle->parameterManager()) {
@@ -148,12 +144,12 @@ LinkPreferencePolicy::Input LinkPreferenceController::_input(Vehicle* vehicle,
             .transferActive = LinkPreferencePolicy::transferActive(flags)};
 }
 
-void LinkPreferenceController::_observe(State* state, bool primarySignal)
+void LinkPreferenceController::_observe(State* state)
 {
     if (!state || !state->vehicle) {
         return;
     }
-    state->policy.observe(_input(state->vehicle), _now(), state->switching, primarySignal);
+    state->policy.observe(_input(state->vehicle), _now());
 }
 
 void LinkPreferenceController::_refresh()
@@ -207,17 +203,14 @@ QString LinkPreferenceController::_statusText(const LinkPreferencePolicy::Input&
                 return tr("%1 has no communication.").arg(input.preferredName);
             }
             return tr("%1 has no communication. Staying on %2.").arg(input.preferredName, input.primaryName);
-        case LinkPreferencePolicy::Gate::HeldByHand:
-            return tr("Staying on %1 because you picked it. Returns to %2 after it drops out and comes back.")
-                .arg(input.primaryName, input.preferredName);
         case LinkPreferencePolicy::Gate::Waiting:
             if (status.extendedHold) {
-                return tr("%1 is back. Returning to it in %2 s if it stays steady (longer than usual because it "
+                return tr("Returning to %1 in %2 s if it stays steady (longer than usual because it "
                           "dropped again soon after the last return).")
                     .arg(input.preferredName)
                     .arg(qMax(qint64(1), (status.remainingMs + 999) / 1000));
             }
-            return tr("%1 is back. Returning to it in %2 s if it stays steady.")
+            return tr("Returning to %1 in %2 s if it stays steady.")
                 .arg(input.preferredName)
                 .arg(qMax(qint64(1), (status.remainingMs + 999) / 1000));
         case LinkPreferencePolicy::Gate::WaitingForConnect:
@@ -242,8 +235,6 @@ const char* LinkPreferenceController::_gateName(LinkPreferencePolicy::Gate gate)
             return "OnPreferred";
         case LinkPreferencePolicy::Gate::PreferredDown:
             return "PreferredDown";
-        case LinkPreferencePolicy::Gate::HeldByHand:
-            return "HeldByHand";
         case LinkPreferencePolicy::Gate::Waiting:
             return "Waiting";
         case LinkPreferencePolicy::Gate::WaitingForConnect:
@@ -308,12 +299,10 @@ void LinkPreferenceController::_evaluate(State* state)
         _updateStatuses();
         return;
     }
-    state->switching = true;
     vehicle->vehicleLinkManager()->setPrimaryLinkByName(target);
     if (!guard || !vehicle || !_roles) {
         return;
     }
-    state->switching = false;
     if (vehicle->vehicleLinkManager()->primaryLinkName() != target) {
         state->policy.cancelPendingSwitch();
         _updateStatuses();

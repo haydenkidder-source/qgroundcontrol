@@ -45,7 +45,6 @@ public:
         NotAttached,
         OnPreferred,
         PreferredDown,
-        HeldByHand,
         Waiting,
         WaitingForConnect,
         PausedForTransfer,
@@ -65,8 +64,7 @@ public:
 
     /// Empty means no switch. A request stays pending until observed as primary, lost, or cancelled.
     QString evaluate(const Input& input, qint64 now);
-    /// Observe immediately; primarySignal also detects a manual re-pick of the current primary.
-    void observe(const Input& input, qint64 now, bool policySwitch = false, bool primarySignal = false);
+    void observe(const Input& input, qint64 now);
 
     /// Read after observe(). Only Ready permits a new switch request; Switching means one is already pending.
     Status status(const Input& input, qint64 now) const;
@@ -90,6 +88,5 @@ private:
     bool _wasHealthy = false;
     bool _failoverSeen = false;
     bool _preferredUsed = false;
-    bool _manualOverride = false;
     bool _switchPending = false;
 };

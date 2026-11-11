@@ -407,11 +407,11 @@ AnalyzePage {
                             QGCLabel {
                                 Layout.fillWidth: true
                                 wrapMode: Text.WordWrap
-                                text: qsTr("QGC returns to the preferred link once it has been steady for the wait " +
+                                text: qsTr("The preferred link always wins once it has been steady for the wait " +
                                            "set at the top of this page (60 seconds by default). A link that drops " +
                                            "again soon after a return makes the next wait longer. Picking another " +
-                                           "link, also during an outage, holds it until the preferred link loses and regains " +
-                                           "communication again. Nothing happens until a link is ticked Preferred.")
+                                           "link by hand does not stick, even during an outage. Nothing happens " +
+                                           "until a link is ticked Preferred.")
                             }
 
                             QGCLabel {

@@ -15,12 +15,14 @@ class LinkPreferenceControllerTest : public CommsTest
 private slots:
     void init() override;
     void cleanup() override;
-    void _settleFailoverFailbackAndManualChoice_data();
-    void _settleFailoverFailbackAndManualChoice();
+    void _settleFailoverFailbackAndSecondaryChoice_data();
+    void _settleFailoverFailbackAndSecondaryChoice();
     void _lostAndOtherVehicleLinksAreNeverSelected();
     void _physicalDisconnectWaitsForBackoff();
     void _transferBusyAtDeadline_data();
     void _transferBusyAtDeadline();
+    void _healthyPreferredDepartureReturnsAfterWait();
+    void _repickCurrentPrimary_data();
     void _repickCurrentPrimary();
     void _signingPendingAtDeadline_data();
     void _signingPendingAtDeadline();

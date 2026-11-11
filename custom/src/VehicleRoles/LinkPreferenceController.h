@@ -36,7 +36,7 @@ private:
     void _vehicleAdded(Vehicle* vehicle);
     void _vehicleRemoved(Vehicle* vehicle);
     void _refresh();
-    void _observe(State* state, bool primarySignal = false);
+    void _observe(State* state);
     void _evaluate(State* state);
     void _updateStatuses();
     QString _statusText(const LinkPreferencePolicy::Input& input, const LinkPreferencePolicy::Status& status) const;
