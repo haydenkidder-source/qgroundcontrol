@@ -1,21 +1,24 @@
 #include "UDPLink.h"
-#include "AutoConnectSettings.h"
-#include "QGCLoggingCategory.h"
-#include "QGCNetworkHelper.h"
-#include "SettingsManager.h"
 
 #include <QtCore/QMutexLocker>
 #include <QtCore/QThread>
+#include <QtCore/QTimer>
 #include <QtNetwork/QHostInfo>
 #include <QtNetwork/QNetworkDatagram>
 #include <QtNetwork/QNetworkInterface>
 #include <QtNetwork/QNetworkProxy>
 #include <QtNetwork/QUdpSocket>
 
+#include "AutoConnectSettings.h"
+#include "QGCLoggingCategory.h"
+#include "QGCNetworkHelper.h"
+#include "SettingsManager.h"
+
 QGC_LOGGING_CATEGORY(UDPLinkLog, "Comms.UDPLink")
 
 namespace {
     constexpr int BUFFER_TRIGGER_SIZE = 10 * 1024;
+    constexpr int kReceiveBufferBytes = 4 * 1024 * 1024;
     constexpr int RECEIVE_TIME_LIMIT_MS = 50;
 
     bool containsTarget(const QList<std::shared_ptr<UDPClient>> &list, const QHostAddress &address, quint16 port)
@@ -288,6 +291,11 @@ void UDPWorker::setupSocket()
     if (!_socket) {
         _socket = new QUdpSocket(this);
     }
+    if (!_statsTimer) {
+        _statsTimer = new QTimer(this);
+        _statsTimer->setInterval(1000);
+        (void) connect(_statsTimer, &QTimer::timeout, this, &UDPWorker::_logStats);
+    }
 
     const QList<QHostAddress> localAddresses = QNetworkInterface::allAddresses();
     _localAddresses = QSet(localAddresses.constBegin(), localAddresses.constEnd());
@@ -357,6 +365,14 @@ void UDPWorker::connectLink()
         return;
     }
 
+    _socket->setSocketOption(QAbstractSocket::ReceiveBufferSizeSocketOption, kReceiveBufferBytes);
+    qCDebug(UDPLinkLog).nospace() << "UDP socket buffers: port=" << _socket->localPort()
+                                  << " name=" << _udpConfig->name()
+                                  << " requestedReceiveBufferBytes=" << kReceiveBufferBytes << " receiveBufferBytes="
+                                  << _socket->socketOption(QAbstractSocket::ReceiveBufferSizeSocketOption)
+                                  << " sendBufferBytes="
+                                  << _socket->socketOption(QAbstractSocket::SendBufferSizeSocketOption);
+
     qCDebug(UDPLinkLog) << "Attempting to join multicast group:" << _multicastGroup.toString();
     const bool joinSuccess = _socket->joinMulticastGroup(_multicastGroup);
     if (!joinSuccess) {
@@ -367,6 +383,9 @@ void UDPWorker::connectLink()
 
 void UDPWorker::disconnectLink()
 {
+    if (_statsTimer) {
+        _statsTimer->stop();
+    }
     if (!isConnected()) {
         qCDebug(UDPLinkLog) << "Already disconnected";
         return;
@@ -378,10 +397,12 @@ void UDPWorker::disconnectLink()
     _socket->close();
 
     _sessionTargets.clear();
+    _counters.learnedTargets = 0;
 }
 
 void UDPWorker::writeData(const QByteArray &data)
 {
+    ++_counters.writeCalls;
     if (!isConnected()) {
         emit errorOccurred(tr("Could Not Send Data - Link is Disconnected!"));
         return;
@@ -395,16 +416,28 @@ void UDPWorker::writeData(const QByteArray &data)
             continue;
         }
         if (!containsTarget(_sessionTargets, target->address, target->port)) {
-            if (_socket->writeDatagram(data, target->address, target->port) < 0) {
+            const qint64 bytesSent = _socket->writeDatagram(data, target->address, target->port);
+            ++_counters.writeAttempts;
+            if (bytesSent < 0) {
+                ++_counters.writeFailures;
                 qCWarning(UDPLinkLog) << "Could Not Send Data - Write Failed!";
+            } else {
+                ++_counters.datagramsSent;
+                _counters.bytesSent += static_cast<quint64>(bytesSent);
             }
         }
     }
 
     // Send to all connected systems
     for (const std::shared_ptr<UDPClient> &target: _sessionTargets) {
-        if (_socket->writeDatagram(data, target->address, target->port) < 0) {
+        const qint64 bytesSent = _socket->writeDatagram(data, target->address, target->port);
+        ++_counters.writeAttempts;
+        if (bytesSent < 0) {
+            ++_counters.writeFailures;
             qCWarning(UDPLinkLog) << "Could Not Send Data - Write Failed!";
+        } else {
+            ++_counters.datagramsSent;
+            _counters.bytesSent += static_cast<quint64>(bytesSent);
         }
     }
 
@@ -415,6 +448,14 @@ void UDPWorker::writeData(const QByteArray &data)
 
 void UDPWorker::_onSocketConnected()
 {
+    if (_statsTimer && !_statsTimer->isActive()) {
+        _previousCounters = _counters;
+        _largestArrivalGapMs = 0;
+        _largestDrainThisInterval = 0;
+        _statsIntervalTimer.start();
+        _lastDatagramTimer.invalidate();
+        _statsTimer->start();
+    }
     qCDebug(UDPLinkLog) << "UDP connected to" << _udpConfig->localPort();
     _isConnected = true;
     _errorEmitted = false;
@@ -423,6 +464,9 @@ void UDPWorker::_onSocketConnected()
 
 void UDPWorker::_onSocketDisconnected()
 {
+    if (_statsTimer) {
+        _statsTimer->stop();
+    }
     qCDebug(UDPLinkLog) << "UDP disconnected from" << _udpConfig->localPort();
     _isConnected = false;
     _errorEmitted = false;
@@ -431,13 +475,14 @@ void UDPWorker::_onSocketDisconnected()
 
 void UDPWorker::_onSocketReadyRead()
 {
+    ++_counters.drains;
     if (!isConnected()) {
         emit errorOccurred(tr("Could Not Read Data - Link is Disconnected!"));
         return;
     }
 
     const qint64 byteCount = _socket->pendingDatagramSize();
-    if (byteCount <= 0) {
+    if (byteCount < 0) {
         emit errorOccurred(tr("Could Not Read Data - No Data Available!"));
         return;
     }
@@ -447,9 +492,19 @@ void UDPWorker::_onSocketReadyRead()
     QElapsedTimer timer;
     timer.start();
     bool received = false;
+    bool receivedEmptyDatagram = false;
+    quint64 datagramsDrained = 0;
     while (_socket->hasPendingDatagrams()) {
         const QNetworkDatagram datagramIn = _socket->receiveDatagram();
-        if (datagramIn.isNull() || datagramIn.data().isEmpty()) {
+        if (datagramIn.isNull()) {
+            continue;
+        }
+        _recordDatagram(datagramIn.data().size());
+        ++datagramsDrained;
+        _counters.largestDrain = qMax(_counters.largestDrain, datagramsDrained);
+        _largestDrainThisInterval = qMax(_largestDrainThisInterval, datagramsDrained);
+        if (datagramIn.data().isEmpty()) {
+            receivedEmptyDatagram = true;
             continue;
         }
 
@@ -469,16 +524,60 @@ void UDPWorker::_onSocketReadyRead()
         if (!containsTarget(_sessionTargets, senderAddress, datagramIn.senderPort())) {
             qCDebug(UDPLinkLog) << "UDP Adding target:" << senderAddress << datagramIn.senderPort();
             _sessionTargets.append(std::make_shared<UDPClient>(senderAddress, datagramIn.senderPort()));
+            ++_counters.learnedTargets;
         }
         locker.unlock();
     }
 
     if (!received && buffer.isEmpty()) {
-        qCWarning(UDPLinkLog) << "No Data Available to Read!";
+        if (!receivedEmptyDatagram) {
+            qCWarning(UDPLinkLog) << "No Data Available to Read!";
+        }
         return;
     }
 
     emit dataReceived(buffer);
+}
+
+void UDPWorker::_recordDatagram(qint64 bytes)
+{
+    ++_counters.datagramsReceived;
+    _counters.bytesReceived += static_cast<quint64>(bytes);
+    if (bytes == 0) {
+        ++_counters.emptyDatagrams;
+    }
+    if (_lastDatagramTimer.isValid()) {
+        _largestArrivalGapMs = qMax(_largestArrivalGapMs, _lastDatagramTimer.restart());
+    } else {
+        _lastDatagramTimer.start();
+    }
+}
+
+void UDPWorker::_logStats()
+{
+    const qint64 intervalMs = _statsIntervalTimer.restart();
+    if (_counters != _previousCounters) {
+        qCDebug(UDPLinkLog).nospace() << "UDP stats: port=" << _socket->localPort() << " name=" << _udpConfig->name()
+                                      << " intervalMs=" << intervalMs << " rxDatagrams="
+                                      << _counters.datagramsReceived - _previousCounters.datagramsReceived
+                                      << " rxBytes=" << _counters.bytesReceived - _previousCounters.bytesReceived
+                                      << " emptyDatagrams="
+                                      << _counters.emptyDatagrams - _previousCounters.emptyDatagrams
+                                      << " drains=" << _counters.drains - _previousCounters.drains
+                                      << " largestDrain=" << _largestDrainThisInterval
+                                      << " largestDrainTotal=" << _counters.largestDrain
+                                      << " writeCalls=" << _counters.writeCalls - _previousCounters.writeCalls
+                                      << " writeAttempts=" << _counters.writeAttempts - _previousCounters.writeAttempts
+                                      << " txDatagrams=" << _counters.datagramsSent - _previousCounters.datagramsSent
+                                      << " txBytes=" << _counters.bytesSent - _previousCounters.bytesSent
+                                      << " learnedTargets=" << _counters.learnedTargets
+                                      << " configuredTargets=" << _udpConfig->targetHosts().size()
+                                      << " writeFailures=" << _counters.writeFailures - _previousCounters.writeFailures
+                                      << " largestArrivalGapMs=" << _largestArrivalGapMs;
+        _previousCounters = _counters;
+    }
+    _largestArrivalGapMs = 0;
+    _largestDrainThisInterval = 0;
 }
 
 void UDPWorker::_onSocketBytesWritten(qint64 bytes)

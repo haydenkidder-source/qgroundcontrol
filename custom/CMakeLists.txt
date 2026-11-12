@@ -292,6 +292,8 @@ set(CUSTOM_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/COP/COPController.h
     ${CMAKE_CURRENT_SOURCE_DIR}/src/CustomPlugin.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/src/CustomPlugin.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/MainThreadStallMonitor.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/MainThreadStallMonitor.h
     ${CMAKE_CURRENT_SOURCE_DIR}/src/ExclusionZone/ExclusionZoneController.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/src/ExclusionZone/ExclusionZoneController.h
     ${CMAKE_CURRENT_SOURCE_DIR}/src/ExclusionZone/StagedExclusionZone.cc
