@@ -40,6 +40,7 @@ void RallyPointController::start(bool flyView)
 
 void RallyPointController::_managerVehicleChanged(Vehicle* managerVehicle)
 {
+    _itemsRequested = false;
     if (_managerVehicle) {
         _rallyPointManager->disconnect(this);
         _managerVehicle->disconnect(this);
@@ -168,6 +169,7 @@ void RallyPointController::save(QJsonObject& json)
 
 void RallyPointController::removeAll(void)
 {
+    _masterController->_planElementCleared();
     _points.clearAndDeleteContents();
     setDirty(true);
     setCurrentRallyPoint(nullptr);
@@ -244,11 +246,18 @@ QString RallyPointController::editorQml(void) const
 
 void RallyPointController::_managerLoadComplete(void)
 {
+    if (!_managerVehicle || (sender() && sender() != _rallyPointManager)) {
+        return;
+    }
+    const quint32 vehicleId = _managerVehicle->isOfflineEditingVehicle() ? 0 : _managerVehicle->id();
     // Fly view always reloads on _loadComplete
     // Plan view only reloads if:
     //  - Load was specifically requested
     //  - There is no current Plan
     if (_flyView || _itemsRequested || isEmpty()) {
+        if (!isEmpty() || !_rallyPointManager->points().isEmpty()) {
+            _masterController->_planElementWillLoadFromVehicle(vehicleId);
+        }
         _points.clearAndDeleteContents();
         QObjectList pointList;
         for (const RallyPointData& pointData : _rallyPointManager->points()) {
@@ -265,6 +274,9 @@ void RallyPointController::_managerLoadComplete(void)
 
 void RallyPointController::_managerSendComplete(bool error)
 {
+    if (!_managerVehicle || (sender() && sender() != _rallyPointManager)) {
+        return;
+    }
     // Fly view always reloads after send
     if (!error && _flyView) {
         showPlanFromManagerVehicle();
@@ -273,7 +285,11 @@ void RallyPointController::_managerSendComplete(bool error)
 
 void RallyPointController::_managerRemoveAllComplete(bool error)
 {
+    if (!_managerVehicle || (sender() && sender() != _rallyPointManager)) {
+        return;
+    }
     if (!error) {
+        _masterController->_planElementCleared();
         // Remove all from vehicle so we always update
         showPlanFromManagerVehicle();
     }
@@ -281,7 +297,11 @@ void RallyPointController::_managerRemoveAllComplete(bool error)
 
 void RallyPointController::addPoint(QGeoCoordinate point)
 {
+    _masterController->_planElementWillAdd();
     Vehicle* const vehicle = _masterController->controllerVehicle();
+    if (!vehicle) {
+        return;
+    }
     const bool px4 = vehicle->px4Firmware();
 
     double defaultAlt;
@@ -337,6 +357,8 @@ void RallyPointController::removePoint(QObject* rallyPoint)
         }
     }
 
+    _masterController->_planElementRemoved();
+
     if (_points.count()) {
         int newIndex = qMin(foundIndex, _points.count() - 1);
         newIndex = qMax(newIndex, 0);
@@ -371,6 +393,7 @@ bool RallyPointController::showPlanFromManagerVehicle (void)
         qCCritical(RallyPointControllerLog) << "RallyPointController::showPlanFromManagerVehicle called while offline";
         return true;    // stops further propagation of showPlanFromManagerVehicle due to error
     } else {
+        _itemsRequested = true;
         if (!_managerVehicle->initialPlanRequestComplete()) {
             // The vehicle hasn't completed initial load, we can just wait for loadComplete to be signalled automatically
             qCDebug(RallyPointControllerLog) << "showPlanFromManagerVehicle: !initialPlanRequestComplete, wait for signal";

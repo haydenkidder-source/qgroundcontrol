@@ -64,6 +64,13 @@ void PlanMasterController::_commonInit(void)
     connect(&_geoFenceController,   &GeoFenceController::syncInProgressChanged,     this, &PlanMasterController::syncInProgressChanged);
     connect(&_rallyPointController, &RallyPointController::syncInProgressChanged,   this, &PlanMasterController::syncInProgressChanged);
 
+    connect(&_missionController, &MissionController::newItemsFromVehicle, this,
+            &PlanMasterController::_loadMissionComplete);
+    connect(&_geoFenceController, &GeoFenceController::loadComplete, this,
+            &PlanMasterController::_loadGeoFenceComplete);
+    connect(&_rallyPointController, &RallyPointController::loadComplete, this,
+            &PlanMasterController::_loadRallyPointsComplete);
+
     // Offline vehicle can change firmware/vehicle type
     connect(_controllerVehicle,     &Vehicle::vehicleTypeChanged,                   this, &PlanMasterController::_updatePlanCreatorsList);
 }
@@ -98,7 +105,7 @@ void PlanMasterController::startStaticActiveVehicle(Vehicle* vehicle, bool delet
 
 void PlanMasterController::_activeVehicleChanged(Vehicle* activeVehicle)
 {
-    if (_managerVehicle == activeVehicle) {
+    if (_managerVehicle && _managerVehicle == activeVehicle) {
         // We are already setup for this vehicle
         return;
     }
@@ -108,14 +115,16 @@ void PlanMasterController::_activeVehicleChanged(Vehicle* activeVehicle)
     if (_managerVehicle) {
         // Disconnect old vehicle. Be careful of wildcarding disconnect too much since _managerVehicle may equal _controllerVehicle
         disconnect(_managerVehicle,                         &Vehicle::initialPlanRequestCompleteChanged, this, nullptr);
+        disconnect(_managerVehicle, &QObject::destroyed, this, nullptr);
         disconnect(_managerVehicle->missionManager(),       nullptr, this, nullptr);
         disconnect(_managerVehicle->geoFenceManager(),      nullptr, this, nullptr);
         disconnect(_managerVehicle->rallyPointManager(),    nullptr, this, nullptr);
-
-        // Any in-flight transfer chain can never complete against the new vehicle's managers
-        _loadSequence = SyncSequence::Idle;
-        _sendSequence = SyncSequence::Idle;
     }
+
+    _loadSequence = SyncSequence::Idle;
+    _sendSequence = SyncSequence::Idle;
+    _loadVehicleId = 0;
+    _sendVehicleId = 0;
 
     bool newOffline = false;
     if (activeVehicle == nullptr) {
@@ -133,12 +142,31 @@ void PlanMasterController::_activeVehicleChanged(Vehicle* activeVehicle)
 
         // We use these signals to sequence upload and download to the multiple controller/managers
         connect(_managerVehicle,                        &Vehicle::initialPlanRequestCompleteChanged, this, &PlanMasterController::_initialPlanRequestCompleteChanged);
-        connect(_managerVehicle->missionManager(),      &MissionManager::newMissionItemsAvailable,  this, &PlanMasterController::_loadMissionComplete);
-        connect(_managerVehicle->geoFenceManager(),     &GeoFenceManager::loadComplete,             this, &PlanMasterController::_loadGeoFenceComplete);
-        connect(_managerVehicle->rallyPointManager(),   &RallyPointManager::loadComplete,           this, &PlanMasterController::_loadRallyPointsComplete);
-        connect(_managerVehicle->missionManager(),      &MissionManager::sendComplete,              this, &PlanMasterController::_sendMissionComplete);
-        connect(_managerVehicle->geoFenceManager(),     &GeoFenceManager::sendComplete,             this, &PlanMasterController::_sendGeoFenceComplete);
-        connect(_managerVehicle->rallyPointManager(),   &RallyPointManager::sendComplete,           this, &PlanMasterController::_sendRallyPointsComplete);
+        connect(_managerVehicle->missionManager(), &MissionManager::sendComplete, this,
+                [this, vehicle = QPointer<Vehicle>(_managerVehicle)](bool error) {
+                    if (vehicle && vehicle == _managerVehicle) {
+                        _sendMissionComplete(error);
+                    }
+                });
+        connect(_managerVehicle->geoFenceManager(), &GeoFenceManager::sendComplete, this,
+                [this, vehicle = QPointer<Vehicle>(_managerVehicle)](bool error) {
+                    if (vehicle && vehicle == _managerVehicle) {
+                        _sendGeoFenceComplete(error);
+                    }
+                });
+        connect(_managerVehicle->rallyPointManager(), &RallyPointManager::sendComplete, this,
+                [this, vehicle = QPointer<Vehicle>(_managerVehicle)](bool error) {
+                    if (vehicle && vehicle == _managerVehicle) {
+                        _sendRallyPointsComplete(error);
+                    }
+                });
+        connect(_managerVehicle->missionManager(), &MissionManager::error, this,
+                &PlanMasterController::_planLoadFailed);
+        connect(_managerVehicle->geoFenceManager(), &GeoFenceManager::error, this,
+                &PlanMasterController::_planLoadFailed);
+        connect(_managerVehicle->rallyPointManager(), &RallyPointManager::error, this,
+                &PlanMasterController::_planLoadFailed);
+        connect(_managerVehicle, &QObject::destroyed, this, [this] { _activeVehicleChanged(nullptr); });
     }
 
     _offline = newOffline;
@@ -204,6 +232,9 @@ void PlanMasterController::_activeVehicleChanged(Vehicle* activeVehicle)
 
 void PlanMasterController::loadFromVehicle(void)
 {
+    if (!_managerVehicle) {
+        return;
+    }
     SharedLinkInterfacePtr sharedLink = _managerVehicle->vehicleLinkManager()->primaryLink().lock();
     if (sharedLink) {
         if (sharedLink->linkConfiguration()->isHighLatency()) {
@@ -222,6 +253,7 @@ void PlanMasterController::loadFromVehicle(void)
     } else if (syncInProgress()) {
         qCCritical(PlanMasterControllerLog) << "PlanMasterController::loadFromVehicle called while syncInProgress";
     } else {
+        _loadVehicleId = _editingVehicleId();
         _loadSequence = SyncSequence::Mission;
         qCDebug(PlanMasterControllerLog) << "PlanMasterController::loadFromVehicle calling _missionController.loadFromVehicle";
         _missionController.loadFromVehicle();
@@ -231,6 +263,11 @@ void PlanMasterController::loadFromVehicle(void)
 
 void PlanMasterController::_loadMissionComplete(void)
 {
+    if (_loadSequence == SyncSequence::CachedMission) {
+        _loadSequence = SyncSequence::CachedGeoFence;
+        _geoFenceController.showPlanFromManagerVehicle();
+        return;
+    }
     if (_loadSequence != SyncSequence::Mission) {
         return;
     }
@@ -240,13 +277,20 @@ void PlanMasterController::_loadMissionComplete(void)
         _geoFenceController.loadFromVehicle();
     } else {
         qCDebug(PlanMasterControllerLog) << "PlanMasterController::_loadMissionComplete GeoFence not supported skipping";
+        _suppressOverallDirtyUpdate = true;
         _geoFenceController.removeAll();
+        _suppressOverallDirtyUpdate = false;
         _loadGeoFenceComplete();
     }
 }
 
 void PlanMasterController::_loadGeoFenceComplete(void)
 {
+    if (_loadSequence == SyncSequence::CachedGeoFence) {
+        _loadSequence = SyncSequence::CachedRallyPoints;
+        _rallyPointController.showPlanFromManagerVehicle();
+        return;
+    }
     if (_loadSequence != SyncSequence::GeoFence) {
         return;
     }
@@ -256,17 +300,20 @@ void PlanMasterController::_loadGeoFenceComplete(void)
         _rallyPointController.loadFromVehicle();
     } else {
         qCDebug(PlanMasterControllerLog) << "PlanMasterController::_loadGeoFenceComplete Rally Points not supported skipping";
+        _suppressOverallDirtyUpdate = true;
         _rallyPointController.removeAll();
+        _suppressOverallDirtyUpdate = false;
         _loadRallyPointsComplete();
     }
 }
 
 void PlanMasterController::_loadRallyPointsComplete(void)
 {
-    if (_loadSequence != SyncSequence::RallyPoints) {
+    if (_loadSequence != SyncSequence::RallyPoints && _loadSequence != SyncSequence::CachedRallyPoints) {
         return;
     }
-    _loadSequence = SyncSequence::Idle;
+    _loadSequence = _loadVehicleId ? SyncSequence::Idle : SyncSequence::FailedLoad;
+    _setPlanVehicleId(_loadVehicleId);
     qCDebug(PlanMasterControllerLog) << "PlanMasterController::_loadRallyPointsComplete";
     // A plan just downloaded from the vehicle reflects exactly what is on the vehicle.
     // The user has made no edits, so it must not be dirty for save or upload. Any previous
@@ -275,10 +322,13 @@ void PlanMasterController::_loadRallyPointsComplete(void)
     _setDirtyStates(false /* dirtyForSave */, false /* dirtyForUpload */);
 }
 
-void PlanMasterController::_sendMissionComplete(void)
+void PlanMasterController::_sendMissionComplete(bool error)
 {
     if (_sendSequence != SyncSequence::Mission) {
         return;
+    }
+    if (error) {
+        _sendVehicleId = 0;
     }
     _sendSequence = SyncSequence::GeoFence;
     if (_geoFenceController.supported()) {
@@ -290,10 +340,13 @@ void PlanMasterController::_sendMissionComplete(void)
     }
 }
 
-void PlanMasterController::_sendGeoFenceComplete(void)
+void PlanMasterController::_sendGeoFenceComplete(bool error)
 {
     if (_sendSequence != SyncSequence::GeoFence) {
         return;
+    }
+    if (error) {
+        _sendVehicleId = 0;
     }
     _sendSequence = SyncSequence::RallyPoints;
     if (_rallyPointController.supported()) {
@@ -305,12 +358,22 @@ void PlanMasterController::_sendGeoFenceComplete(void)
     }
 }
 
-void PlanMasterController::_sendRallyPointsComplete(void)
+void PlanMasterController::_sendRallyPointsComplete(bool error)
 {
     if (_sendSequence != SyncSequence::RallyPoints) {
         return;
     }
+    if (error) {
+        _sendVehicleId = 0;
+    }
     _sendSequence = SyncSequence::Idle;
+    if (_sendVehicleId) {
+        if (_loadSequence == SyncSequence::FailedLoad) {
+            _loadSequence = SyncSequence::Idle;
+        }
+        _loadVehicleId = _sendVehicleId;
+        _setPlanVehicleId(_sendVehicleId);
+    }
     qCDebug(PlanMasterControllerLog) << "PlanMasterController::sendToVehicle Rally Point send complete";
     _setDirtyForUpload(false);
     if (_deleteWhenSendCompleted) {
@@ -320,6 +383,9 @@ void PlanMasterController::_sendRallyPointsComplete(void)
 
 void PlanMasterController::sendToVehicle(void)
 {
+    if (!_managerVehicle) {
+        return;
+    }
     SharedLinkInterfacePtr sharedLink = _managerVehicle->vehicleLinkManager()->primaryLink().lock();
     if (sharedLink) {
         if (sharedLink->linkConfiguration()->isHighLatency()) {
@@ -337,6 +403,7 @@ void PlanMasterController::sendToVehicle(void)
         qCCritical(PlanMasterControllerLog) << "PlanMasterController::sendToVehicle called while syncInProgress";
     } else {
         qCDebug(PlanMasterControllerLog) << "PlanMasterController::sendToVehicle start mission sendToVehicle";
+        _sendVehicleId = _editingVehicleId();
         _sendSequence = SyncSequence::Mission;
         _missionController.sendToVehicle();
     }
@@ -360,6 +427,8 @@ void PlanMasterController::loadFromFile(const QString& filename)
         return;
     }
 
+    const quint32 vehicleId = _editingVehicleId();
+    _planContentsChanged();
     bool success = false;
     if (fileInfo.suffix() == AppSettings::waypointsFileExtension || fileInfo.suffix() == QStringLiteral("txt")) {
         success = _missionController.loadTextFile(file, errorString);
@@ -371,10 +440,12 @@ void PlanMasterController::loadFromFile(const QString& filename)
     }
 
     if (success){
+        _setPlanVehicleId(vehicleId);
         _currentPlanFile = QString::asprintf("%s/%s.%s", fileInfo.path().toLocal8Bit().data(), fileInfo.completeBaseName().toLocal8Bit().data(), AppSettings::planFileExtension);
         emit currentPlanFileChanged();
         _setDirtyStates(false /* dirtyForSave */, true /* dirtyForUpload */);
     } else {
+        _setPlanVehicleId(0);
         _clearCurrentPlanFile();
     }
 }
@@ -507,6 +578,8 @@ void PlanMasterController::saveToKml(const QString& filename)
 
 void PlanMasterController::removeAll(void)
 {
+    _planContentsChanged();
+    _setPlanVehicleId(0);
     _suppressOverallDirtyUpdate = true;
     _missionController.removeAll();
     _geoFenceController.removeAll();
@@ -553,6 +626,9 @@ void PlanMasterController::_trackRemoveAllFromVehicle(bool geoFenceRequested, bo
     // Bound to this vehicle rather than whichever vehicle is active when the acks arrive: MultiVehicleManager switches
     // the active vehicle whenever any other vehicle drops out, which must not turn a confirmed removal into a failure.
     Vehicle* const vehicle = _managerVehicle;
+    if (!vehicle) {
+        return;
+    }
     const auto stepComplete = [this](bool error) { _removeAllFromVehicleStepComplete(error); };
 
     _removeAllFromVehicleId = vehicle->id();
@@ -602,6 +678,82 @@ void PlanMasterController::_finishRemoveAllFromVehicle(bool error)
     _removeAllFromVehicleConnections.clear();
     _removeAllFromVehiclePendingCount = 0;
     emit removeAllFromVehicleCompleted(error, _removeAllFromVehicleId);
+}
+
+void PlanMasterController::_setPlanVehicleId(quint32 vehicleId)
+{
+    if (_planVehicleId != vehicleId) {
+        _planVehicleId = vehicleId;
+        emit planVehicleIdChanged();
+    }
+}
+
+Vehicle* PlanMasterController::managerVehicle(void)
+{
+    return _managerVehicle.data();
+}
+
+quint32 PlanMasterController::_editingVehicleId() const
+{
+    return _managerVehicle && !_managerVehicle->isOfflineEditingVehicle() ? _managerVehicle->id() : 0;
+}
+
+void PlanMasterController::_planElementWillLoadFromVehicle(quint32 vehicleId)
+{
+    if (_planVehicleId != vehicleId || !_loadVehicleId) {
+        _setPlanVehicleId(0);
+    }
+}
+
+void PlanMasterController::_planContentsChanged()
+{
+    // Edits after the mission section was adopted can leave the remaining download mixed.
+    if (_loadSequence == SyncSequence::GeoFence || _loadSequence == SyncSequence::RallyPoints ||
+        _loadSequence == SyncSequence::CachedGeoFence || _loadSequence == SyncSequence::CachedRallyPoints) {
+        _loadVehicleId = 0;
+    }
+    _sendVehicleId = 0;
+}
+
+void PlanMasterController::_planElementWillAdd()
+{
+    _planContentsChanged();
+    if (isEmpty()) {
+        _setPlanVehicleId(_editingVehicleId());
+    }
+}
+
+void PlanMasterController::_planElementCleared()
+{
+    if (!_suppressOverallDirtyUpdate) {
+        _planContentsChanged();
+        _setPlanVehicleId(0);
+    }
+}
+
+void PlanMasterController::_planElementRemoved()
+{
+    if (!_suppressOverallDirtyUpdate) {
+        _planContentsChanged();
+        if (isEmpty()) {
+            _setPlanVehicleId(0);
+        }
+    }
+}
+
+void PlanMasterController::_planLoadFailed()
+{
+    if (!_managerVehicle ||
+        (sender() && sender() != _managerVehicle->missionManager() && sender() != _managerVehicle->geoFenceManager() &&
+         sender() != _managerVehicle->rallyPointManager())) {
+        return;
+    }
+    _loadVehicleId = 0;
+    if (_loadSequence == SyncSequence::Idle) {
+        _loadSequence = SyncSequence::FailedLoad;
+    } else if (_loadSequence != SyncSequence::FailedLoad) {
+        _setPlanVehicleId(0);
+    }
 }
 
 bool PlanMasterController::containsItems(void) const
@@ -667,6 +819,9 @@ QStringList PlanMasterController::saveNameFilters(void) const
 
 void PlanMasterController::sendPlanToVehicle(Vehicle* vehicle, const QString& filename)
 {
+    if (!vehicle || vehicle->isOfflineEditingVehicle()) {
+        return;
+    }
     // Use a transient PlanMasterController to accomplish this
     PlanMasterController* controller = new PlanMasterController();
     controller->startStaticActiveVehicle(vehicle, true /* deleteWhenSendCompleted */);
@@ -676,31 +831,27 @@ void PlanMasterController::sendPlanToVehicle(Vehicle* vehicle, const QString& fi
 
 void PlanMasterController::_showPlanFromManagerVehicle(void)
 {
+    if (!_managerVehicle || offline()) {
+        return;
+    }
+    if (_loadSequence != SyncSequence::InitialPlanLoad && _loadSequence != SyncSequence::FailedLoad) {
+        _loadVehicleId = _editingVehicleId();
+    }
     if (!_managerVehicle->initialPlanRequestComplete()) {
-        // The sub-controllers pick up the editor contents as the initial download arrives
         _loadSequence = SyncSequence::InitialPlanLoad;
         return;
     }
 
-    // The crazy if structure is to handle the load propagating by itself through the system
-    if (!_missionController.showPlanFromManagerVehicle()) {
-        if (!_geoFenceController.showPlanFromManagerVehicle()) {
-            _rallyPointController.showPlanFromManagerVehicle();
-        }
-    }
-
-    // The editor now shows the vehicle's plan: not dirty, and any previous file
-    // association no longer describes the contents
-    _clearCurrentPlanFile();
-    _setDirtyStates(false, false);
+    _loadSequence = SyncSequence::CachedMission;
+    _missionController.showPlanFromManagerVehicle();
 }
 
 void PlanMasterController::_initialPlanRequestCompleteChanged(bool initialPlanRequestComplete)
 {
-    if (!initialPlanRequestComplete || _loadSequence != SyncSequence::InitialPlanLoad) {
+    if ((sender() && sender() != _managerVehicle.data()) || !initialPlanRequestComplete ||
+        _loadSequence != SyncSequence::InitialPlanLoad) {
         return;
     }
-    _loadSequence = SyncSequence::Idle;
     qCDebug(PlanMasterControllerLog) << "_initialPlanRequestCompleteChanged: initial download complete";
     // Import the manager data into the editor (non-empty sub-controllers reject the automatic
     // manager updates during download) and scrub dirty/file association.
@@ -792,6 +943,9 @@ void PlanMasterController::_updatePlanCreatorsList(void)
         return;
     }
 
+    if (!_managerVehicle) {
+        return;
+    }
     const auto vehicleClass = _managerVehicle->vehicleClass();
 
     // Only rebuild if the vehicle class actually changed

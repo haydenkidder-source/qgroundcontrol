@@ -67,9 +67,30 @@ private slots:
     void _testRallyPointFramesSurviveVehicleRoundTrip();
     void _testPendingRallyTerrainBlocksSaveAndUpload();
 
+    void _testPlanVehicleIdOfflineAndNotify();
+    void _testPlanVehicleIdInitialAdoption();
+    void _testPlanVehicleIdKeepAndLoad();
+    void _testPlanVehicleIdDirtyDisconnectKeepsAssociation();
+    void _testPlanVehicleIdExplicitDownloads();
+    void _testPlanVehicleIdCachedShowWaitsForReplacement();
+    void _testPlanVehicleIdPartialSectionAdoption_data();
+    void _testPlanVehicleIdPartialSectionAdoption();
+    void _testPlanVehicleIdStaleDownloadKeepsAssociation();
+    void _testPlanVehicleIdPendingDownloadDisconnectKeepsAssociation();
+    void _testPlanVehicleIdFileLoad_data();
+    void _testPlanVehicleIdFileLoad();
+    void _testPlanVehicleIdNewBuffer_data();
+    void _testPlanVehicleIdNewBuffer();
+    void _testPlanVehicleIdFailedDownloadClearsAssociation_data();
+    void _testPlanVehicleIdFailedDownloadClearsAssociation();
+    void _testPlanVehicleIdUpload_data();
+    void _testPlanVehicleIdUpload();
+    void _testPlanVehicleIdStaticVehicle();
+
 private:
     /// Connects an additional PX4 MockLink vehicle (tracked in _extraLinks) and waits for its initial connect
-    Vehicle* _connectExtraVehicle();
+    Vehicle* _connectExtraVehicle(bool withMission = false);
+    void _populatePlanForIdentityTransfer();
 
     enum DirtyScenario
     {

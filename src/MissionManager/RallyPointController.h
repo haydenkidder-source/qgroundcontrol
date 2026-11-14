@@ -63,7 +63,7 @@ private slots:
     void _pointsDirtyChanged        (bool dirty);
 
 private:
-    Vehicle*            _managerVehicle =       nullptr;
+    QPointer<Vehicle> _managerVehicle;
     RallyPointManager*  _rallyPointManager =    nullptr;
     bool                _dirty =                false;
     QmlObjectListModel  _points;

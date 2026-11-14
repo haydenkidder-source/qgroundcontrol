@@ -1,10 +1,14 @@
 #include "PlanMasterControllerTest.h"
 
+#include <limits>
+
 #include <QtCore/QDateTime>
 #include <QtCore/QDir>
 #include <QtCore/QFile>
+#include <QtCore/QJsonArray>
 #include <QtCore/QJsonDocument>
 #include <QtCore/QJsonObject>
+#include <QtCore/QMetaProperty>
 #include <QtCore/QRandomGenerator>
 #include <QtCore/QRegularExpression>
 #include <QtCore/QTemporaryDir>
@@ -12,11 +16,13 @@
 
 #include "AppSettings.h"
 #include "GeoFenceController.h"
+#include "GeoFenceManager.h"
 #include "MissionController.h"
 #include "MissionManager.h"
 #include "MockLink.h"
 #include "MultiSignalSpy.h"
 #include "MultiVehicleManager.h"
+#include "PlanCreator.h"
 #include "PlanMasterController.h"
 #include "QGCMapCircle.h"
 #include "QGCMapPolygon.h"
@@ -58,6 +64,10 @@ void PlanMasterControllerTest::cleanup()
         QVERIFY(UnitTest::waitForCondition(
             [remainingVehicles] { return MultiVehicleManager::instance()->vehicles()->count() == remainingVehicles; },
             TestTimeout::longMs(), QStringLiteral("extra vehicles removed")));
+    }
+    if (!_mockLink) {
+        QVERIFY(UnitTest::waitForCondition([] { return MultiVehicleManager::instance()->activeVehicle() == nullptr; },
+                                           TestTimeout::longMs(), QStringLiteral("active vehicle removal settled")));
     }
     _disconnectMockLink();
     UnitTest::cleanup();
@@ -609,10 +619,10 @@ void PlanMasterControllerTest::_testRemoveAllFromVehicleCompletedOnVehicleDiscon
     QVERIFY(completedSpy.isEmpty());
 }
 
-Vehicle* PlanMasterControllerTest::_connectExtraVehicle()
+Vehicle* PlanMasterControllerTest::_connectExtraVehicle(bool withMission)
 {
     MultiVehicleManager* const manager = MultiVehicleManager::instance();
-    MockLink* const link = MockLink::startPX4MockLink();
+    MockLink* const link = withMission ? MockLink::startPX4MockLinkWithMission() : MockLink::startPX4MockLink();
     if (!link) {
         return nullptr;
     }
@@ -638,8 +648,12 @@ void PlanMasterControllerTest::_testRemoveAllFromVehicleCompletedFromVehicleAcks
     for (int i = 0; i < 5; i++) {
         QVERIFY_TRUE_WAIT(!_masterController->syncInProgress(), TestTimeout::mediumMs());
         completedSpy.clear();
+        _masterController->loadFromFile(":/unittest/MissionPlanner.waypoints");
+        QVERIFY(_vehicle);
+        QCOMPARE(_masterController->planVehicleId(), _vehicle->id());
         _masterController->removeAllFromVehicle();
         QVERIFY_TRUE_WAIT(completedSpy.count() >= 1, TestTimeout::mediumMs());
+        QCOMPARE(_masterController->planVehicleId(), quint32(0));
         QCOMPARE(completedSpy.first().at(0).toBool(), false);
         QVERIFY_NO_SIGNAL_WAIT(completedSpy, 100);  // Short on purpose: only guards against a duplicate emission
         QCOMPARE(completedSpy.count(), 1);
@@ -1200,6 +1214,667 @@ void PlanMasterControllerTest::_testPendingRallyTerrainBlocksSaveAndUpload()
 
     rallyPoint->altitude()->setRawValue(50.0);
     QCOMPARE(_masterController->readyForSaveState(), int(VisualMissionItem::ReadyForSave));
+}
+
+void PlanMasterControllerTest::_testPlanVehicleIdOfflineAndNotify()
+{
+    QCOMPARE(_masterController->planVehicleId(), quint32(0));
+    Vehicle* const helper = _masterController->controllerVehicle();
+    QVERIFY(helper);
+    QVERIFY(helper->isOfflineEditingVehicle());
+    QCOMPARE(_masterController->managerVehicle(), helper);
+
+    const QMetaObject* const metaObject = _masterController->metaObject();
+    const QMetaProperty property = metaObject->property(metaObject->indexOfProperty("planVehicleId"));
+    QVERIFY(property.isValid());
+    QVERIFY(!property.isWritable());
+    QVERIFY(property.hasNotifySignal());
+    QCOMPARE(property.metaType(), QMetaType::fromType<quint32>());
+
+    QSignalSpy changed(_masterController, &PlanMasterController::planVehicleIdChanged);
+    _masterController->loadFromFile(":/unittest/MissionPlanner.waypoints");
+    QCOMPARE(_masterController->planVehicleId(), quint32(0));
+    _masterController->removeAll();
+    _masterController->showPlanFromManagerVehicle();
+    QCOMPARE(changed.count(), 0);
+
+    const quint32 fullWidthId = std::numeric_limits<quint32>::max();
+    _masterController->_setPlanVehicleId(fullWidthId);
+    QCOMPARE(property.read(_masterController).toULongLong(), qulonglong(fullWidthId));
+    QCOMPARE(changed.count(), 1);
+    _masterController->_setPlanVehicleId(fullWidthId);
+    QCOMPARE(changed.count(), 1);
+    _masterController->removeAll();
+    QCOMPARE(_masterController->planVehicleId(), quint32(0));
+    QCOMPARE(changed.count(), 2);
+    _masterController->removeAll();
+    QCOMPARE(changed.count(), 2);
+}
+
+void PlanMasterControllerTest::_testPlanVehicleIdInitialAdoption()
+{
+    PlanMasterController retained;
+    QSignalSpy retainedChanged(&retained, &PlanMasterController::planVehicleIdChanged);
+    QObject observer;
+    int startedSections = 0;
+    QList<quint32> idsDuringTransfer;
+    connect(_masterController, &PlanMasterController::managerVehicleChanged, &observer, [&](Vehicle* vehicle) {
+        if (!vehicle || vehicle->isOfflineEditingVehicle()) {
+            return;
+        }
+        retained.startStaticActiveVehicle(vehicle);
+        QCOMPARE(retained.planVehicleId(), quint32(0));
+        const QList<PlanManager*> managers = {vehicle->missionManager(), vehicle->geoFenceManager(),
+                                              vehicle->rallyPointManager()};
+        for (int i = 0; i < managers.count(); i++) {
+            connect(managers[i], &PlanManager::inProgressChanged, &observer, [&, i](bool inProgress) {
+                if (inProgress) {
+                    startedSections |= 1 << i;
+                    idsDuringTransfer.append(_masterController->planVehicleId());
+                    idsDuringTransfer.append(retained.planVehicleId());
+                }
+            });
+        }
+    });
+    QSignalSpy changed(_masterController, &PlanMasterController::planVehicleIdChanged);
+    Vehicle* const vehicle = _connectExtraVehicle(true);
+    QVERIFY(vehicle);
+    QTRY_VERIFY_WITH_TIMEOUT(vehicle->initialPlanRequestComplete(), TestTimeout::longMs());
+    QTRY_COMPARE_WITH_TIMEOUT(_masterController->planVehicleId(), vehicle->id(), TestTimeout::mediumMs());
+    QCOMPARE(startedSections, 7);
+    for (const quint32 vehicleId : std::as_const(idsDuringTransfer)) {
+        QCOMPARE(vehicleId, quint32(0));
+    }
+    QCOMPARE(_masterController->missionController()->visualItems()->count(), 4);
+    QCOMPARE(changed.count(), 1);
+    QCOMPARE(retained.planVehicleId(), vehicle->id());
+    QCOMPARE(retained.missionController()->visualItems()->count(), 4);
+    QCOMPARE(retainedChanged.count(), 1);
+
+    changed.clear();
+    _masterController->showPlanFromManagerVehicle();
+    _masterController->_setPlanVehicleId(vehicle->id());
+    QCOMPARE(_masterController->planVehicleId(), vehicle->id());
+    QCOMPARE(changed.count(), 0);
+}
+
+void PlanMasterControllerTest::_testPlanVehicleIdKeepAndLoad()
+{
+    _connectMockLink(MAV_AUTOPILOT_PX4);
+    QVERIFY(_vehicle);
+    QTRY_COMPARE_WITH_TIMEOUT(_masterController->planVehicleId(), _vehicle->id(), TestTimeout::longMs());
+    _masterController->loadFromFile(":/unittest/MissionPlanner.waypoints");
+    MissionController* const mission = _masterController->missionController();
+    const QGeoCoordinate keptHome = mission->plannedHomePosition();
+    QVERIFY(mission->insertSimpleMissionItem(keptHome.atDistanceAndAzimuth(200, 45), -1));
+    QVERIFY(_masterController->dirtyForSave());
+    const int keptCount = _masterController->missionController()->visualItems()->count();
+    const quint32 keptId = _vehicle->id();
+    QList<QGeoCoordinate> keptCoordinates;
+    for (int i = 0; i < keptCount; i++) {
+        keptCoordinates.append(mission->visualItems()->value<VisualMissionItem*>(i)->coordinate());
+    }
+
+    expectLogMessage("API.QGCApplication.AppMessage", QtDebugMsg,
+                     QRegularExpression(QStringLiteral("Connected to Vehicle [0-9]+")));
+    Vehicle* const otherVehicle = _connectExtraVehicle(true);
+    verifyExpectedLogMessage();
+    QVERIFY(otherVehicle);
+    QTRY_VERIFY_WITH_TIMEOUT(otherVehicle->initialPlanRequestComplete(), TestTimeout::longMs());
+    QSignalSpy changed(_masterController, &PlanMasterController::planVehicleIdChanged);
+    QSignalSpy prompted(_masterController, &PlanMasterController::promptForPlanUsageOnVehicleChange);
+    Vehicle* managerAtPrompt = nullptr;
+    quint32 idAtPrompt = 0;
+    bool dirtyAtPrompt = false;
+    QObject observer;
+    connect(_masterController, &PlanMasterController::promptForPlanUsageOnVehicleChange, &observer, [&] {
+        managerAtPrompt = _masterController->managerVehicle();
+        idAtPrompt = _masterController->planVehicleId();
+        dirtyAtPrompt = _masterController->dirtyForSave();
+    });
+    MultiVehicleManager::instance()->setActiveVehicle(otherVehicle);
+    QCOMPARE(MultiVehicleManager::instance()->activeVehicle(), _vehicle);
+    QCOMPARE(_masterController->managerVehicle(), _vehicle);
+    QCOMPARE(prompted.count(), 0);
+    QTRY_COMPARE_WITH_TIMEOUT(MultiVehicleManager::instance()->activeVehicle(), otherVehicle, TestTimeout::mediumMs());
+    QTRY_COMPARE_WITH_TIMEOUT(_masterController->managerVehicle(), otherVehicle, TestTimeout::mediumMs());
+    QCOMPARE(prompted.count(), 1);
+    QCOMPARE(managerAtPrompt, otherVehicle);
+    QCOMPARE(idAtPrompt, keptId);
+    QVERIFY(dirtyAtPrompt);
+    // Keep Current Plan closes the prompt without calling the controller.
+    QCOMPARE(_masterController->planVehicleId(), keptId);
+    QCOMPARE(_masterController->missionController()->visualItems()->count(), keptCount);
+    QCOMPARE(mission->plannedHomePosition(), keptHome);
+    for (int i = 0; i < keptCount; i++) {
+        QCOMPARE(mission->visualItems()->value<VisualMissionItem*>(i)->coordinate(), keptCoordinates[i]);
+    }
+    QVERIFY(_masterController->dirtyForSave());
+    QVERIFY(_masterController->dirtyForUpload());
+    QCOMPARE(changed.count(), 0);
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    QVERIFY(_masterController->saveToFile(directory.filePath(QStringLiteral("kept.plan"))));
+    QVERIFY(!_masterController->dirtyForSave());
+    QVERIFY(_masterController->dirtyForUpload());
+    QCOMPARE(_masterController->planVehicleId(), keptId);
+    QCOMPARE(changed.count(), 0);
+
+    _masterController->showPlanFromManagerVehicle();
+    QCOMPARE(_masterController->planVehicleId(), otherVehicle->id());
+    QCOMPARE(_masterController->missionController()->visualItems()->count(), 4);
+    QVERIFY(!_masterController->dirtyForSave());
+    QVERIFY(!_masterController->dirtyForUpload());
+    QCOMPARE(changed.count(), 2);
+    changed.clear();
+    _masterController->showPlanFromManagerVehicle();
+    QCOMPARE(changed.count(), 0);
+
+    const QGeoCoordinate loadedHome = mission->plannedHomePosition();
+    QVERIFY(mission->insertSimpleMissionItem(loadedHome.atDistanceAndAzimuth(200, 45), -1));
+    QVERIFY(_masterController->dirtyForSave());
+    MultiVehicleManager::instance()->setActiveVehicle(_vehicle);
+    QCOMPARE(MultiVehicleManager::instance()->activeVehicle(), otherVehicle);
+    QTRY_COMPARE_WITH_TIMEOUT(MultiVehicleManager::instance()->activeVehicle(), _vehicle, TestTimeout::mediumMs());
+    QTRY_COMPARE_WITH_TIMEOUT(_masterController->managerVehicle(), _vehicle, TestTimeout::mediumMs());
+    QCOMPARE(prompted.count(), 2);
+    QCOMPARE(managerAtPrompt, _vehicle);
+    QCOMPARE(idAtPrompt, otherVehicle->id());
+    QVERIFY(dirtyAtPrompt);
+    QCOMPARE(_masterController->planVehicleId(), otherVehicle->id());
+    QCOMPARE(mission->visualItems()->count(), 5);
+    QCOMPARE(mission->plannedHomePosition(), loadedHome);
+    QCOMPARE(changed.count(), 0);
+
+    _masterController->showPlanFromManagerVehicle();
+    QCOMPARE(_masterController->planVehicleId(), keptId);
+    QCOMPARE(mission->visualItems()->count(), 1);
+    QVERIFY(!_masterController->dirtyForSave());
+    QVERIFY(!_masterController->dirtyForUpload());
+    QCOMPARE(changed.count(), 2);
+}
+
+void PlanMasterControllerTest::_testPlanVehicleIdDirtyDisconnectKeepsAssociation()
+{
+    _connectMockLink(MAV_AUTOPILOT_PX4);
+    QVERIFY(_vehicle);
+    QTRY_COMPARE_WITH_TIMEOUT(_masterController->planVehicleId(), _vehicle->id(), TestTimeout::longMs());
+    _masterController->loadFromFile(":/unittest/MissionPlanner.waypoints");
+    QVERIFY(_masterController->missionController()->insertSimpleMissionItem(
+        _masterController->missionController()->plannedHomePosition().atDistanceAndAzimuth(200, 45), -1));
+    const quint32 vehicleId = _vehicle->id();
+    const int count = _masterController->missionController()->visualItems()->count();
+    QSignalSpy changed(_masterController, &PlanMasterController::planVehicleIdChanged);
+    _disconnectMockLink();
+    QVERIFY(_masterController->offline());
+    QCOMPARE(_masterController->managerVehicle(), _masterController->controllerVehicle());
+    QCOMPARE(_masterController->planVehicleId(), vehicleId);
+    QCOMPARE(_masterController->missionController()->visualItems()->count(), count);
+    QCOMPARE(changed.count(), 0);
+    _masterController->showPlanFromManagerVehicle();
+    QCOMPARE(_masterController->planVehicleId(), quint32(0));
+    QCOMPARE(changed.count(), 1);
+}
+
+void PlanMasterControllerTest::_testPlanVehicleIdExplicitDownloads()
+{
+    _connectMockLink(MAV_AUTOPILOT_PX4);
+    QVERIFY(_vehicle);
+    QTRY_VERIFY_WITH_TIMEOUT(_vehicle->initialPlanRequestComplete(), TestTimeout::longMs());
+    QVERIFY(_mockLink);
+    _mockLink->loadSimpleMultirotorMission();
+    _masterController->removeAll();
+    QSignalSpy firstComplete(_vehicle->rallyPointManager(), &RallyPointManager::loadComplete);
+    _masterController->loadFromVehicle();
+    QVERIFY(_masterController->syncInProgress());
+    QCOMPARE(_masterController->planVehicleId(), quint32(0));
+    QTRY_COMPARE_WITH_TIMEOUT(firstComplete.count(), 1, TestTimeout::longMs());
+    QCOMPARE(_masterController->planVehicleId(), _vehicle->id());
+    QCOMPARE(_masterController->missionController()->visualItems()->count(), 4);
+
+    QVERIFY(_masterController->missionController()->insertSimpleMissionItem(
+        _masterController->missionController()->plannedHomePosition().atDistanceAndAzimuth(200, 45), -1));
+    expectLogMessage("API.QGCApplication.AppMessage", QtDebugMsg,
+                     QRegularExpression(QStringLiteral("Connected to Vehicle [0-9]+")));
+    Vehicle* const otherVehicle = _connectExtraVehicle(true);
+    verifyExpectedLogMessage();
+    QVERIFY(otherVehicle);
+    QTRY_VERIFY_WITH_TIMEOUT(otherVehicle->initialPlanRequestComplete(), TestTimeout::longMs());
+    _masterController->_activeVehicleChanged(otherVehicle);
+    QCOMPARE(_masterController->planVehicleId(), _vehicle->id());
+    QObject observer;
+    quint32 idAfterMissionReplacement = std::numeric_limits<quint32>::max();
+    connect(_masterController->missionController(), &MissionController::newItemsFromVehicle, &observer,
+            [&] { idAfterMissionReplacement = _masterController->planVehicleId(); });
+    QSignalSpy changed(_masterController, &PlanMasterController::planVehicleIdChanged);
+    QSignalSpy complete(otherVehicle->rallyPointManager(), &RallyPointManager::loadComplete);
+    _masterController->loadFromVehicle();
+    QCOMPARE(_masterController->planVehicleId(), _vehicle->id());
+    QTRY_COMPARE_WITH_TIMEOUT(complete.count(), 1, TestTimeout::longMs());
+    QCOMPARE(idAfterMissionReplacement, quint32(0));
+    QCOMPARE(changed.count(), 2);
+    QCOMPARE(_masterController->planVehicleId(), otherVehicle->id());
+    QCOMPARE(_masterController->missionController()->visualItems()->count(), 4);
+    QCOMPARE(MultiVehicleManager::instance()->activeVehicle(), _vehicle);
+}
+
+void PlanMasterControllerTest::_testPlanVehicleIdCachedShowWaitsForReplacement()
+{
+    _connectMockLink(MAV_AUTOPILOT_PX4);
+    QVERIFY(_vehicle);
+    QTRY_VERIFY_WITH_TIMEOUT(_vehicle->initialPlanRequestComplete(), TestTimeout::longMs());
+    _masterController->loadFromFile(":/unittest/MissionPlanner.waypoints");
+    QVERIFY(_masterController->missionController()->insertSimpleMissionItem(
+        _masterController->missionController()->plannedHomePosition().atDistanceAndAzimuth(200, 45), -1));
+    expectLogMessage("API.QGCApplication.AppMessage", QtDebugMsg,
+                     QRegularExpression(QStringLiteral("Connected to Vehicle [0-9]+")));
+    Vehicle* const target = _connectExtraVehicle(true);
+    verifyExpectedLogMessage();
+    QVERIFY(target);
+    QTRY_VERIFY_WITH_TIMEOUT(target->initialPlanRequestComplete(), TestTimeout::longMs());
+    _masterController->_activeVehicleChanged(target);
+    target->missionManager()->loadFromVehicle();
+    QVERIFY(target->missionManager()->inProgress());
+    _masterController->showPlanFromManagerVehicle();
+    QCOMPARE(_masterController->planVehicleId(), _vehicle->id());
+    QCOMPARE(_masterController->missionController()->visualItems()->count(), 7);
+    QTRY_COMPARE_WITH_TIMEOUT(_masterController->planVehicleId(), target->id(), TestTimeout::longMs());
+    QCOMPARE(_masterController->missionController()->visualItems()->count(), 4);
+}
+
+void PlanMasterControllerTest::_testPlanVehicleIdPartialSectionAdoption_data()
+{
+    QTest::addColumn<bool>("fence");
+    QTest::newRow("fence replacement leaves mixed content unattached") << true;
+    QTest::newRow("rally replacement leaves mixed content unattached") << false;
+}
+
+void PlanMasterControllerTest::_testPlanVehicleIdPartialSectionAdoption()
+{
+    QFETCH(bool, fence);
+    _connectMockLink(MAV_AUTOPILOT_PX4);
+    QVERIFY(_vehicle);
+    QTRY_VERIFY_WITH_TIMEOUT(_vehicle->initialPlanRequestComplete(), TestTimeout::longMs());
+    _populatePlanForIdentityTransfer();
+    expectLogMessage("API.QGCApplication.AppMessage", QtDebugMsg,
+                     QRegularExpression(QStringLiteral("Connected to Vehicle [0-9]+")));
+    Vehicle* const target = _connectExtraVehicle();
+    verifyExpectedLogMessage();
+    QVERIFY(target);
+    QTRY_VERIFY_WITH_TIMEOUT(target->initialPlanRequestComplete(), TestTimeout::longMs());
+    GeoFenceController* const geoFence = _masterController->geoFenceController();
+    RallyPointController* const rally = _masterController->rallyPointController();
+    if (fence) {
+        QSignalSpy sent(target->geoFenceManager(), &GeoFenceManager::sendComplete);
+        target->geoFenceManager()->sendToVehicle(QGeoCoordinate(), *geoFence->polygons(), *geoFence->circles());
+        QTRY_COMPARE_WITH_TIMEOUT(sent.count(), 1, TestTimeout::longMs());
+    } else {
+        QSignalSpy sent(target->rallyPointManager(), &RallyPointManager::sendComplete);
+        target->rallyPointManager()->sendToVehicle(
+            {{QGeoCoordinate(47.6607, -122.1045, 10), MAV_FRAME_GLOBAL_RELATIVE_ALT}});
+        QTRY_COMPARE_WITH_TIMEOUT(sent.count(), 1, TestTimeout::longMs());
+    }
+    geoFence->removeAll();
+    rally->removeAll();
+    _masterController->loadFromFile(":/unittest/MissionPlanner.waypoints");
+    QVERIFY(_masterController->missionController()->insertSimpleMissionItem(
+        _masterController->missionController()->plannedHomePosition().atDistanceAndAzimuth(200, 45), -1));
+    _masterController->_activeVehicleChanged(target);
+    QCOMPARE(_masterController->planVehicleId(), _vehicle->id());
+    if (fence) {
+        QSignalSpy loaded(geoFence, &GeoFenceController::loadComplete);
+        geoFence->loadFromVehicle();
+        QCOMPARE(_masterController->planVehicleId(), _vehicle->id());
+        QTRY_COMPARE_WITH_TIMEOUT(loaded.count(), 1, TestTimeout::longMs());
+        QCOMPARE(geoFence->circles()->count(), 1);
+    } else {
+        QSignalSpy loaded(rally, &RallyPointController::loadComplete);
+        rally->loadFromVehicle();
+        QCOMPARE(_masterController->planVehicleId(), _vehicle->id());
+        QTRY_COMPARE_WITH_TIMEOUT(loaded.count(), 1, TestTimeout::longMs());
+        QCOMPARE(rally->points()->count(), 1);
+    }
+    QCOMPARE(_masterController->missionController()->visualItems()->count(), 7);
+    QCOMPARE(_masterController->planVehicleId(), quint32(0));
+    _masterController->showPlanFromManagerVehicle();
+    QCOMPARE(_masterController->planVehicleId(), target->id());
+}
+
+void PlanMasterControllerTest::_testPlanVehicleIdStaleDownloadKeepsAssociation()
+{
+    _connectMockLink(MAV_AUTOPILOT_PX4);
+    QVERIFY(_vehicle);
+    QTRY_VERIFY_WITH_TIMEOUT(_vehicle->initialPlanRequestComplete(), TestTimeout::longMs());
+    _masterController->loadFromFile(":/unittest/MissionPlanner.waypoints");
+    QVERIFY(_masterController->missionController()->insertSimpleMissionItem(
+        _masterController->missionController()->plannedHomePosition().atDistanceAndAzimuth(200, 45), -1));
+    const int count = _masterController->missionController()->visualItems()->count();
+    const quint32 vehicleId = _vehicle->id();
+    expectLogMessage("API.QGCApplication.AppMessage", QtDebugMsg,
+                     QRegularExpression(QStringLiteral("Connected to Vehicle [0-9]+")));
+    Vehicle* const otherVehicle = _connectExtraVehicle(true);
+    verifyExpectedLogMessage();
+    QVERIFY(otherVehicle);
+    QTRY_VERIFY_WITH_TIMEOUT(otherVehicle->initialPlanRequestComplete(), TestTimeout::longMs());
+
+    QSignalSpy oldComplete(_vehicle->missionManager(), &MissionManager::newMissionItemsAvailable);
+    QSignalSpy changed(_masterController, &PlanMasterController::planVehicleIdChanged);
+    _masterController->loadFromVehicle();
+    QVERIFY(_vehicle->missionManager()->inProgress());
+    _masterController->_activeVehicleChanged(otherVehicle);
+    QTRY_COMPARE_WITH_TIMEOUT(oldComplete.count(), 1, TestTimeout::longMs());
+    QCOMPARE(_masterController->planVehicleId(), vehicleId);
+    QCOMPARE(_masterController->missionController()->visualItems()->count(), count);
+    QCOMPARE(changed.count(), 0);
+}
+
+void PlanMasterControllerTest::_testPlanVehicleIdPendingDownloadDisconnectKeepsAssociation()
+{
+    _connectMockLink(MAV_AUTOPILOT_PX4);
+    QVERIFY(_vehicle);
+    QVERIFY(_mockLink);
+    QTRY_VERIFY_WITH_TIMEOUT(_vehicle->initialPlanRequestComplete(), TestTimeout::longMs());
+    _masterController->loadFromFile(":/unittest/MissionPlanner.waypoints");
+    QVERIFY(_masterController->missionController()->insertSimpleMissionItem(
+        _masterController->missionController()->plannedHomePosition().atDistanceAndAzimuth(200, 45), -1));
+    const quint32 vehicleId = _vehicle->id();
+    const int count = _masterController->missionController()->visualItems()->count();
+    _mockLink->setMissionItemFailureMode(MockLinkMissionItemHandler::FailReadRequestListNoResponse, MAV_MISSION_ERROR);
+    QSignalSpy changed(_masterController, &PlanMasterController::planVehicleIdChanged);
+    _masterController->loadFromVehicle();
+    QVERIFY(_masterController->syncInProgress());
+    _disconnectMockLink();
+    QVERIFY(_masterController->offline());
+    QCOMPARE(_masterController->planVehicleId(), vehicleId);
+    QCOMPARE(_masterController->missionController()->visualItems()->count(), count);
+    QCOMPARE(changed.count(), 0);
+}
+
+void PlanMasterControllerTest::_testPlanVehicleIdFileLoad_data()
+{
+    QTest::addColumn<bool>("online");
+    QTest::newRow("offline") << false;
+    QTest::newRow("real target") << true;
+}
+
+void PlanMasterControllerTest::_testPlanVehicleIdFileLoad()
+{
+    QFETCH(bool, online);
+    quint32 targetId = 0;
+    if (online) {
+        _connectMockLink(MAV_AUTOPILOT_PX4);
+        QVERIFY(_vehicle);
+        QTRY_VERIFY_WITH_TIMEOUT(_vehicle->initialPlanRequestComplete(), TestTimeout::longMs());
+        targetId = _vehicle->id();
+    }
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    _masterController->loadFromFile(":/unittest/MissionPlanner.waypoints");
+    QCOMPARE(_masterController->planVehicleId(), targetId);
+    const QString planFile = directory.filePath(QStringLiteral("saved.plan"));
+    QVERIFY(_masterController->saveToFile(planFile));
+    QCOMPARE(_masterController->planVehicleId(), targetId);
+    QVERIFY(!_masterController->saveToJson().object().contains(QStringLiteral("planVehicleId")));
+    _masterController->removeAll();
+    QCOMPARE(_masterController->planVehicleId(), quint32(0));
+    _masterController->loadFromFile(planFile);
+    QCOMPARE(_masterController->planVehicleId(), targetId);
+    expectLogMessage("API.QGCApplication.AppMessage", QtDebugMsg,
+                     QRegularExpression(QStringLiteral("Error loading Plan file")));
+    _masterController->loadFromFile(directory.filePath(QStringLiteral("missing.plan")));
+    verifyExpectedLogMessage();
+    QCOMPARE(_masterController->planVehicleId(), targetId);
+
+    for (const QString& section : {QStringLiteral("geoFence"), QStringLiteral("rallyPoints")}) {
+        _masterController->loadFromFile(planFile);
+        QCOMPARE(_masterController->planVehicleId(), targetId);
+        QJsonObject json = _masterController->saveToJson().object();
+        QJsonObject mission = json[QStringLiteral("mission")].toObject();
+        mission[QStringLiteral("items")] = QJsonArray();
+        json[QStringLiteral("mission")] = mission;
+        json[section] = QJsonObject{{QStringLiteral("version"), -1}};
+        const QString brokenFile = directory.filePath(QStringLiteral("partial.plan"));
+        QFile file(brokenFile);
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        QVERIFY(file.write(QJsonDocument(json).toJson()) > 0);
+        file.close();
+        expectLogMessage("API.QGCApplication.AppMessage", QtDebugMsg,
+                         QRegularExpression(QStringLiteral("Error loading Plan file")));
+        _masterController->loadFromFile(brokenFile);
+        verifyExpectedLogMessage();
+        QCOMPARE(_masterController->missionController()->visualItems()->count(), 1);
+        QCOMPARE(_masterController->planVehicleId(), quint32(0));
+    }
+
+    for (const QString& filename : {QStringLiteral("invalid.waypoints"), QStringLiteral("invalid.plan")}) {
+        _masterController->loadFromFile(planFile);
+        QFile file(directory.filePath(filename));
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        QVERIFY(file.write("invalid contents") > 0);
+        file.close();
+        expectLogMessage("API.QGCApplication.AppMessage", QtDebugMsg,
+                         QRegularExpression(QStringLiteral("Error loading Plan file")));
+        _masterController->loadFromFile(file.fileName());
+        verifyExpectedLogMessage();
+        QCOMPARE(_masterController->planVehicleId(), quint32(0));
+    }
+}
+
+void PlanMasterControllerTest::_testPlanVehicleIdNewBuffer_data()
+{
+    QTest::addColumn<bool>("online");
+    QTest::addColumn<QString>("creation");
+    for (const bool online : {false, true}) {
+        for (const QString& creation : {QStringLiteral("waypoint"), QStringLiteral("fence"), QStringLiteral("rally"),
+                                        QStringLiteral("template")}) {
+            QTest::newRow(qPrintable(QStringLiteral("%1 %2").arg(online ? "online" : "offline", creation)))
+                << online << creation;
+        }
+    }
+}
+
+void PlanMasterControllerTest::_testPlanVehicleIdNewBuffer()
+{
+    QFETCH(bool, online);
+    QFETCH(QString, creation);
+    quint32 targetId = 0;
+    if (online) {
+        _connectMockLink(MAV_AUTOPILOT_PX4);
+        QVERIFY(_vehicle);
+        QTRY_VERIFY_WITH_TIMEOUT(_vehicle->initialPlanRequestComplete(), TestTimeout::longMs());
+        targetId = _vehicle->id();
+    }
+    _masterController->removeAll();
+    QCOMPARE(_masterController->planVehicleId(), quint32(0));
+    const QGeoCoordinate coordinate(47.3977, 8.5456);
+    if (creation == QStringLiteral("waypoint")) {
+        QVERIFY(_masterController->missionController()->insertSimpleMissionItem(coordinate, -1));
+    } else if (creation == QStringLiteral("fence")) {
+        _masterController->geoFenceController()->addInclusionCircle(coordinate,
+                                                                    coordinate.atDistanceAndAzimuth(100, 135));
+    } else if (creation == QStringLiteral("rally")) {
+        _masterController->rallyPointController()->addPoint(coordinate);
+    } else {
+        QmlObjectListModel* const creators = _masterController->planCreators();
+        QVERIFY(creators);
+        PlanCreator* creator = nullptr;
+        for (int i = 0; i < creators->count(); i++) {
+            creator = qobject_cast<SurveyPlanCreator*>(creators->get(i));
+            if (creator) {
+                break;
+            }
+        }
+        QVERIFY(creator);
+        creator->createPlan(coordinate);
+    }
+    QVERIFY(_masterController->containsItems());
+    QCOMPARE(_masterController->planVehicleId(), targetId);
+    _masterController->removeAll();
+    QCOMPARE(_masterController->planVehicleId(), quint32(0));
+}
+
+void PlanMasterControllerTest::_populatePlanForIdentityTransfer()
+{
+    _masterController->loadFromFile(":/unittest/MissionPlanner.waypoints");
+    QGeoCoordinate coordinate = _masterController->missionController()->plannedHomePosition();
+    coordinate.setAltitude(50);
+    _masterController->geoFenceController()->addInclusionCircle(coordinate, coordinate.atDistanceAndAzimuth(200, 135));
+    RallyPointController* const rally = _masterController->rallyPointController();
+    rally->points()->append(new RallyPoint(coordinate, QGroundControlQmlGlobal::AltitudeFrameRelative, rally));
+}
+
+void PlanMasterControllerTest::_testPlanVehicleIdFailedDownloadClearsAssociation_data()
+{
+    QTest::addColumn<int>("failureElement");
+    QTest::newRow("failed mission replacement clears association") << 0;
+    QTest::newRow("partial fence replacement clears association") << 1;
+    QTest::newRow("partial rally replacement clears association") << 2;
+}
+
+void PlanMasterControllerTest::_testPlanVehicleIdFailedDownloadClearsAssociation()
+{
+    QFETCH(int, failureElement);
+    _connectMockLink(MAV_AUTOPILOT_PX4);
+    QVERIFY(_vehicle);
+    QVERIFY(_mockLink);
+    QTRY_VERIFY_WITH_TIMEOUT(_vehicle->initialPlanRequestComplete(), TestTimeout::longMs());
+    _populatePlanForIdentityTransfer();
+    QSignalSpy sent(_vehicle->rallyPointManager(), &RallyPointManager::sendComplete);
+    _masterController->sendToVehicle();
+    QTRY_COMPARE_WITH_TIMEOUT(sent.count(), 1, TestTimeout::longMs());
+    QCOMPARE(_masterController->planVehicleId(), _vehicle->id());
+
+    {
+        QObject observer;
+        const QList<PlanManager*> managers = {_vehicle->missionManager(), _vehicle->geoFenceManager(),
+                                              _vehicle->rallyPointManager()};
+        for (int i = 0; i < managers.count(); i++) {
+            connect(
+                managers[i], &PlanManager::inProgressChanged, &observer, [this, failureElement, i](bool inProgress) {
+                    if (inProgress) {
+                        _mockLink->setMissionItemFailureMode(i == failureElement
+                                                                 ? MockLinkMissionItemHandler::FailReadRequest0ErrorAck
+                                                                 : MockLinkMissionItemHandler::FailNone,
+                                                             MAV_MISSION_ERROR);
+                    }
+                });
+        }
+        const QString errorPrefix = QStringList{QStringLiteral("Mission"), QStringLiteral("GeoFence"),
+                                                QStringLiteral("Rally Point")}[failureElement];
+        expectLogMessage("Vehicle.Vehicle", QtWarningMsg, QRegularExpression(errorPrefix + " transfer failed"));
+        expectLogMessage("API.QGCApplication.AppMessage", QtDebugMsg,
+                         QRegularExpression(errorPrefix + " transfer failed"));
+        QSignalSpy complete(_vehicle->rallyPointManager(), &RallyPointManager::loadComplete);
+        _masterController->loadFromVehicle();
+        QCOMPARE(_masterController->planVehicleId(), _vehicle->id());
+        QTRY_COMPARE_WITH_TIMEOUT(complete.count(), 1, TestTimeout::longMs());
+        verifyExpectedLogMessage();
+        verifyExpectedLogMessage();
+        QCOMPARE(_masterController->planVehicleId(), quint32(0));
+    }
+    _mockLink->setMissionItemFailureMode(MockLinkMissionItemHandler::FailNone, MAV_MISSION_ACCEPTED);
+    QSignalSpy recovered(_vehicle->rallyPointManager(), &RallyPointManager::loadComplete);
+    _masterController->loadFromVehicle();
+    QCOMPARE(_masterController->planVehicleId(), quint32(0));
+    QTRY_COMPARE_WITH_TIMEOUT(recovered.count(), 1, TestTimeout::longMs());
+    QCOMPARE(_masterController->planVehicleId(), _vehicle->id());
+}
+
+void PlanMasterControllerTest::_testPlanVehicleIdUpload_data()
+{
+    QTest::addColumn<int>("failureElement");
+    QTest::newRow("completed upload adopts target") << -1;
+    QTest::newRow("failed mission upload keeps source") << 0;
+    QTest::newRow("failed fence upload keeps source") << 1;
+    QTest::newRow("failed rally upload keeps source") << 2;
+}
+
+void PlanMasterControllerTest::_testPlanVehicleIdUpload()
+{
+    QFETCH(int, failureElement);
+    _connectMockLink(MAV_AUTOPILOT_PX4);
+    QVERIFY(_vehicle);
+    QTRY_VERIFY_WITH_TIMEOUT(_vehicle->initialPlanRequestComplete(), TestTimeout::longMs());
+    _populatePlanForIdentityTransfer();
+    const quint32 sourceId = _vehicle->id();
+    expectLogMessage("API.QGCApplication.AppMessage", QtDebugMsg,
+                     QRegularExpression(QStringLiteral("Connected to Vehicle [0-9]+")));
+    Vehicle* const target = _connectExtraVehicle();
+    verifyExpectedLogMessage();
+    QVERIFY(target);
+    QTRY_VERIFY_WITH_TIMEOUT(target->initialPlanRequestComplete(), TestTimeout::longMs());
+    _masterController->_activeVehicleChanged(target);
+    QCOMPARE(_masterController->planVehicleId(), sourceId);
+    MockLink* const link = _extraLinks.last();
+    QVERIFY(link);
+    QObject observer;
+    const QList<PlanManager*> managers = {target->missionManager(), target->geoFenceManager(),
+                                          target->rallyPointManager()};
+    for (int i = 0; i < managers.count(); i++) {
+        connect(managers[i], &PlanManager::inProgressChanged, &observer, [link, failureElement, i](bool inProgress) {
+            if (inProgress) {
+                link->setMissionItemFailureMode(i == failureElement
+                                                    ? MockLinkMissionItemHandler::FailWriteFinalAckErrorAck
+                                                    : MockLinkMissionItemHandler::FailNone,
+                                                MAV_MISSION_ERROR);
+            }
+        });
+    }
+    if (failureElement >= 0) {
+        const QString errorPrefix = QStringList{QStringLiteral("Mission"), QStringLiteral("GeoFence"),
+                                                QStringLiteral("Rally Point")}[failureElement];
+        expectLogMessage("Vehicle.Vehicle", QtWarningMsg, QRegularExpression(errorPrefix + " transfer failed"));
+        expectLogMessage("API.QGCApplication.AppMessage", QtDebugMsg,
+                         QRegularExpression(errorPrefix + " transfer failed"));
+    }
+    QSignalSpy changed(_masterController, &PlanMasterController::planVehicleIdChanged);
+    QSignalSpy complete(target->rallyPointManager(), &RallyPointManager::sendComplete);
+    _masterController->sendToVehicle();
+    QCOMPARE(_masterController->planVehicleId(), sourceId);
+    QTRY_COMPARE_WITH_TIMEOUT(complete.count(), 1, TestTimeout::longMs());
+    if (failureElement >= 0) {
+        verifyExpectedLogMessage();
+        verifyExpectedLogMessage();
+    }
+    QCOMPARE(_masterController->planVehicleId(), failureElement < 0 ? target->id() : sourceId);
+    QCOMPARE(changed.count(), failureElement < 0 ? 1 : 0);
+    QCOMPARE(MultiVehicleManager::instance()->activeVehicle(), _vehicle);
+}
+
+void PlanMasterControllerTest::_testPlanVehicleIdStaticVehicle()
+{
+    _connectMockLink(MAV_AUTOPILOT_PX4);
+    QVERIFY(_vehicle);
+    QTRY_VERIFY_WITH_TIMEOUT(_vehicle->initialPlanRequestComplete(), TestTimeout::longMs());
+    expectLogMessage("API.QGCApplication.AppMessage", QtDebugMsg,
+                     QRegularExpression(QStringLiteral("Connected to Vehicle [0-9]+")));
+    Vehicle* const target = _connectExtraVehicle(true);
+    verifyExpectedLogMessage();
+    QVERIFY(target);
+    QTRY_VERIFY_WITH_TIMEOUT(target->initialPlanRequestComplete(), TestTimeout::longMs());
+    PlanMasterController retained;
+    QSignalSpy changed(&retained, &PlanMasterController::planVehicleIdChanged);
+    retained.startStaticActiveVehicle(target);
+    QCOMPARE(retained.planVehicleId(), target->id());
+    QCOMPARE(retained.missionController()->visualItems()->count(), 4);
+    QCOMPARE(changed.count(), 1);
+    MultiVehicleManager::instance()->setActiveVehicle(target);
+    QTRY_COMPARE_WITH_TIMEOUT(MultiVehicleManager::instance()->activeVehicle(), target, TestTimeout::mediumMs());
+    MultiVehicleManager::instance()->setActiveVehicle(_vehicle);
+    QTRY_COMPARE_WITH_TIMEOUT(MultiVehicleManager::instance()->activeVehicle(), _vehicle, TestTimeout::mediumMs());
+    QCOMPARE(retained.planVehicleId(), target->id());
+    QCOMPARE(changed.count(), 1);
+    retained.removeAll();
+    QCOMPARE(retained.planVehicleId(), quint32(0));
+    retained.showPlanFromManagerVehicle();
+    QCOMPARE(retained.planVehicleId(), target->id());
+    QPointer<Vehicle> guardedTarget(target);
+    MockLink* const link = _extraLinks.last();
+    QVERIFY(link);
+    link->disconnect();
+    QTRY_VERIFY_WITH_TIMEOUT(guardedTarget.isNull(), TestTimeout::longMs());
+    QVERIFY(retained.offline());
+    QCOMPARE(retained.planVehicleId(), quint32(0));
 }
 
 #include "UnitTest.h"
