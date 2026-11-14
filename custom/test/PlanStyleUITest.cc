@@ -1,9 +1,11 @@
 #include "PlanStyleUITest.h"
 
 #include <memory>
+#include <vector>
 
 #include <QtCore/QDir>
 #include <QtCore/QMetaEnum>
+#include <QtCore/QMetaProperty>
 #include <QtCore/QRectF>
 #include <QtCore/QRegularExpression>
 #include <QtCore/QSet>
@@ -1462,8 +1464,50 @@ void PlanStyleUITest::_liveBoundaryVisuals()
     }
     check(entry->color());
     QVERIFY(!QTest::currentTestFailed());
-    QVERIFY(root->setProperty("zoomLevel", 17));
-    QVERIFY(root->setProperty("width", 800));
+    {
+        const auto boundaryOutlines =
+            named(QStringLiteral("planKeepInOutline")) + named(QStringLiteral("planKeepOutOutline"));
+        QCOMPARE(boundaryOutlines.size(), 5);
+        const auto projectionsSettled = [&] {
+            for (auto* outline : boundaryOutlines) {
+                if (outline->property("_projectionPending").toBool()) {
+                    return false;
+                }
+            }
+            return true;
+        };
+        QTRY_VERIFY_WITH_TIMEOUT(projectionsSettled(), TestTimeout::shortMs());
+        std::vector<std::unique_ptr<QSignalSpy>> projectionSpies;
+        for (auto* outline : boundaryOutlines) {
+            projectionSpies.push_back(std::make_unique<QSignalSpy>(outline, SIGNAL(_screenPointsChanged())));
+            QVERIFY(projectionSpies.back()->isValid());
+        }
+        QSignalSpy zoomChanges(map, QQmlProperty(map, QStringLiteral("zoomLevel")).property().notifySignal());
+        QSignalSpy widthChanges(map, &QQuickItem::widthChanged);
+        QSignalSpy heightChanges(map, &QQuickItem::heightChanged);
+        QVERIFY(zoomChanges.isValid());
+        QVERIFY(widthChanges.isValid());
+        QVERIFY(heightChanges.isValid());
+        QCOMPARE(map->property("zoomLevel").toReal(), 16.0);
+        QCOMPARE(map->width(), 640.0);
+        QCOMPARE(map->height(), 480.0);
+        // Unlike vertex drags, these independent inputs are not coalesced by the boundary models.
+        QVERIFY(root->setProperty("zoomLevel", 17));
+        QVERIFY(root->setProperty("width", 800));
+        QVERIFY(root->setProperty("height", 600));
+        QCOMPARE(map->property("zoomLevel").toReal(), 17.0);
+        QCOMPARE(map->width(), 800.0);
+        QCOMPARE(map->height(), 600.0);
+        QCOMPARE(zoomChanges.count(), 1);
+        QCOMPARE(widthChanges.count(), 1);
+        QCOMPARE(heightChanges.count(), 1);
+        check(entry->color());
+        QVERIFY(!QTest::currentTestFailed());
+        QTRY_VERIFY_WITH_TIMEOUT(projectionsSettled(), TestTimeout::shortMs());
+        for (const auto& spy : projectionSpies) {
+            QCOMPARE(spy->count(), 1);
+        }
+    }
     QVERIFY(root->setProperty("center", QVariant::fromValue(base.atDistanceAndAzimuth(100, 90))));
     check(entry->color());
     QVERIFY(!QTest::currentTestFailed());
