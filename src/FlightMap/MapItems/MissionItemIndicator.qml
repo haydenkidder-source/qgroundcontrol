@@ -71,6 +71,6 @@ MapQuickItem {
             highlightSelected:  true
             enabled:            _item.interactive
             onClicked:          _item.activate()
-            opacity:            _item.opacity
+            opacity:            _item.planStyle && _item.planStyle.enabled ? 1 : _item.opacity
         }
 }
