@@ -15,8 +15,38 @@ MapQuickItem {
     property real lineWidth: 3
     required property var dashPattern
 
+    property alias renderedStrokeColor: dashedLine.renderedStrokeColor
+    property alias renderedStrokeWidth: dashedLine.renderedStrokeWidth
+    property alias renderedDashPattern: dashedLine.renderedDashPattern
+    property alias renderedStrokeStyle: dashedLine.renderedStrokeStyle
+    property bool coalesceProjection: false   ///< Editable boundaries opt in; other users retain synchronous projection
+    property bool _projectionPending: false
     property var _screenPoints: []
     property size _extent: Qt.size(0, 0)
+
+    function circleVertices(center, radius) {
+        const ring = []
+        if (center && center.isValid && radius > 0 && Number.isFinite(radius)) {
+            for (let i = 0; i < 120; ++i) {
+                ring.push(center.atDistanceAndAzimuth(radius, i * 3))
+            }
+        }
+        return ring
+    }
+
+    function _scheduleProjection() {
+        if (!coalesceProjection) {
+            _project()
+        } else if (!_projectionPending) {
+            _projectionPending = true
+            Qt.callLater(_flushProjection)
+        }
+    }
+
+    function _flushProjection() {
+        _projectionPending = false
+        _project()
+    }
 
     // Qt's dash stroker drops dashes outside the Shape's own bounds, so the points are shifted to lie within them and
     // the anchor point moves the Shape back over the first vertex.
@@ -54,21 +84,22 @@ MapQuickItem {
 
     coordinate: vertices.length > 0 ? vertices[0] : QtPositioning.coordinate()
 
-    onVerticesChanged: _project()
-    onMapControlChanged: _project()
+    onVerticesChanged: _scheduleProjection()
+    onMapControlChanged: _scheduleProjection()
 
-    Component.onCompleted: _project()
+    Component.onCompleted: _scheduleProjection()
 
     Connections {
         target: root.mapControl
 
-        function onMapReadyChanged() { root._project() }
-        function onZoomLevelChanged() { root._project() }
-        function onWidthChanged() { root._project() }
-        function onHeightChanged() { root._project() }
+        function onMapReadyChanged() { root._scheduleProjection() }
+        function onZoomLevelChanged() { root._scheduleProjection() }
+        function onWidthChanged() { root._scheduleProjection() }
+        function onHeightChanged() { root._scheduleProjection() }
     }
 
     sourceItem: MapDashedLine {
+        id: dashedLine
         width: root._extent.width
         height: root._extent.height
         color: root.lineColor

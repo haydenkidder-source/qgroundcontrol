@@ -3,10 +3,13 @@
 #include <memory>
 
 #include <QtCore/QDir>
+#include <QtCore/QMetaEnum>
+#include <QtCore/QRectF>
 #include <QtCore/QRegularExpression>
 #include <QtCore/QSet>
 #include <QtCore/QSettings>
 #include <QtCore/QTimer>
+#include <QtGui/QImage>
 #include <QtQml/QQmlApplicationEngine>
 #include <QtQml/QQmlComponent>
 #include <QtQml/QQmlContext>
@@ -20,15 +23,23 @@
 #include "FirmwarePlugin.h"
 #include "FixedWingLandingComplexItem.h"
 #include "FlightPathSegment.h"
+#include "GeoFenceController.h"
+#include "GeoFenceManager.h"
 #include "LinkManager.h"
 #include "MissionController.h"
 #include "MissionItem.h"
 #include "MissionManager.h"
 #include "MissionSettingsItem.h"
 #include "MultiVehicleManager.h"
+#include "ParameterManager.h"
 #include "PlanMasterController.h"
 #include "QGCCorePlugin.h"
+#include "QGCFenceCircle.h"
+#include "QGCFencePolygon.h"
 #include "QGCPlanStyle.h"
+#include "RallyPoint.h"
+#include "RallyPointController.h"
+#include "RallyPointManager.h"
 #include "SettingsManager.h"
 #include "SimpleMissionItem.h"
 #include "TakeoffMissionItem.h"
@@ -36,6 +47,22 @@
 #include "VehicleRoleController.h"
 
 namespace {
+void planStyleWarmUpScreenTools(QQmlApplicationEngine* engine)
+{
+    // Match main-window singleton initialization so the stock GCS image's height binding cannot re-enter itself.
+    QQmlComponent component(engine);
+    component.setData(R"(
+        import QtQuick
+        import QGroundControl.Controls
+        Item { property real h: ScreenTools.defaultFontPixelHeight }
+    )",
+                      QUrl());
+    QTRY_VERIFY_WITH_TIMEOUT(component.status() != QQmlComponent::Loading, TestTimeout::shortMs());
+    QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+    std::unique_ptr<QObject> root(component.create());
+    QVERIFY2(root, qPrintable(component.errorString()));
+}
+
 QList<QQuickItem*> planStyleItems(QQuickItem* root, const QString& name)
 {
     QList<QQuickItem*> result;
@@ -87,6 +114,219 @@ QColor planStyleColor(QObject* object, const QString& property)
 QQuickItem* planStyleSource(QQuickItem* item)
 {
     return item ? qvariant_cast<QQuickItem*>(item->property("sourceItem")) : nullptr;
+}
+
+bool planStyleRenderMap(QQuickItem* map)
+{
+    auto* window = map->window();
+    return window && window->isExposed() && !window->grabWindow().isNull();
+}
+
+bool planStyleProjectedPosition(QQuickItem* map, const QGeoCoordinate& coordinate, const QPointF& scenePosition)
+{
+    QPointF projected;
+    return coordinate.isValid() &&
+           QMetaObject::invokeMethod(map, "fromCoordinate", Q_RETURN_ARG(QPointF, projected),
+                                     Q_ARG(QGeoCoordinate, coordinate), Q_ARG(bool, false)) &&
+           (scenePosition - map->mapToScene(projected)).manhattanLength() < 1;
+}
+
+bool planStyleMapItemProjected(QQuickItem* map, QQuickItem* item)
+{
+    auto* source = planStyleSource(item);
+    return source && source->window() == map->window() &&
+           planStyleProjectedPosition(map, item->property("coordinate").value<QGeoCoordinate>(),
+                                      source->mapToScene(item->property("anchorPoint").toPointF()));
+}
+
+void planStyleCheckBoundaries(QQuickItem* map, quint32 vehicleId, const QColor& color, int polygonCount,
+                              int circleCount)
+{
+    const auto fills = planStyleItems(map, QStringLiteral("planFenceFill"));
+    const auto keepIn = planStyleItems(map, QStringLiteral("planKeepInOutline"));
+    const auto keepOut = planStyleItems(map, QStringLiteral("planKeepOutOutline"));
+    QCOMPARE(fills.size(), polygonCount + circleCount + 1);
+    QCOMPARE(keepIn.size() + keepOut.size(), fills.size());
+    QSet<QQuickItem*> matched;
+    int polygons = 0;
+    int circles = 0;
+    int parameterCircles = 0;
+    for (auto* fill : fills) {
+        QCOMPARE(fill->property("vehicleId").toUInt(), vehicleId);
+        const auto kind = fill->property("boundaryKind").toString();
+        const bool inclusion = fill->property("inclusion").toBool();
+        const auto outlines = inclusion ? keepIn : keepOut;
+        QQuickItem* outline = nullptr;
+        for (auto* candidate : outlines) {
+            if (matched.contains(candidate) || candidate->property("boundaryKind").toString() != kind) {
+                continue;
+            }
+            if (kind == QStringLiteral("polygon")) {
+                if (candidate->property("vertices").toList() != fill->property("path").toList()) {
+                    continue;
+                }
+            } else {
+                const auto vertices = candidate->property("vertices").toList();
+                const auto center = fill->property("center").value<QGeoCoordinate>();
+                const double radius = fill->property("radius").toDouble();
+                if (center.isValid() && radius > 0 &&
+                    (vertices.size() != 120 || vertices.first().value<QGeoCoordinate>().distanceTo(
+                                                   center.atDistanceAndAzimuth(radius, 0)) > 0.01)) {
+                    continue;
+                }
+            }
+            outline = candidate;
+            break;
+        }
+        QVERIFY(outline);
+        matched.insert(outline);
+        QTRY_VERIFY_WITH_TIMEOUT(!outline->property("_projectionPending").toBool(), TestTimeout::shortMs());
+        QCOMPARE(outline->property("vehicleId").toUInt(), vehicleId);
+        QCOMPARE(outline->property("lineColor").value<QColor>(), color);
+        QCOMPARE(outline->property("renderedStrokeColor").value<QColor>(), color);
+        QCOMPARE(outline->property("lineWidth").toReal(), 3.0);
+        QCOMPARE(outline->property("renderedStrokeWidth").toReal(), 3.0);
+        const QVariantList dashes = inclusion ? QVariantList{6.0, 3.0} : QVariantList{2.0, 2.0};
+        QCOMPARE(outline->property("dashPattern").toList(), dashes);
+        QCOMPARE(outline->property("renderedDashPattern").toList(), dashes);
+        auto* shape = planStyleSource(outline);
+        QVERIFY(shape);
+        QObject* stroke = nullptr;
+        for (auto* child : shape->findChildren<QObject*>()) {
+            if (child->metaObject()->indexOfProperty("strokeStyle") >= 0) {
+                stroke = child;
+                break;
+            }
+        }
+        QVERIFY(stroke);
+        const auto styleEnum = stroke->metaObject()->enumerator(stroke->metaObject()->indexOfEnumerator("StrokeStyle"));
+        QVERIFY(styleEnum.isValid());
+        QCOMPARE(stroke->property("strokeStyle").toInt(), styleEnum.keyToValue("DashLine"));
+        QCOMPARE(outline->property("renderedStrokeStyle").toInt(), stroke->property("strokeStyle").toInt());
+        QCOMPARE(stroke->property("strokeColor").value<QColor>(), color);
+        QCOMPARE(stroke->property("strokeWidth").toReal(), 3.0);
+        QCOMPARE(stroke->property("dashPattern").toList(), dashes);
+        QCOMPARE(QQmlProperty(fill, QStringLiteral("border.width")).read().toReal(), 0.0);
+        const auto fillColor = fill->property("color").value<QColor>();
+        if (inclusion) {
+            QCOMPARE(fillColor.alpha(), 0);
+        } else {
+            QCOMPARE(fillColor.red(), 229);
+            QCOMPARE(fillColor.green(), 57);
+            QCOMPARE(fillColor.blue(), 53);
+            QVERIFY(qAbs(fillColor.alphaF() - 0.35) < 0.005);
+        }
+        QCOMPARE(fill->opacity(), outline->opacity());
+        QVERIFY(outline->z() > fill->z());
+        QVERIFY(outline->z() < 47);
+        QVERIFY(outline->z() < 51);
+        for (auto* route : planStyleItems(map, QStringLiteral("planMissionRoute"))) {
+            QVERIFY(outline->z() < route->z());
+        }
+        QCOMPARE(outline->acceptedMouseButtons(), Qt::NoButton);
+        QCOMPARE(shape->acceptedMouseButtons(), Qt::NoButton);
+        if (kind == QStringLiteral("polygon")) {
+            ++polygons;
+        } else if (kind == QStringLiteral("circle")) {
+            ++circles;
+        } else {
+            QCOMPARE(kind, QStringLiteral("parameterCircle"));
+            ++parameterCircles;
+        }
+        const auto vertices = outline->property("vertices").toList();
+        if (vertices.isEmpty()) {
+            QVERIFY(!outline->isVisible());
+            continue;
+        }
+        const auto projected = [&] { return outline->property("_screenPoints").toList(); };
+        // MapQuickItem placement is polished by the whole map's render pass, not by its source alone.
+        QTRY_VERIFY_WITH_TIMEOUT(planStyleRenderMap(map) && !outline->property("_projectionPending").toBool() &&
+                                     planStyleMapItemProjected(map, outline),
+                                 TestTimeout::shortMs());
+        QTRY_COMPARE_WITH_TIMEOUT(projected().size(), vertices.size() + 1, TestTimeout::shortMs());
+        QTRY_COMPARE_WITH_TIMEOUT(shape->property("points").toList(), projected(), TestTimeout::shortMs());
+        const QPointF anchor = outline->property("anchorPoint").toPointF();
+        QCOMPARE(outline->property("coordinate").value<QGeoCoordinate>(), vertices.first().value<QGeoCoordinate>());
+        QCOMPARE(projected().first().toPointF(), anchor);
+        QCOMPARE(projected().last().toPointF(), anchor);
+        QPointF origin;
+        QVERIFY(QMetaObject::invokeMethod(map, "fromCoordinate", Q_RETURN_ARG(QPointF, origin),
+                                          Q_ARG(QGeoCoordinate, vertices.first().value<QGeoCoordinate>()),
+                                          Q_ARG(bool, false)));
+        const auto expectedScene = map->mapToScene(origin);
+        QTRY_VERIFY_WITH_TIMEOUT((shape->mapToScene(anchor) - expectedScene).manhattanLength() < 1,
+                                 TestTimeout::shortMs());
+        const QRectF bounds(0, 0, shape->width(), shape->height());
+        for (const auto& point : projected()) {
+            QVERIFY(bounds.contains(point.toPointF()));
+        }
+        for (int i = 0; i < vertices.size(); ++i) {
+            QPointF position;
+            const auto vertex = vertices[i].value<QGeoCoordinate>();
+            QVERIFY(QMetaObject::invokeMethod(map, "fromCoordinate", Q_RETURN_ARG(QPointF, position),
+                                              Q_ARG(QGeoCoordinate, vertex), Q_ARG(bool, false)));
+            QTRY_VERIFY_WITH_TIMEOUT((projected()[i].toPointF() - anchor - position + origin).manhattanLength() < 0.05,
+                                     TestTimeout::shortMs());
+            if (kind != QStringLiteral("polygon")) {
+                const auto center = fill->property("center").value<QGeoCoordinate>();
+                const double radius = fill->property("radius").toDouble();
+                QVERIFY(vertex.distanceTo(center.atDistanceAndAzimuth(radius, i * 3)) < 0.01);
+            }
+        }
+    }
+    QCOMPARE(polygons, polygonCount);
+    QCOMPARE(circles, circleCount);
+    QCOMPARE(parameterCircles, 1);
+}
+
+void planStyleCheckRally(QQuickItem* map, QQuickItem* marker, quint32 vehicleId, const QColor& color)
+{
+    QVERIFY(marker);
+    // Render before reading source geometry; offscreen Fly markers need not be pointer targets.
+    QTRY_VERIFY_WITH_TIMEOUT(planStyleRenderMap(map), TestTimeout::shortMs());
+    QCOMPARE(marker->property("vehicleId").toUInt(), vehicleId);
+    QCOMPARE(marker->property("markerShape").toString(), QStringLiteral("diamond"));
+    QCOMPARE(marker->property("markerColor").value<QColor>(), color);
+    QCOMPARE(marker->property("markerBorderColor").value<QColor>(), QColor(QStringLiteral("white")));
+    QCOMPARE(marker->property("markerBorderWidth").toReal(), 2.0);
+    QCOMPARE(marker->property("label").toString(), QStringLiteral("R"));
+    auto* loader = planStyleSource(marker);
+    QVERIFY(loader);
+    auto* source = qvariant_cast<QQuickItem*>(loader->property("item"));
+    QVERIFY(source);
+    QCOMPARE(source->property("anchorPointX").toReal(), source->width() / 2);
+    QCOMPARE(source->property("anchorPointY").toReal(), source->height() / 2);
+    QCOMPARE(loader->property("anchorPointX").toReal(), source->property("anchorPointX").toReal());
+    QCOMPARE(loader->property("anchorPointY").toReal(), source->property("anchorPointY").toReal());
+    QQuickItem* diamond = nullptr;
+    QQuickItem* text = nullptr;
+    for (auto* child : source->childItems()) {
+        if (child->rotation() == 45) {
+            diamond = child;
+        }
+        if (child->property("text").toString() == QStringLiteral("R")) {
+            text = child;
+        }
+    }
+    QVERIFY(diamond && text);
+    QCOMPARE(diamond->width(), source->width() * 0.72);
+    QCOMPARE(diamond->height(), diamond->width());
+    QCOMPARE(diamond->property("radius").toReal(), 0.0);
+    QCOMPARE(diamond->property("color").value<QColor>(), color);
+    QCOMPARE(planStyleColor(diamond, QStringLiteral("border.color")), QColor(QStringLiteral("white")));
+    QCOMPARE(QQmlProperty(diamond, QStringLiteral("border.width")).read().toReal(), 2.0);
+    QCOMPARE(text->rotation(), 0.0);
+    QCOMPARE(source->rotation(), 0.0);
+    QCOMPARE(loader->rotation(), 0.0);
+    QCOMPARE(marker->rotation(), 0.0);
+    QCOMPARE(text->property("color").value<QColor>(), QColor(QStringLiteral("black")));
+    QVERIFY(QQmlProperty(text, QStringLiteral("font.bold")).read().toBool());
+    const auto halos = planStyleItems(marker, QStringLiteral("planRallySelectionHalo"));
+    QCOMPARE(halos.size(), 1);
+    QCOMPARE(halos.first()->isVisible(), marker->property("checked").toBool());
+    QVERIFY(halos.first()->width() > source->width());
+    QVERIFY(QQmlProperty(halos.first(), QStringLiteral("border.width")).read().toReal() > 0);
+    QVERIFY(planStyleColor(halos.first(), QStringLiteral("border.color")).alpha() > 0);
 }
 }  // namespace
 
@@ -233,6 +473,51 @@ void PlanStyleUITest::_flyPlans()
         QTRY_VERIFY_WITH_TIMEOUT(sent.count() >= 1, TestTimeout::longMs());
         QVERIFY(!sent.first().first().toBool());
         QTRY_VERIFY_WITH_TIMEOUT(!vehicle->missionManager()->inProgress(), TestTimeout::longMs());
+        QmlObjectListModel polygons;
+        QmlObjectListModel circles;
+        for (bool inclusion : {true, false}) {
+            auto* polygon = new QGCFencePolygon(inclusion);
+            for (double azimuth : {0.0, 120.0, 240.0}) {
+                polygon->appendVertex(vehicle->homePosition().atDistanceAndAzimuth(
+                    inclusion ? 400 + count * 10 : 70 + count * 10, azimuth));
+            }
+            polygons.append(polygon);
+            circles.append(
+                new QGCFenceCircle(vehicle->homePosition().atDistanceAndAzimuth(count * 50, inclusion ? 90 : 180),
+                                   inclusion ? 90 : 30, inclusion));
+        }
+        QSignalSpy fenceSent(vehicle->geoFenceManager(), &GeoFenceManager::sendComplete);
+        QVERIFY(fenceSent.isValid());
+        vehicle->geoFenceManager()->sendToVehicle(vehicle->homePosition(), polygons, circles);
+        polygons.clearAndDeleteContents();
+        circles.clearAndDeleteContents();
+        QTRY_VERIFY_WITH_TIMEOUT(!fenceSent.isEmpty(), TestTimeout::longMs());
+        QVERIFY(!fenceSent.first().first().toBool());
+        QTRY_VERIFY_WITH_TIMEOUT(!vehicle->geoFenceManager()->inProgress(), TestTimeout::longMs());
+        QList<RallyPointData> rallyPoints;
+        for (int i = 0; i < count - 1; ++i) {
+            auto coordinate = vehicle->homePosition().atDistanceAndAzimuth(100 + i * 60, count == 4 ? 45 : 225);
+            coordinate.setAltitude(80 + i * 10);
+            rallyPoints.append({coordinate, MAV_FRAME_GLOBAL_RELATIVE_ALT});
+        }
+        QSignalSpy rallySent(vehicle->rallyPointManager(), &RallyPointManager::sendComplete);
+        QVERIFY(rallySent.isValid());
+        vehicle->rallyPointManager()->sendToVehicle(rallyPoints);
+        QTRY_VERIFY_WITH_TIMEOUT(!rallySent.isEmpty(), TestTimeout::longMs());
+        QVERIFY(!rallySent.first().first().toBool());
+        QTRY_VERIFY_WITH_TIMEOUT(!vehicle->rallyPointManager()->inProgress(), TestTimeout::longMs());
+        auto* parameters = vehicle->parameterManager();
+        QVERIFY(parameters);
+        if (parameters->parameterExists(ParameterManager::defaultComponentId, QStringLiteral("FENCE_RADIUS")) &&
+            parameters->parameterExists(ParameterManager::defaultComponentId, QStringLiteral("FENCE_TYPE")) &&
+            parameters->parameterExists(ParameterManager::defaultComponentId, QStringLiteral("FENCE_ENABLE"))) {
+            parameters->getParameter(ParameterManager::defaultComponentId, QStringLiteral("FENCE_RADIUS"))
+                ->setRawValue(500 + count);
+            parameters->getParameter(ParameterManager::defaultComponentId, QStringLiteral("FENCE_TYPE"))
+                ->setRawValue(2);
+            parameters->getParameter(ParameterManager::defaultComponentId, QStringLiteral("FENCE_ENABLE"))
+                ->setRawValue(1);
+        }
     }
     QVERIFY(_entryFor(vehicles[0]->id())->color() != _entryFor(vehicles[1]->id())->color());
     const auto loaders = [this] { return planStyleItems(_rootItem, QStringLiteral("flyViewVehiclePlan")); };
@@ -276,6 +561,14 @@ void PlanStyleUITest::_flyPlans()
         QTRY_VERIFY_WITH_TIMEOUT(!vehicles[v]->missionManager()->inProgress(), TestTimeout::longMs());
         downloads[v] = _links[v]->receivedMissionRequestListCount(MAV_MISSION_TYPE_MISSION);
     }
+    QPointer<PlanMasterController> retainedFenceMaster;
+    QPointer<QmlObjectListModel> retainedFencePolygons;
+    QPointer<QmlObjectListModel> retainedFenceCircles;
+    QPointer<QmlObjectListModel> retainedRallyPoints;
+    const QList<int> fenceDownloads{first->receivedMissionRequestListCount(MAV_MISSION_TYPE_FENCE),
+                                    second->receivedMissionRequestListCount(MAV_MISSION_TYPE_FENCE)};
+    const QList<int> rallyDownloads{first->receivedMissionRequestListCount(MAV_MISSION_TYPE_RALLY),
+                                    second->receivedMissionRequestListCount(MAV_MISSION_TYPE_RALLY)};
     for (int v : {0, 1, 0}) {
         auto* vehicle = vehicles[v];
         auto* entry = _entryFor(vehicle->id());
@@ -309,6 +602,104 @@ void PlanStyleUITest::_flyPlans()
         QTRY_COMPARE_WITH_TIMEOUT(routes().size(), segmentModels[v]->count(), TestTimeout::longMs());
         QTRY_COMPARE_WITH_TIMEOUT(markers().size(), uploaded[v].size() - 1, TestTimeout::longMs());
         QTRY_COMPARE_WITH_TIMEOUT(homes().size(), 1, TestTimeout::longMs());
+        auto* fenceMaster = qvariant_cast<PlanMasterController*>(map->property("_planMasterController"));
+        QVERIFY(fenceMaster);
+        QCOMPARE(fenceMaster->managerVehicle(), vehicle);
+        if (!retainedFenceMaster) {
+            retainedFenceMaster = fenceMaster;
+            retainedFencePolygons = fenceMaster->geoFenceController()->polygons();
+            retainedFenceCircles = fenceMaster->geoFenceController()->circles();
+            retainedRallyPoints = fenceMaster->rallyPointController()->points();
+        }
+        QCOMPARE(fenceMaster, retainedFenceMaster.data());
+        QCOMPARE(fenceMaster->geoFenceController()->polygons(), retainedFencePolygons.data());
+        QCOMPARE(fenceMaster->geoFenceController()->circles(), retainedFenceCircles.data());
+        QCOMPARE(fenceMaster->rallyPointController()->points(), retainedRallyPoints.data());
+        const auto fenceContexts = map->findChildren<QObject*>(QStringLiteral("flyFencePlanStyleContext"));
+        QCOMPARE(fenceContexts.size(), 1);
+        QCOMPARE(fenceContexts.first()->property("vehicleId").toUInt(), vehicle->id());
+        for (int retained = 0; retained < 2; ++retained) {
+            QCOMPARE(_links[retained]->receivedMissionRequestListCount(MAV_MISSION_TYPE_FENCE),
+                     fenceDownloads[retained]);
+            QCOMPARE(_links[retained]->receivedMissionRequestListCount(MAV_MISSION_TYPE_RALLY),
+                     rallyDownloads[retained]);
+        }
+
+        QTRY_COMPARE_WITH_TIMEOUT(fenceMaster->geoFenceController()->polygons()->count(), 2, TestTimeout::longMs());
+        QTRY_COMPARE_WITH_TIMEOUT(fenceMaster->geoFenceController()->circles()->count(), 2, TestTimeout::longMs());
+        QTRY_COMPARE_WITH_TIMEOUT(fenceMaster->rallyPointController()->points()->count(), uploaded[v].size() - 1,
+                                  TestTimeout::longMs());
+        QCOMPARE(vehicle->geoFenceManager()->polygons().size(), 2);
+        QCOMPARE(vehicle->geoFenceManager()->circles().size(), 2);
+        QTRY_VERIFY_WITH_TIMEOUT(
+            fenceMaster->geoFenceController()->polygons()->count() == 2 &&
+                fenceMaster->geoFenceController()->circles()->count() == 2 &&
+                fenceMaster->geoFenceController()->polygons()->value<QGCFencePolygon*>(0)->path() ==
+                    vehicle->geoFenceManager()->polygons()[0].path() &&
+                fenceMaster->geoFenceController()->circles()->value<QGCFenceCircle*>(0)->center() ==
+                    vehicle->geoFenceManager()->circles()[0].center(),
+            TestTimeout::longMs());
+        for (int i = 0; i < 2; ++i) {
+            auto* polygon = fenceMaster->geoFenceController()->polygons()->value<QGCFencePolygon*>(i);
+            auto* circle = fenceMaster->geoFenceController()->circles()->value<QGCFenceCircle*>(i);
+            QVERIFY(polygon && circle);
+            QCOMPARE(polygon->path(), vehicle->geoFenceManager()->polygons()[i].path());
+            QCOMPARE(polygon->inclusion(), vehicle->geoFenceManager()->polygons()[i].inclusion());
+            QCOMPARE(circle->center(), vehicle->geoFenceManager()->circles()[i].center());
+            QGCFenceCircle uploadedCircle(vehicle->geoFenceManager()->circles()[i]);
+            QCOMPARE(circle->radius()->rawValue(), uploadedCircle.radius()->rawValue());
+        }
+        const auto fenceFills = [&] { return planStyleItems(map, QStringLiteral("planFenceFill")); };
+        QTRY_COMPARE_WITH_TIMEOUT(fenceFills().size(), 5, TestTimeout::longMs());
+        QTRY_COMPARE_WITH_TIMEOUT(planStyleItems(map, QStringLiteral("planKeepInOutline")).size(), 3,
+                                  TestTimeout::longMs());
+        QTRY_COMPARE_WITH_TIMEOUT(planStyleItems(map, QStringLiteral("planKeepOutOutline")).size(), 2,
+                                  TestTimeout::longMs());
+        planStyleCheckBoundaries(map, vehicle->id(), expected, 2, 2);
+        QVERIFY(!QTest::currentTestFailed());
+        for (auto* fill : fenceFills()) {
+            QCOMPARE(fill->opacity(), 1.0);
+            if (fill->property("boundaryKind").toString() == QStringLiteral("polygon")) {
+                bool found = false;
+                for (int i = 0; i < 2; ++i) {
+                    const auto* polygon = fenceMaster->geoFenceController()->polygons()->value<QGCFencePolygon*>(i);
+                    found |= fill->property("path").toList() == polygon->path();
+                }
+                QVERIFY(found);
+            }
+        }
+        const auto rallies = [&] { return planStyleItems(map, QStringLiteral("planRallyPoint")); };
+        QTRY_COMPARE_WITH_TIMEOUT(rallies().size(), uploaded[v].size() - 1, TestTimeout::longMs());
+        auto* rallyController = fenceMaster->rallyPointController();
+        const auto vehicleRallies = vehicle->rallyPointManager()->points();
+        QCOMPARE(vehicleRallies.size(), rallyController->points()->count());
+        for (int i = 0; i < vehicleRallies.size(); ++i) {
+            QTRY_COMPARE_WITH_TIMEOUT(rallyController->points()->value<RallyPoint*>(i)->coordinate(),
+                                      vehicleRallies[i].coordinate, TestTimeout::longMs());
+        }
+        rallyController->setCurrentRallyPoint(rallyController->points()->get(1));
+        int selectedRallies = 0;
+        for (auto* marker : rallies()) {
+            planStyleCheckRally(map, marker, vehicle->id(), expected);
+            QVERIFY(!QTest::currentTestFailed());
+            const auto coordinate = marker->property("coordinate").value<QGeoCoordinate>();
+            bool found = false;
+            for (int i = 0; i < rallyController->points()->count(); ++i) {
+                found |= coordinate == rallyController->points()->value<RallyPoint*>(i)->coordinate();
+            }
+            QVERIFY(found);
+            selectedRallies += marker->property("checked").toBool() ? 1 : 0;
+        }
+        QCOMPARE(selectedRallies, 1);
+        const auto breach = planStyleItems(map, QStringLiteral("planBreachReturnPoint"));
+        QCOMPARE(breach.size(), 1);
+        QCOMPARE(breach.first()->property("vehicleId").toUInt(), vehicle->id());
+        QCOMPARE(breach.first()->property("label").toString(), QStringLiteral("B"));
+        QCOMPARE(breach.first()->property("markerColor").value<QColor>(), expected);
+        QCOMPARE(breach.first()->property("markerBorderColor").value<QColor>(), QColor(QStringLiteral("white")));
+        QCOMPARE(breach.first()->property("markerBorderWidth").toReal(), 2.0);
+        QCOMPARE(breach.first()->property("markerTextColor").value<QColor>(), QColor(QStringLiteral("black")));
+
         // Browsing a different tab does not change the owner of the active vehicle's retained plan.
         const auto firstRoute = QPointer<QQuickItem>(routes().first());
         auto* browsedEntry = _entryFor(vehicles[1 - v]->id());
@@ -322,6 +713,15 @@ void PlanStyleUITest::_flyPlans()
         QCOMPARE(contexts.first()->property("vehicleId").toUInt(), vehicle->id());
         QTRY_COMPARE_WITH_TIMEOUT(planStyleColor(firstRoute, QStringLiteral("line.color")), expected,
                                   TestTimeout::shortMs());
+        for (auto* outline : planStyleItems(map, QStringLiteral("planKeepInOutline")) +
+                                 planStyleItems(map, QStringLiteral("planKeepOutOutline"))) {
+            QCOMPARE(outline->property("vehicleId").toUInt(), vehicle->id());
+            QCOMPARE(outline->property("renderedStrokeColor").value<QColor>(), expected);
+        }
+        for (auto* marker : rallies()) {
+            QCOMPARE(marker->property("markerColor").value<QColor>(), expected);
+            QCOMPARE(marker->property("vehicleId").toUInt(), vehicle->id());
+        }
         QVERIFY(_entryFor(vehicle->id()) == entry);
         controller->selectVehicle(vehicle->id());
         QCOMPARE(controller->selected(), entry);
@@ -406,7 +806,7 @@ void PlanStyleUITest::_flyPlans()
         QCOMPARE(accents.size(), 1);
         QVERIFY(accents.first()->isVisible());
         QCOMPARE(planStyleColor(accents.first(), QStringLiteral("border.color")), expected);
-        QCOMPARE(accents.first()->property("color").value<QColor>(), QColor(Qt::transparent));
+        QCOMPARE(accents.first()->property("color").value<QColor>(), QColor(QStringLiteral("transparent")));
         QCOMPARE(home->property("renderedBorderColor").value<QColor>(), expected);
         auto* tracker = qvariant_cast<QObject*>(map->property("positionTracker"));
         QVERIFY(tracker);
@@ -487,8 +887,8 @@ void PlanStyleUITest::_flyPlans()
             return nullptr;
         };
         QVERIFY(collided());
-        QTRY_COMPARE_WITH_TIMEOUT(planStyleColor(collided(), QStringLiteral("line.color")), QColor(Qt::red),
-                                  TestTimeout::shortMs());
+        QTRY_COMPARE_WITH_TIMEOUT(planStyleColor(collided(), QStringLiteral("line.color")),
+                                  QColor(QStringLiteral("red")), TestTimeout::shortMs());
         QVERIFY(collided()->property("terrainCollision").toBool());
         segment->setCoord1AMSLAlt(2.0e6);
         segment->setCoord2AMSLAlt(2.0e6);
@@ -653,7 +1053,7 @@ void PlanStyleUITest::_liveRegistryAndDynamicVisuals()
         QCOMPARE(QQmlProperty(loiterCircle(), QStringLiteral("border.width")).read().toReal(), 3.0);
         QCOMPARE(landingArea->property("color").value<QColor>(), QColor(QStringLiteral("green")));
         QCOMPARE(landingArea->opacity(), 0.5);
-        QCOMPARE(glideSlope->property("color").value<QColor>(), QColor(255, 165, 0));
+        QCOMPARE(glideSlope->property("color").value<QColor>(), QColor(QStringLiteral("orange")));
         QCOMPARE(glideSlope->opacity(), 0.5);
         QCOMPARE(named(QStringLiteral("planPatternLine")).size(), 2);
         for (auto* path : named(QStringLiteral("planPatternLine"))) {
@@ -668,7 +1068,7 @@ void PlanStyleUITest::_liveRegistryAndDynamicVisuals()
                                       TestTimeout::shortMs());
             QCOMPARE(ring->property("vehicleId").toUInt(), id);
             QCOMPARE(QQmlProperty(ring, QStringLiteral("border.width")).read().toReal(), 2.0);
-            QCOMPARE(ring->property("color").value<QColor>(), QColor(Qt::transparent));
+            QCOMPARE(ring->property("color").value<QColor>(), QColor(QStringLiteral("transparent")));
         }
     };
     const QColor neutral = root->property("neutral").value<QColor>();
@@ -756,8 +1156,8 @@ void PlanStyleUITest::_liveRegistryAndDynamicVisuals()
     }
     // The simple loiter renderer retains its error colour and recovers its neutral fallback.
     waypoint.setTerrainCollision(true);
-    QTRY_COMPARE_WITH_TIMEOUT(planStyleColor(loiterCircle(), QStringLiteral("border.color")), QColor(Qt::red),
-                              TestTimeout::shortMs());
+    QTRY_COMPARE_WITH_TIMEOUT(planStyleColor(loiterCircle(), QStringLiteral("border.color")),
+                              QColor(QStringLiteral("red")), TestTimeout::shortMs());
     waypoint.setTerrainCollision(false);
     QTRY_COMPARE_WITH_TIMEOUT(planStyleColor(loiterCircle(), QStringLiteral("border.color")), neutral,
                               TestTimeout::shortMs());
@@ -772,13 +1172,14 @@ void PlanStyleUITest::_liveRegistryAndDynamicVisuals()
     approach->setCoord2AMSLAlt(-100);
     QVERIFY(approach->terrainCollision());
     QVERIFY(fixedWing.terrainCollision());
-    QTRY_COMPARE_WITH_TIMEOUT(glideSlope->property("color").value<QColor>(), QColor(Qt::red), TestTimeout::shortMs());
+    QTRY_COMPARE_WITH_TIMEOUT(glideSlope->property("color").value<QColor>(), QColor(QStringLiteral("red")),
+                              TestTimeout::shortMs());
     QCOMPARE(landingArea->property("color").value<QColor>(), QColor(QStringLiteral("green")));
     approach->setCoord1AMSLAlt(2.0e6);
     approach->setCoord2AMSLAlt(2.0e6);
     QVERIFY(!approach->terrainCollision());
     QVERIFY(!fixedWing.terrainCollision());
-    QTRY_COMPARE_WITH_TIMEOUT(glideSlope->property("color").value<QColor>(), QColor(255, 165, 0),
+    QTRY_COMPARE_WITH_TIMEOUT(glideSlope->property("color").value<QColor>(), QColor(QStringLiteral("orange")),
                               TestTimeout::shortMs());
     QCOMPARE(registry->vehicles()->count(), initialEntries + 2);
     QCOMPARE(roles->roleEntries()->count(), initialRoleEntries + 2);
@@ -791,6 +1192,460 @@ void PlanStyleUITest::_liveRegistryAndDynamicVisuals()
         QVERIFY(marker);
         QVERIFY(named(QStringLiteral("planWaypoint")).contains(marker.data()));
     }
+}
+
+void PlanStyleUITest::_liveBoundaryVisuals()
+{
+    auto* plugin = QGCCorePlugin::instance();
+    QVERIFY(plugin);
+    auto destroyEngine = [plugin](QQmlApplicationEngine* engine) { plugin->destroyQmlApplicationEngine(engine); };
+    std::unique_ptr<QQmlApplicationEngine, decltype(destroyEngine)> engine(plugin->createQmlApplicationEngine(nullptr),
+                                                                           destroyEngine);
+    QVERIFY(engine);
+    planStyleWarmUpScreenTools(engine.get());
+    if (QTest::currentTestFailed()) {
+        return;
+    }
+    auto* registry = engine->singletonInstance<COPController*>("QGC", "COPController");
+    auto* roles = engine->singletonInstance<VehicleRoleController*>("QGC", "VehicleRoleController");
+    QVERIFY(registry && roles);
+    registry->initialize(roles);
+    QVERIFY(!registry->colorForSysid(7601).isValid());
+    QVERIFY(!registry->colorForSysid(7602).isValid());
+    QVERIFY(!roles->availableRoles().isEmpty());
+    const auto role = roles->availableRoles().first();
+    const QGeoCoordinate base(47, 8, 120);
+    QmlObjectListModel polygons;
+    QmlObjectListModel circles;
+    for (bool inclusion : {true, false}) {
+        auto* polygon = new QGCFencePolygon(inclusion, &polygons);
+        polygon->setInteractive(false);
+        for (double azimuth : {0.0, 120.0, 240.0}) {
+            polygon->appendVertex(base.atDistanceAndAzimuth(inclusion ? 250 : 80, azimuth));
+        }
+        polygons.append(polygon);
+        auto* circle =
+            new QGCFenceCircle(base.atDistanceAndAzimuth(150, inclusion ? 90 : 180), 45, inclusion, &circles);
+        circle->setInteractive(false);
+        circles.append(circle);
+    }
+    PlanMasterController master(MAV_AUTOPILOT_ARDUPILOTMEGA, MAV_TYPE_QUADROTOR);
+    master.start();
+    auto* rallyController = master.rallyPointController();
+    QVERIFY(rallyController);
+    rallyController->addPoint(base.atDistanceAndAzimuth(50, 90));
+    rallyController->addPoint(base.atDistanceAndAzimuth(100, 90));
+    QCOMPARE(rallyController->points()->count(), 2);
+    auto* rally = rallyController->points()->value<RallyPoint*>(0);
+    QVERIFY(rally);
+    rally->setCoordinate(QGeoCoordinate(47, 8.001, 137));
+    rallyController->setCurrentRallyPoint(rally);
+    engine->rootContext()->setContextProperty(QStringLiteral("testPolygons"), &polygons);
+    engine->rootContext()->setContextProperty(QStringLiteral("testCircles"), &circles);
+    engine->rootContext()->setContextProperty(QStringLiteral("testRallyController"), rallyController);
+    QQmlComponent component(engine.get());
+    component.setData(R"(
+        import QtQuick
+        import QtLocation
+        import QtPositioning
+        import QGroundControl
+        import QGroundControl.Controls
+        import QGroundControl.FlightMap
+        import QGroundControl.PlanView
+        FlightMap {
+            id: testMap
+            width: 640
+            height: 480
+            center: QtPositioning.coordinate(47, 8)
+            zoomLevel: 16
+            planView: true
+            isSatelliteMap: false
+            allowGCSLocationCenter: false
+            allowVehicleLocationCenter: false
+            property int _editingLayer: 2
+            property int _layerRally: 2
+            property real layerOpacity: 1
+            property bool visualsEnabled: true
+            property bool styleSupported: true
+            property real styleId: 7601
+            readonly property color neutral: QGroundControl.globalPalette.mapMissionTrajectory
+            readonly property var style: fenceStyle
+            QtObject { id: mainWindow; function allowViewSwitch() { return true } }
+            PlanStyleContext { id: fenceStyle; vehicleId: testMap.styleId; supported: testMap.styleSupported }
+            property QtObject fence: QtObject {
+                property var polygons: testPolygons
+                property var circles: testCircles
+                property real paramCircularFence: 350
+                property var breachReturnPoint: QtPositioning.coordinate(47, 8, 120)
+            }
+            Loader {
+                active: testMap.visualsEnabled
+                sourceComponent: GeoFenceMapVisuals {
+                    map: testMap
+                    myGeoFenceController: testMap.fence
+                    homePosition: QtPositioning.coordinate(47, 8)
+                    planStyle: fenceStyle
+                    opacity: testMap.layerOpacity
+                }
+            }
+            Loader {
+                active: testMap.visualsEnabled
+                sourceComponent: RallyPointMapVisuals {
+                    objectName: "rallyVisuals"
+                    map: testMap
+                    myRallyPointController: testRallyController
+                    planStyle: fenceStyle
+                    interactive: true
+                    planView: true
+                    opacity: testMap.layerOpacity
+                }
+            }
+        }
+    )",
+                      QUrl());
+    QTRY_VERIFY_WITH_TIMEOUT(component.status() != QQmlComponent::Loading, TestTimeout::shortMs());
+    QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+    QQuickWindow boundaryWindow;
+    boundaryWindow.resize(800, 600);
+    std::unique_ptr<QObject> root(component.create());
+    QVERIFY2(root, qPrintable(component.errorString()));
+    auto* map = qobject_cast<QQuickItem*>(root.get());
+    QVERIFY(map);
+    map->setParentItem(boundaryWindow.contentItem());
+    boundaryWindow.show();
+    QTRY_VERIFY_WITH_TIMEOUT(boundaryWindow.isExposed(), TestTimeout::mediumMs());
+    QTRY_VERIFY_WITH_TIMEOUT(map->property("mapReady").toBool(), TestTimeout::longMs());
+    const auto named = [map](const QString& name) { return planStyleItems(map, name); };
+    QTRY_COMPARE_WITH_TIMEOUT(named(QStringLiteral("planFenceFill")).size(), 5, TestTimeout::mediumMs());
+    QTRY_COMPARE_WITH_TIMEOUT(named(QStringLiteral("planKeepInOutline")).size(), 3, TestTimeout::mediumMs());
+    QTRY_COMPARE_WITH_TIMEOUT(named(QStringLiteral("planKeepOutOutline")).size(), 2, TestTimeout::mediumMs());
+    QTRY_COMPARE_WITH_TIMEOUT(named(QStringLiteral("planRallyPoint")).size(), 2, TestTimeout::mediumMs());
+    const auto rallyPositionsReady = [&] {
+        if (!planStyleRenderMap(map)) {
+            return false;
+        }
+        const auto markers = named(QStringLiteral("planRallyPoint"));
+        if (markers.size() != rallyController->points()->count()) {
+            return false;
+        }
+        for (auto* marker : markers) {
+            if (!planStyleMapItemProjected(map, marker)) {
+                return false;
+            }
+        }
+        for (auto* item : map->childItems()) {
+            if (!item->isVisible() || item->metaObject()->indexOfProperty("itemCoordinate") < 0) {
+                continue;
+            }
+            auto* indicator = qvariant_cast<QQuickItem*>(item->property("itemIndicator"));
+            if (!indicator) {
+                return false;
+            }
+            const auto anchor = indicator->property("anchorPoint").toPointF() +
+                                QPointF(item->property("_touchMarginHorizontal").toReal(),
+                                        item->property("_touchMarginVertical").toReal());
+            if (!planStyleProjectedPosition(map, item->property("itemCoordinate").value<QGeoCoordinate>(),
+                                            item->mapToScene(anchor))) {
+                return false;
+            }
+        }
+        return true;
+    };
+    const auto check = [&](const QColor& color) {
+        QTRY_VERIFY_WITH_TIMEOUT(rallyPositionsReady(), TestTimeout::mediumMs());
+        planStyleCheckBoundaries(map, 7601, color, 2, 2);
+        QVERIFY(!QTest::currentTestFailed());
+        int selected = 0;
+        for (auto* marker : named(QStringLiteral("planRallyPoint"))) {
+            planStyleCheckRally(map, marker, 7601, color);
+            QVERIFY(!QTest::currentTestFailed());
+            selected += marker->property("checked").toBool() ? 1 : 0;
+            QCOMPARE(marker->opacity(), root->property("layerOpacity").toReal());
+        }
+        QCOMPARE(selected, 1);
+        const auto breach = named(QStringLiteral("planBreachReturnPoint"));
+        QCOMPARE(breach.size(), 1);
+        QCOMPARE(breach.first()->property("markerColor").value<QColor>(), color);
+        QCOMPARE(breach.first()->property("label").toString(), QStringLiteral("B"));
+        QCOMPARE(breach.first()->property("vehicleId").toUInt(), 7601U);
+        QCOMPARE(breach.first()->property("coordinate").value<QGeoCoordinate>(), base);
+        QCOMPARE(breach.first()->property("markerBorderColor").value<QColor>(), QColor(QStringLiteral("white")));
+        QCOMPARE(breach.first()->property("markerBorderWidth").toReal(), 2.0);
+        QCOMPARE(breach.first()->property("markerTextColor").value<QColor>(), QColor(QStringLiteral("black")));
+    };
+    const int registryCount = registry->vehicles()->count();
+    check(root->property("neutral").value<QColor>());
+    QVERIFY(!QTest::currentTestFailed());
+    QCOMPARE(registry->vehicles()->count(), registryCount);
+    QList<QPointer<QQuickItem>> retained;
+    for (const auto& name : {QStringLiteral("planFenceFill"), QStringLiteral("planKeepInOutline"),
+                             QStringLiteral("planKeepOutOutline"), QStringLiteral("planRallyPoint")}) {
+        for (auto* item : named(name)) {
+            retained.append(item);
+        }
+    }
+    roles->addEntry(7602, role, QStringLiteral("Browsed boundary test vehicle"), 0);
+    QTRY_VERIFY_WITH_TIMEOUT(registry->colorForSysid(7602).isValid(), TestTimeout::shortMs());
+    registry->selectVehicle(7602);
+    QVERIFY(registry->selected());
+    QCOMPARE(registry->selected()->sysid(), 7602U);
+    QVERIFY(registry->selected()->sysid() != 0);
+    roles->addEntry(7601, role, QStringLiteral("Late boundary test vehicle"), 0);
+    QTRY_VERIFY_WITH_TIMEOUT(registry->colorForSysid(7601).isValid(), TestTimeout::shortMs());
+    COPVehicle* entry = nullptr;
+    for (int i = 0; i < registry->vehicles()->count(); ++i) {
+        auto* candidate = registry->vehicles()->value<COPVehicle*>(i);
+        QVERIFY(candidate);
+        if (candidate->sysid() == 7601) {
+            entry = candidate;
+        }
+    }
+    QVERIFY(entry);
+    QVERIFY(entry->sysid() != 0);
+    QVERIFY(entry->color() != registry->selected()->color());
+    QTRY_COMPARE_WITH_TIMEOUT(
+        named(QStringLiteral("planKeepInOutline")).first()->property("renderedStrokeColor").value<QColor>(),
+        entry->color(), TestTimeout::shortMs());
+    check(entry->color());
+    QVERIFY(!QTest::currentTestFailed());
+    for (const auto& item : retained) {
+        QVERIFY(item);
+    }
+    QVERIFY(root->setProperty("layerOpacity", 0.5));
+    check(entry->color());
+    QVERIFY(!QTest::currentTestFailed());
+    for (auto* fill : named(QStringLiteral("planFenceFill"))) {
+        QCOMPARE(fill->opacity(), 0.5);
+    }
+    auto* polygon = polygons.value<QGCFencePolygon*>(0);
+    QVERIFY(polygon);
+    QQuickItem* polygonOutline = nullptr;
+    for (auto* item : named(QStringLiteral("planKeepInOutline"))) {
+        if (item->property("boundaryKind").toString() == QStringLiteral("polygon")) {
+            polygonOutline = item;
+        }
+    }
+    QVERIFY(polygonOutline);
+    const auto beforeDrag = polygonOutline->property("vertices").toList();
+    polygon->setVertexDrag(true);
+    QTRY_VERIFY_WITH_TIMEOUT(!polygonOutline->property("_projectionPending").toBool(), TestTimeout::shortMs());
+    QSignalSpy projections(polygonOutline, SIGNAL(_screenPointsChanged()));
+    QVERIFY(projections.isValid());
+    const auto dragged = base.atDistanceAndAzimuth(600, 45);
+    polygon->adjustVertex(0, base.atDistanceAndAzimuth(400, 45));
+    polygon->adjustVertex(0, base.atDistanceAndAzimuth(500, 45));
+    polygon->adjustVertex(0, dragged);
+    QVERIFY(polygon->vertexDrag());
+    QTRY_COMPARE_WITH_TIMEOUT(polygonOutline->property("vertices").toList().first().value<QGeoCoordinate>(), dragged,
+                              TestTimeout::shortMs());
+    QVERIFY(polygonOutline->property("vertices").toList() != beforeDrag);
+    polygon->setShowAltColor(true);
+    check(entry->color());
+    QVERIFY(!QTest::currentTestFailed());
+    QCOMPARE(projections.count(), 1);
+    polygon->setVertexDrag(false);
+    auto* circle = circles.value<QGCFenceCircle*>(0);
+    QVERIFY(circle);
+    circle->setCenter(base.atDistanceAndAzimuth(400, 225));
+    circle->radius()->setRawValue(123);
+    auto* fence = qvariant_cast<QObject*>(root->property("fence"));
+    QVERIFY(fence);
+    QVERIFY(fence->setProperty("paramCircularFence", 480));
+    for (auto* fill : named(QStringLiteral("planFenceFill"))) {
+        if (fill->property("boundaryKind").toString() == QStringLiteral("circle") &&
+            fill->property("inclusion").toBool()) {
+            QCOMPARE(fill->property("center").value<QGeoCoordinate>(), circle->center());
+            QCOMPARE(fill->property("radius").toDouble(), 123.0);
+        } else if (fill->property("boundaryKind").toString() == QStringLiteral("parameterCircle")) {
+            QCOMPARE(fill->property("radius").toDouble(), 480.0);
+        }
+    }
+    check(entry->color());
+    QVERIFY(!QTest::currentTestFailed());
+    QVERIFY(root->setProperty("zoomLevel", 17));
+    QVERIFY(root->setProperty("width", 800));
+    QVERIFY(root->setProperty("center", QVariant::fromValue(base.atDistanceAndAzimuth(100, 90))));
+    check(entry->color());
+    QVERIFY(!QTest::currentTestFailed());
+    // Exercise the existing selected-point drag object and its altitude-preserving assignment.
+    const auto rallyVisualItems = named(QStringLiteral("rallyVisuals"));
+    QCOMPARE(rallyVisualItems.size(), 1);
+    auto* rallyVisuals = rallyVisualItems.first();
+    auto* repeater = qvariant_cast<QObject*>(rallyVisuals->property("_rallyPointsComponent"));
+    QVERIFY(repeater);
+    QObject* drag = nullptr;
+    for (auto* item : map->childItems()) {
+        if (qvariant_cast<QObject*>(item->property("rallyPointObject")) == rally &&
+            item->metaObject()->indexOfProperty("itemCoordinate") >= 0) {
+            drag = item;
+        }
+    }
+    QVERIFY(drag);
+    QVERIFY(drag->property("visible").toBool());
+    const double altitude = rally->coordinate().altitude();
+    QVERIFY(drag->setProperty("itemCoordinate", QVariant::fromValue(QGeoCoordinate(47.001, 8.002, -500))));
+    QCOMPARE(rally->coordinate(), QGeoCoordinate(47.001, 8.002, altitude));
+    rallyController->setCurrentRallyPoint(rallyController->points()->get(1));
+    QVERIFY(!drag->property("visible").toBool());
+    QQuickItem* clickMarker = nullptr;
+    for (auto* item : named(QStringLiteral("planRallyPoint"))) {
+        if (item->property("coordinate").value<QGeoCoordinate>() == rally->coordinate()) {
+            clickMarker = item;
+        }
+    }
+    QVERIFY(clickMarker);
+    QVERIFY(!clickMarker->property("checked").toBool());
+    auto* clickLoader = planStyleSource(clickMarker);
+    QVERIFY(clickLoader);
+    QPointer<QQuickItem> clickSource = qvariant_cast<QQuickItem*>(clickLoader->property("item"));
+    QVERIFY(clickSource);
+    QVERIFY(root->setProperty("center", QVariant::fromValue(rally->coordinate())));
+    const auto pointerReady = [&] {
+        // A correct target position alone can hide another marker's stale drag overlay.
+        if (!rallyPositionsReady() || !clickSource) {
+            return false;
+        }
+        const auto position = clickSource->mapToScene(QPointF(clickSource->width() / 2, clickSource->height() / 2));
+        const auto mapCenter = map->mapToScene(QPointF(map->width() / 2, map->height() / 2));
+        return clickSource->window() == &boundaryWindow && clickSource->isVisible() && clickSource->width() > 0 &&
+               position.x() >= 0 && position.x() < boundaryWindow.width() && position.y() >= 0 &&
+               position.y() < boundaryWindow.height() && (position - mapCenter).manhattanLength() < 2;
+    };
+    QTRY_VERIFY_WITH_TIMEOUT(pointerReady(), TestTimeout::mediumMs());
+    const auto clickPosition =
+        clickSource->mapToScene(QPointF(clickSource->width() / 2, clickSource->height() / 2)).toPoint();
+    const auto mouseItemAtClick = [&](QQuickItem* item, auto&& self) -> QQuickItem* {
+        if (!item || !item->isVisible() || !item->isEnabled()) {
+            return nullptr;
+        }
+        for (auto* child : item->childItems()) {
+            if (auto* hit = self(child, self)) {
+                return hit;
+            }
+        }
+        return item->acceptedMouseButtons().testFlag(Qt::LeftButton) &&
+                       item->contains(item->mapFromScene(clickPosition))
+                   ? item
+                   : nullptr;
+    };
+    QVERIFY(mouseItemAtClick(clickSource.data(), mouseItemAtClick));
+    for (auto* marker : named(QStringLiteral("planRallyPoint"))) {
+        if (marker != clickMarker) {
+            QVERIFY2(!mouseItemAtClick(planStyleSource(marker), mouseItemAtClick),
+                     "Another rally marker accepts the target click");
+        }
+    }
+    for (auto* item : map->childItems()) {
+        if (item->isVisible() && item->metaObject()->indexOfProperty("itemCoordinate") >= 0) {
+            QVERIFY2(!mouseItemAtClick(item, mouseItemAtClick), "A visible drag item accepts the target click");
+        }
+    }
+    QTest::mouseClick(&boundaryWindow, Qt::LeftButton, Qt::NoModifier, clickPosition);
+    QTRY_COMPARE_WITH_TIMEOUT(rallyController->currentRallyPoint(), static_cast<QObject*>(rally),
+                              TestTimeout::shortMs());
+    QVERIFY(clickMarker->property("checked").toBool());
+
+    check(entry->color());
+    QVERIFY(!QTest::currentTestFailed());
+    // Disabling the context tears down outlines and returns every actual fill to its stock branch.
+    QList<QPointer<QQuickItem>> outlines;
+    for (auto* item : named(QStringLiteral("planKeepInOutline")) + named(QStringLiteral("planKeepOutOutline"))) {
+        outlines.append(item);
+    }
+    QList<QPointer<QQuickItem>> styledMarkers;
+    for (auto* marker : named(QStringLiteral("planRallyPoint"))) {
+        auto* loader = planStyleSource(marker);
+        QVERIFY(loader);
+        styledMarkers.append(qvariant_cast<QQuickItem*>(loader->property("item")));
+        QVERIFY(styledMarkers.last());
+    }
+    polygon->setShowAltColor(false);
+    QVERIFY(root->setProperty("styleSupported", false));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        named(QStringLiteral("planKeepInOutline")).isEmpty() && named(QStringLiteral("planKeepOutOutline")).isEmpty(),
+        TestTimeout::shortMs());
+    for (const auto& outline : outlines) {
+        QTRY_VERIFY_WITH_TIMEOUT(outline.isNull(), TestTimeout::shortMs());
+    }
+    for (const auto& marker : styledMarkers) {
+        QTRY_VERIFY_WITH_TIMEOUT(marker.isNull(), TestTimeout::shortMs());
+    }
+    for (auto* fill : named(QStringLiteral("planFenceFill"))) {
+        const bool inclusion = fill->property("inclusion").toBool();
+        QCOMPARE(QQmlProperty(fill, QStringLiteral("border.width")).read().toReal(), inclusion ? 2.0 : 0.0);
+        QCOMPARE(fill->property("color").value<QColor>(),
+                 inclusion ? QColor(QStringLiteral("transparent")) : QColor(QStringLiteral("orange")));
+        QCOMPARE(fill->opacity(), inclusion ? 0.5 : 0.1);
+    }
+    QList<QPointer<QQuickItem>> stockMarkers;
+    for (auto* marker : named(QStringLiteral("planRallyPoint"))) {
+        QTRY_COMPARE_WITH_TIMEOUT(marker->property("markerShape").toString(), QStringLiteral("circle"),
+                                  TestTimeout::shortMs());
+        QCOMPARE(marker->property("markerShape").toString(), QStringLiteral("circle"));
+        QCOMPARE(marker->property("label").toString(), QStringLiteral("R"));
+        QCOMPARE(marker->property("markerBorderWidth").toReal(), 0.0);
+        auto* loader = planStyleSource(marker);
+        QVERIFY(loader);
+        auto* stock = qvariant_cast<QQuickItem*>(loader->property("item"));
+        QVERIFY(stock);
+        stockMarkers.append(stock);
+        QCOMPARE(marker->property("anchorPoint").toPointF(),
+                 QPointF(stock->property("anchorPointX").toReal(), stock->property("anchorPointY").toReal()));
+        QCOMPARE(marker->property("markerColor").value<QColor>(), stock->property("renderedBodyColor").value<QColor>());
+        QCOMPARE(marker->property("markerBorderColor").value<QColor>(),
+                 stock->property("renderedBorderColor").value<QColor>());
+        QCOMPARE(marker->property("checked").toBool(), stock->property("checked").toBool());
+    }
+    QVERIFY(root->setProperty("styleSupported", true));
+    QTRY_COMPARE_WITH_TIMEOUT(named(QStringLiteral("planKeepInOutline")).size(), 3, TestTimeout::shortMs());
+    QTRY_COMPARE_WITH_TIMEOUT(named(QStringLiteral("planKeepOutOutline")).size(), 2, TestTimeout::shortMs());
+    for (const auto& marker : stockMarkers) {
+        QTRY_VERIFY_WITH_TIMEOUT(marker.isNull(), TestTimeout::shortMs());
+    }
+    check(entry->color());
+    QVERIFY(!QTest::currentTestFailed());
+    // Removing the authoritative boundary must delete both its fill and its Loader-owned outline.
+    QPointer<QQuickItem> removedOutline;
+    // Locate the replacement created when the style was enabled again.
+    for (auto* item : named(QStringLiteral("planKeepInOutline"))) {
+        if (item->property("boundaryKind").toString() == QStringLiteral("polygon")) {
+            removedOutline = item;
+        }
+    }
+    QVERIFY(removedOutline);
+    QPointer<QQuickItem> removedFill;
+    for (auto* item : named(QStringLiteral("planFenceFill"))) {
+        if (item->property("boundaryKind").toString() == QStringLiteral("polygon") &&
+            item->property("inclusion").toBool()) {
+            removedFill = item;
+        }
+    }
+    QVERIFY(removedFill);
+    polygons.removeAt(0);
+    polygon->deleteLater();
+    QTRY_VERIFY_WITH_TIMEOUT(removedFill.isNull() && removedOutline.isNull(), TestTimeout::shortMs());
+    planStyleCheckBoundaries(map, 7601, entry->color(), 1, 2);
+    QVERIFY(!QTest::currentTestFailed());
+    QList<QPointer<QQuickItem>> remaining;
+    for (const auto& name :
+         {QStringLiteral("planFenceFill"), QStringLiteral("planKeepInOutline"), QStringLiteral("planKeepOutOutline"),
+          QStringLiteral("planRallyPoint"), QStringLiteral("planBreachReturnPoint")}) {
+        for (auto* item : named(name)) {
+            remaining.append(item);
+        }
+    }
+    for (auto* item : map->childItems()) {
+        if (item->metaObject()->indexOfProperty("itemCoordinate") >= 0) {
+            remaining.append(item);
+        }
+    }
+    QVERIFY(root->setProperty("visualsEnabled", false));
+    for (const auto& item : remaining) {
+        QTRY_VERIFY_WITH_TIMEOUT(item.isNull(), TestTimeout::shortMs());
+    }
+    root.reset();
+    polygons.clearAndDeleteContents();
+    circles.clearAndDeleteContents();
 }
 
 UT_REGISTER_TEST(PlanStyleUITest, TestLabel::Integration, TestLabel::Vehicle)

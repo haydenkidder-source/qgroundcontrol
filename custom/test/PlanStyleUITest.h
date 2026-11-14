@@ -20,6 +20,7 @@ private slots:
     void _flyPlans_data();
     void _flyPlans();
     void _liveRegistryAndDynamicVisuals();
+    void _liveBoundaryVisuals();
 
 protected:
     bool usesPluginFlyViewOverlay() const override { return true; }

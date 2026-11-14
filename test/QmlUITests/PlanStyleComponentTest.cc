@@ -13,8 +13,39 @@
 
 #include "FlightPathSegment.h"
 #include "QGCCorePlugin.h"
+#include "QGCMapCircle.h"
+#include "QGCMapPolygon.h"
 #include "QGCPlanStyle.h"
 #include "QmlObjectListModel.h"
+
+namespace {
+QList<QQuickItem*> componentPlanStyleItems(QQuickItem* root, const QString& name)
+{
+    QList<QQuickItem*> result;
+    QSet<QObject*> visited;
+    // Map items leave their Loader's visual tree; sourceItem may remain detached until window polish.
+    const auto visit = [&](QObject* object, auto&& self) -> void {
+        if (!object || visited.contains(object)) {
+            return;
+        }
+        visited.insert(object);
+        if (auto* item = qobject_cast<QQuickItem*>(object)) {
+            if (item->objectName() == name) {
+                result.append(item);
+            }
+            for (auto* child : item->childItems()) {
+                self(child, self);
+            }
+            self(qvariant_cast<QQuickItem*>(item->property("sourceItem")), self);
+        }
+        for (auto* child : object->children()) {
+            self(child, self);
+        }
+    };
+    visit(root, visit);
+    return result;
+}
+}  // namespace
 
 void PlanStyleComponentTest::_sharedComponents()
 {
@@ -88,8 +119,8 @@ void PlanStyleComponentTest::_sharedComponents()
     QVERIFY(path);
     QCOMPARE(path->property("strokeWidth").toReal(), 3);
     QCOMPARE(path->property("strokeStyle").toInt(), root->property("dashedStrokeStyle").toInt());
-    QCOMPARE(path->property("fillColor").value<QColor>(), QColor(Qt::transparent));
-    QCOMPARE(path->property("strokeColor").value<QColor>(), QColor(Qt::blue));
+    QCOMPARE(path->property("fillColor").value<QColor>(), QColor(QStringLiteral("transparent")));
+    QCOMPARE(path->property("strokeColor").value<QColor>(), QColor(QStringLiteral("blue")));
     QCOMPARE(path->property("dashPattern").toList(), QVariantList({6.0, 3.0}));
     QVERIFY(line->setProperty("lineWidth", 5));
     QCOMPARE(path->property("strokeWidth").toReal(), 5);
@@ -97,7 +128,7 @@ void PlanStyleComponentTest::_sharedComponents()
     QVERIFY(outlineLine);
     QCOMPARE(outline->property("lineWidth").toReal(), 3);
     QCOMPARE(outlineLine->property("lineWidth").toReal(), 3);
-    QCOMPARE(outlineLine->property("color").value<QColor>(), QColor(Qt::blue));
+    QCOMPARE(outlineLine->property("color").value<QColor>(), QColor(QStringLiteral("blue")));
     QCOMPARE(outlineLine->property("dashPattern").toList(), QVariantList({2.0, 2.0}));
     QVERIFY(outline->setProperty("lineWidth", 7));
     QCOMPARE(outlineLine->property("lineWidth").toReal(), 7);
@@ -105,6 +136,8 @@ void PlanStyleComponentTest::_sharedComponents()
 
     QCOMPARE(marker->width(), root->property("markerSize").toReal());
     QCOMPARE(marker->height(), marker->width());
+    QCOMPARE(marker->property("anchorPointX").toReal(), marker->width() / 2);
+    QCOMPARE(marker->property("anchorPointY").toReal(), marker->height() / 2);
     QQuickItem* diamond = nullptr;
     QQuickItem* label = nullptr;
     for (auto* child : marker->childItems()) {
@@ -121,8 +154,9 @@ void PlanStyleComponentTest::_sharedComponents()
     QVERIFY(label);
     QCOMPARE(diamond->width(), marker->width() * 0.72);
     QCOMPARE(diamond->height(), diamond->width());
-    QCOMPARE(diamond->property("color").value<QColor>(), QColor(Qt::blue));
-    QCOMPARE(QQmlProperty(diamond, QStringLiteral("border.color")).read().value<QColor>(), QColor(Qt::white));
+    QCOMPARE(diamond->property("color").value<QColor>(), QColor(QStringLiteral("blue")));
+    QCOMPARE(QQmlProperty(diamond, QStringLiteral("border.color")).read().value<QColor>(),
+             QColor(QStringLiteral("white")));
     QCOMPARE(QQmlProperty(diamond, QStringLiteral("border.width")).read().toReal(), 2);
     QTRY_VERIFY_WITH_TIMEOUT(qAbs(diamond->x() - (marker->width() - diamond->width()) / 2) < 1, TestTimeout::shortMs());
     QTRY_VERIFY_WITH_TIMEOUT(qAbs(diamond->y() - (marker->height() - diamond->height()) / 2) < 1,
@@ -130,15 +164,16 @@ void PlanStyleComponentTest::_sharedComponents()
     QCOMPARE(label->rotation(), 0);
     QVERIFY(QQmlProperty(label, QStringLiteral("font.bold")).read().toBool());
     QCOMPARE(label->property("text").toString(), QStringLiteral("R"));
-    QCOMPARE(label->property("color").value<QColor>(), QColor(Qt::black));
-    QVERIFY(marker->setProperty("color", QColor(Qt::green)));
-    QCOMPARE(diamond->property("color").value<QColor>(), QColor(Qt::green));
-    QVERIFY(marker->setProperty("borderColor", QColor(Qt::red)));
+    QCOMPARE(label->property("color").value<QColor>(), QColor(QStringLiteral("black")));
+    QVERIFY(marker->setProperty("color", QColor(QStringLiteral("green"))));
+    QCOMPARE(diamond->property("color").value<QColor>(), QColor(QStringLiteral("green")));
+    QVERIFY(marker->setProperty("borderColor", QColor(QStringLiteral("red"))));
     QVERIFY(marker->setProperty("borderWidth", 4));
-    QVERIFY(marker->setProperty("textColor", QColor(Qt::yellow)));
-    QCOMPARE(QQmlProperty(diamond, QStringLiteral("border.color")).read().value<QColor>(), QColor(Qt::red));
+    QVERIFY(marker->setProperty("textColor", QColor(QStringLiteral("yellow"))));
+    QCOMPARE(QQmlProperty(diamond, QStringLiteral("border.color")).read().value<QColor>(),
+             QColor(QStringLiteral("red")));
     QCOMPARE(QQmlProperty(diamond, QStringLiteral("border.width")).read().toReal(), 4);
-    QCOMPARE(label->property("color").value<QColor>(), QColor(Qt::yellow));
+    QCOMPARE(label->property("color").value<QColor>(), QColor(QStringLiteral("yellow")));
 
     auto* policy = plugin->planStyle();
     QCOMPARE(context->property("enabled").toBool(), policy != nullptr);
@@ -288,7 +323,7 @@ void PlanStyleComponentTest::_stockMissionVisuals()
              root->property("trajectory").value<QColor>());
     QCOMPARE(marker->property("renderedBodyColor").value<QColor>(), root->property("ordinary").value<QColor>());
     QCOMPARE(marker->property("renderedBorderWidth").toReal(), 0.0);
-    QCOMPARE(marker->property("renderedTextColor").value<QColor>(), QColor(Qt::white));
+    QCOMPARE(marker->property("renderedTextColor").value<QColor>(), QColor(QStringLiteral("white")));
     QCOMPARE(marker->property("index").toInt(), 5);
     QCOMPARE(marker->property("renderedIndexText").toString(), QStringLiteral("5"));
     auto* childLabel = find(map, QStringLiteral("childLabel"));
@@ -325,8 +360,8 @@ void PlanStyleComponentTest::_stockMissionVisuals()
     QVERIFY(segment.setProperty("amslTerrainHeights", QVariantList{150.0, 150.0}));
     segment.setCoord1AMSLAlt(101);
     QVERIFY(segment.terrainCollision());
-    QTRY_COMPARE_WITH_TIMEOUT(QQmlProperty(route, QStringLiteral("line.color")).read().value<QColor>(), QColor(Qt::red),
-                              TestTimeout::shortMs());
+    QTRY_COMPARE_WITH_TIMEOUT(QQmlProperty(route, QStringLiteral("line.color")).read().value<QColor>(),
+                              QColor(QStringLiteral("red")), TestTimeout::shortMs());
     segment.setCoord1AMSLAlt(200);
     segment.setCoord2AMSLAlt(200);
     QVERIFY(!segment.terrainCollision());
@@ -391,6 +426,150 @@ void PlanStyleComponentTest::_optionalVisualContract()
     QTRY_VERIFY_WITH_TIMEOUT(externalItem(), TestTimeout::mediumMs());
     QCOMPARE(externalItem()->metaObject()->indexOfProperty("planStyle"), -1);
     QCOMPARE(qvariant_cast<QObject*>(externalItem()->property("map")), root.get());
+}
+
+void PlanStyleComponentTest::_stockBoundaryVisuals_data()
+{
+    QTest::addColumn<bool>("disabledContext");
+    QTest::addColumn<bool>("fence");
+    QTest::addColumn<bool>("inclusion");
+    QTest::newRow("null-inclusion") << false << true << true;
+    QTest::newRow("null-exclusion") << false << true << false;
+    QTest::newRow("disabled-inclusion") << true << true << true;
+    QTest::newRow("disabled-exclusion") << true << true << false;
+    QTest::newRow("generic") << false << false << true;
+    QTest::newRow("generic-disabled") << true << false << true;
+}
+
+void PlanStyleComponentTest::_stockBoundaryVisuals()
+{
+    QFETCH(bool, disabledContext);
+    QFETCH(bool, fence);
+    QFETCH(bool, inclusion);
+    auto* plugin = QGCCorePlugin::instance();
+    QVERIFY(plugin);
+    auto destroyEngine = [plugin](QQmlApplicationEngine* engine) { plugin->destroyQmlApplicationEngine(engine); };
+    std::unique_ptr<QQmlApplicationEngine, decltype(destroyEngine)> engine(plugin->createQmlApplicationEngine(nullptr),
+                                                                           destroyEngine);
+    QVERIFY(engine);
+    QGCMapPolygon polygon;
+    polygon.setInteractive(false);
+    for (double azimuth : {0.0, 120.0, 240.0}) {
+        polygon.appendVertex(QGeoCoordinate(47, 8).atDistanceAndAzimuth(100, azimuth));
+    }
+    QGCMapCircle circle(QGeoCoordinate(47, 8), 100, false, true);
+    circle.setInteractive(false);
+    engine->rootContext()->setContextProperty(QStringLiteral("testPolygon"), &polygon);
+    engine->rootContext()->setContextProperty(QStringLiteral("testCircle"), &circle);
+    QQmlComponent component(engine.get());
+    component.setData(R"(
+        import QtQuick
+        import QtLocation
+        import QtPositioning
+        import QGroundControl.Controls
+        import QGroundControl.FlightMap
+        Map {
+            id: testMap
+            width: 640
+            height: 480
+            plugin: Plugin { name: "QGroundControl" }
+            property bool planView: true
+            property bool isSatelliteMap: false
+            property bool disabledContext: false
+            property bool fence: true
+            property bool inclusion: true
+            property var style: disabledContext ? disabledStyle : null
+            QtObject {
+                id: disabledStyle
+                property bool enabled: false
+                property real vehicleId: 77
+                property color lineColor: "magenta"
+                property real boundaryLineWidth: 9
+                property var keepInDashPattern: [1, 9]
+                property var keepOutDashPattern: [7, 1]
+                property color keepOutFillColor: "cyan"
+            }
+            function fill(polygon) {
+                for (const item of mapItems) {
+                    if (polygon ? "path" in item : "radius" in item) {
+                        return item
+                    }
+                }
+                return null
+            }
+            QGCMapPolygonVisuals {
+                mapControl: testMap
+                mapPolygon: testPolygon
+                planStyle: testMap.style
+                boundaryKind: testMap.fence ? "polygon" : ""
+                inclusion: testMap.inclusion
+                borderWidth: testMap.fence ? (inclusion ? 2 : 0) : 5
+                borderColor: testMap.fence ? "orange" : "blue"
+                interiorColor: testMap.fence ? (inclusion ? "transparent" : "orange") : "green"
+                altColor: "purple"
+                interiorOpacity: testMap.fence ? (inclusion ? 1 : 0.2) : 0.6
+            }
+            QGCMapCircleVisuals {
+                mapControl: testMap
+                mapCircle: testCircle
+                planStyle: testMap.style
+                boundaryKind: testMap.fence ? "circle" : ""
+                inclusion: testMap.inclusion
+                borderWidth: testMap.fence ? (inclusion ? 2 : 0) : 5
+                borderColor: testMap.fence ? "orange" : "blue"
+                interiorColor: testMap.fence ? (inclusion ? "transparent" : "orange") : "green"
+                interiorOpacity: testMap.fence ? (inclusion ? 1 : 0.2) : 0.6
+            }
+        }
+    )",
+                      QUrl());
+    QTRY_VERIFY_WITH_TIMEOUT(component.status() != QQmlComponent::Loading, TestTimeout::shortMs());
+    QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+    const QVariantMap properties{{QStringLiteral("disabledContext"), disabledContext},
+                                 {QStringLiteral("fence"), fence},
+                                 {QStringLiteral("inclusion"), inclusion}};
+    std::unique_ptr<QObject> root(component.createWithInitialProperties(properties));
+    QVERIFY2(root, qPrintable(component.errorString()));
+    const auto fill = [&](bool isPolygon) -> QQuickItem* {
+        QVariant result;
+        if (!QMetaObject::invokeMethod(root.get(), "fill", Q_RETURN_ARG(QVariant, result),
+                                       Q_ARG(QVariant, isPolygon))) {
+            return nullptr;
+        }
+        return qvariant_cast<QQuickItem*>(result);
+    };
+    QTRY_VERIFY_WITH_TIMEOUT(fill(true) && fill(false), TestTimeout::shortMs());
+    const QColor border = fence ? QColor(QStringLiteral("orange")) : QColor(QStringLiteral("blue"));
+    const QColor interior = fence
+                                ? (inclusion ? QColor(QStringLiteral("transparent")) : QColor(QStringLiteral("orange")))
+                                : QColor(QStringLiteral("green"));
+    for (auto* item : {fill(true), fill(false)}) {
+        QCOMPARE(QQmlProperty(item, QStringLiteral("border.width")).read().toReal(),
+                 fence ? (inclusion ? 2.0 : 0.0) : 5.0);
+        QCOMPARE(QQmlProperty(item, QStringLiteral("border.color")).read().value<QColor>(), border);
+        QCOMPARE(item->property("color").value<QColor>(), interior);
+        QCOMPARE(item->opacity(), fence ? (inclusion ? 1.0 : 0.2) : 0.6);
+    }
+    const auto outlineCount = [&] {
+        auto* map = qobject_cast<QQuickItem*>(root.get());
+        return componentPlanStyleItems(map, QStringLiteral("planKeepInOutline")).size() +
+               componentPlanStyleItems(map, QStringLiteral("planKeepOutOutline")).size();
+    };
+    QCOMPARE(outlineCount(), 0);
+    polygon.setShowAltColor(true);
+    QCOMPARE(fill(true)->property("color").value<QColor>(), QColor(QStringLiteral("purple")));
+    polygon.setVertexDrag(true);
+    QCOMPARE(QQmlProperty(fill(true), QStringLiteral("border.width")).read().toReal(), 3.0);
+    QCOMPARE(QQmlProperty(fill(true), QStringLiteral("border.color")).read().value<QColor>(),
+             QColor(QStringLiteral("orange")));
+    const auto moved = QGeoCoordinate(47.002, 8.003);
+    polygon.adjustVertex(0, moved);
+    QTRY_COMPARE_WITH_TIMEOUT(fill(true)->property("path").toList().first().value<QGeoCoordinate>(), moved,
+                              TestTimeout::shortMs());
+    QCOMPARE(outlineCount(), 0);
+    polygon.setVertexDrag(false);
+    QCOMPARE(QQmlProperty(fill(true), QStringLiteral("border.width")).read().toReal(),
+             fence ? (inclusion ? 2.0 : 0.0) : 5.0);
 }
 
 UT_REGISTER_TEST(PlanStyleComponentTest, TestLabel::Unit)

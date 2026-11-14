@@ -12,6 +12,9 @@ Item {
     id: _root
     z: QGroundControl.zOrderMapItems
 
+    property var    planStyle: null
+    readonly property bool _styled: planStyle && planStyle.enabled
+
     property var    map
     property var    myRallyPointController
     property bool   interactive:            false   ///< true: user can interact with items
@@ -58,6 +61,24 @@ Item {
 
         MapQuickItem {
             id:             itemIndicator
+            objectName: "planRallyPoint"
+            readonly property real vehicleId: _root.planStyle ? _root.planStyle.vehicleId : 0
+            readonly property bool checked: markerLoader.item ? markerLoader.item.checked : false
+            readonly property string markerShape: markerLoader.item && "markerShape" in markerLoader.item
+                                                  ? markerLoader.item.markerShape : "circle"
+            readonly property color markerColor: markerLoader.item
+                                                 ? ("markerShape" in markerLoader.item ? markerLoader.item.markerColor
+                                                                                      : markerLoader.item.renderedBodyColor)
+                                                 : "transparent"
+            readonly property color markerBorderColor: markerLoader.item
+                                                       ? ("markerShape" in markerLoader.item ? markerLoader.item.markerBorderColor
+                                                                                            : markerLoader.item.renderedBorderColor)
+                                                       : "transparent"
+            readonly property real markerBorderWidth: markerLoader.item
+                                                     ? ("markerShape" in markerLoader.item ? markerLoader.item.markerBorderWidth
+                                                                                          : markerLoader.item.renderedBorderWidth)
+                                                     : 0
+            readonly property string label: markerLoader.item ? markerLoader.item.label : ""
             anchorPoint.x:  sourceItem.anchorPointX
             anchorPoint.y:  sourceItem.anchorPointY
             z:              QGroundControl.zOrderMapItems
@@ -65,14 +86,40 @@ Item {
 
             property var rallyPointObject
 
-            sourceItem: MissionItemIndexLabel {
-                id:                 itemIndexLabel
-                label:              qsTr("R", "rally point map item label")
-                checked:            _editingLayer == _layerRally ? rallyPointObject === myRallyPointController.currentRallyPoint : false
-                highlightSelected:  true
-                onClicked: {
-                    if (mainWindow.allowViewSwitch()) {
-                        myRallyPointController.currentRallyPoint = rallyPointObject
+            sourceItem: Loader {
+                id: markerLoader
+                readonly property real anchorPointX: item ? item.anchorPointX : 0
+                readonly property real anchorPointY: item ? item.anchorPointY : 0
+                sourceComponent: _root._styled ? styledMarker : stockMarker
+
+                Component {
+                    id: styledMarker
+                    RallyPointMarker {
+                        color: _root._styled ? _root.planStyle.lineColor : "transparent"
+                        borderColor: _root._styled ? _root.planStyle.markerBorderColor : "transparent"
+                        borderWidth: _root._styled ? _root.planStyle.markerBorderWidth : 0
+                        textColor: _root._styled ? _root.planStyle.markerTextColor : "transparent"
+                        checked: _editingLayer == _layerRally ? rallyPointObject === myRallyPointController.currentRallyPoint : false
+                        interactive: _root.interactive
+                        onClicked: {
+                            if (mainWindow.allowViewSwitch()) {
+                                myRallyPointController.currentRallyPoint = rallyPointObject
+                            }
+                        }
+                    }
+                }
+                Component {
+                    id: stockMarker
+                    MissionItemIndexLabel {
+                        id:                 itemIndexLabel
+                        label:              qsTr("R", "rally point map item label")
+                        checked:            _editingLayer == _layerRally ? rallyPointObject === myRallyPointController.currentRallyPoint : false
+                        highlightSelected:  true
+                        onClicked: {
+                            if (mainWindow.allowViewSwitch()) {
+                                myRallyPointController.currentRallyPoint = rallyPointObject
+                            }
+                        }
                     }
                 }
             }

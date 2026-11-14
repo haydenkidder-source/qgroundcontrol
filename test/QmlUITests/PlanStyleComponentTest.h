@@ -11,4 +11,6 @@ private slots:
     void _stockMissionVisuals_data();
     void _stockMissionVisuals();
     void _optionalVisualContract();
+    void _stockBoundaryVisuals_data();
+    void _stockBoundaryVisuals();
 };

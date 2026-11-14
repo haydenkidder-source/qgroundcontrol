@@ -11,7 +11,13 @@ Shape {
     property real lineWidth: 3
     required property var dashPattern   ///< Alternating dash and gap lengths, in multiples of lineWidth
 
+    property alias renderedStrokeColor: stroke.strokeColor
+    property alias renderedStrokeWidth: stroke.strokeWidth
+    property alias renderedDashPattern: stroke.dashPattern
+    property alias renderedStrokeStyle: stroke.strokeStyle
+
     ShapePath {
+        id: stroke
         strokeColor: root.color
         strokeWidth: root.lineWidth
         strokeStyle: ShapePath.DashLine
