@@ -292,6 +292,8 @@ set(CUSTOM_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/COP/COPController.h
     ${CMAKE_CURRENT_SOURCE_DIR}/src/CustomPlugin.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/src/CustomPlugin.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/PlanStyle/CustomPlanStyle.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/PlanStyle/CustomPlanStyle.h
     ${CMAKE_CURRENT_SOURCE_DIR}/src/MainThreadStallMonitor.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/src/MainThreadStallMonitor.h
     ${CMAKE_CURRENT_SOURCE_DIR}/src/ExclusionZone/ExclusionZoneController.cc
@@ -405,6 +407,8 @@ if(QGC_BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/test/AppLogViewerUITest.h
             ${CMAKE_CURRENT_SOURCE_DIR}/test/COPControllerTest.cc
             ${CMAKE_CURRENT_SOURCE_DIR}/test/COPControllerTest.h
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/PlanStyleTest.cc
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/PlanStyleTest.h
             ${CMAKE_CURRENT_SOURCE_DIR}/test/ExclusionZoneControllerTest.cc
             ${CMAKE_CURRENT_SOURCE_DIR}/test/ExclusionZoneControllerTest.h
             ${CMAKE_CURRENT_SOURCE_DIR}/test/COPStressTest.cc
@@ -454,6 +458,16 @@ if(QGC_BUILD_TESTING)
         Integration
         NoSanitizer
         Vehicle
+    )
+    cmake_language(
+        DEFER
+        DIRECTORY
+        "${CMAKE_SOURCE_DIR}"
+        CALL
+        add_qgc_test
+        PlanStyleTest
+        LABELS
+        Unit
     )
     cmake_language(
         DEFER

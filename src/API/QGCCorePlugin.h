@@ -14,6 +14,7 @@ class PlanCreator;
 class PlanMasterController;
 class QFile;
 class QGCOptions;
+class QGCPlanStyle;
 class QGeoPositionInfoSource;
 class QmlObjectListModel;
 class QQmlApplicationEngine;
@@ -38,6 +39,7 @@ class QGCCorePlugin : public QObject
     Q_OBJECT
     QML_UNCREATABLE("")
     Q_MOC_INCLUDE("QGCOptions.h")
+    Q_MOC_INCLUDE("QGCPlanStyle.h")
     Q_MOC_INCLUDE("QmlObjectListModel.h")
     Q_PROPERTY(bool showAdvancedUI                      READ showAdvancedUI                     WRITE _setShowAdvancedUI    NOTIFY showAdvancedUIChanged)
     Q_PROPERTY(bool showTouchAreas                      READ showTouchAreas                     WRITE _setShowTouchAreas    NOTIFY showTouchAreasChanged)
@@ -54,6 +56,7 @@ class QGCCorePlugin : public QObject
     Q_PROPERTY(QUrl flyViewOverlay READ flyViewOverlay CONSTANT)
     Q_PROPERTY(QUrl notificationFooter READ notificationFooter CONSTANT)
     Q_PROPERTY(bool showAllVehiclePlans READ showAllVehiclePlans CONSTANT)
+    Q_PROPERTY(QGCPlanStyle* planStyle READ planStyle CONSTANT)
     Q_PROPERTY(QVariantList analyzePages                READ analyzePages                                                   CONSTANT)
     Q_PROPERTY(QVariantList toolBarIndicators           READ toolBarIndicators                                              CONSTANT)
 
@@ -117,6 +120,9 @@ public:
     /// @return true if the Fly View map draws the flight plan of every connected vehicle, false to draw only the
     /// active vehicle's plan.
     virtual bool showAllVehiclePlans() const { return true; }
+
+    /// Optional plan presentation policy; a null result means stock styling.
+    virtual QGCPlanStyle* planStyle() const { return nullptr; }
 
     /// @return An instance of an alternate position source (or NULL if not available)
     virtual QGeoPositionInfoSource *createPositionSource(QObject *parent) { Q_UNUSED(parent); return nullptr; }

@@ -22,6 +22,7 @@ private slots:
     void _referencePoint();
     void _referencePointFollowsSelectedStream();
     void _colorAssignedByDiscoveryOrder();
+    void _colorLookupAndEntriesChanged();
 
 private:
     QTemporaryDir _directory;

@@ -3,12 +3,15 @@
 # Core plugin architecture and QML component interfaces
 # ============================================================================
 
-target_sources(${CMAKE_PROJECT_NAME}
+target_sources(
+    ${CMAKE_PROJECT_NAME}
     PRIVATE
         QGCCorePlugin.cc
         QGCCorePlugin.h
         QGCOptions.cc
         QGCOptions.h
+        QGCPlanStyle.cc
+        QGCPlanStyle.h
         QmlComponentInfo.cc
         QmlComponentInfo.h
 )
