@@ -12,6 +12,15 @@ Canvas {
 
     signal clicked(point position)
 
+    property var    planStyle: null
+    readonly property bool _styled: planStyle && planStyle.enabled
+    property alias renderedBodyColor: indicator.color
+    property alias renderedTextColor: indexLabel.color
+    property alias renderedBorderColor: indicator.border.color
+    property alias renderedBorderWidth: indicator.border.width
+    property alias renderedIndexText: indexLabel.text
+    property alias renderedIndicator: indicator
+
     property string label                           ///< Label to show to the side of the index indicator
     property int    index:                  0       ///< Index to show in the indicator, 0 will show single char label instead, -1 first char of label in indicator full label to the side
     property bool   checked:                false
@@ -19,7 +28,8 @@ Canvas {
     property bool   medium:                 false
     property bool   child:                  false
     property bool   highlightSelected:      false
-    property var    color:                  checked ? "green" : (child ? qgcPal.mapIndicatorChild : qgcPal.mapIndicator)
+    property var    color:                  _styled ? planStyle.lineColor :
+                                            (checked ? "green" : (child ? qgcPal.mapIndicatorChild : qgcPal.mapIndicator))
     property real   anchorPointX:           _height / 2
     property real   anchorPointY:           _height / 2
     property bool   specifiesCoordinate:    true
@@ -114,6 +124,8 @@ Canvas {
         width:                          _indicatorRadius * 2
         height:                         width
         color:                          root.color
+        border.color:                   root._styled ? root.planStyle.markerBorderColor : "black"
+        border.width:                   root._styled ? root.planStyle.markerBorderWidth : 0
         radius:                         _indicatorRadius
 
         QGCLabel {
@@ -121,7 +133,7 @@ Canvas {
             anchors.fill:           parent
             horizontalAlignment:    Text.AlignHCenter
             verticalAlignment:      Text.AlignVCenter
-            color:                  "white"
+            color:                  root._styled ? root.planStyle.markerTextColor : "white"
             font.pointSize:         ScreenTools.defaultFontPointSize
             fontSizeMode:           Text.Fit
             text:                   _index
@@ -137,7 +149,7 @@ Canvas {
             height: indicator.height * 0.4
             horizontalAlignment: Text.AlignHCenter
             verticalAlignment: Text.AlignVCenter
-            color: "white"
+            color: root._styled ? root.planStyle.markerTextColor : "white"
             font.pointSize: ScreenTools.smallFontPointSize
             fontSizeMode: Text.Fit
             text: root.indicatorSubText
@@ -147,13 +159,18 @@ Canvas {
 
     // Extra circle to indicate selection
     Rectangle {
+        id: selectionHalo
+        objectName: "planWaypointSelectionHalo"
+        readonly property real vehicleId: root.planStyle ? root.planStyle.vehicleId : 0
+        property alias renderedBorderColor: selectionHalo.border.color
+
         width:          indicator.width * 2
         height:         width
         radius:         width * 0.5
         color:          Qt.rgba(0,0,0,0)
         border.color:   Qt.rgba(1,1,1,0.5)
         border.width:   1
-        visible:        checked && highlightSelected
+        visible:        checked && (highlightSelected || root._styled)
         anchors.centerIn: indicator
     }
 

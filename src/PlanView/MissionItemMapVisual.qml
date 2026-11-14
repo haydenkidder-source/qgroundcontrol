@@ -11,6 +11,7 @@ import QGroundControl.FlightMap
 Item {
     id: _root
 
+    property var planStyle: null
     property var map        ///< Map control to place item in
     property var vehicle    ///< Vehicle associated with this item
     property bool interactive: true    ///< Vehicle associated with this item
@@ -39,6 +40,11 @@ Item {
         onLoaded: {
             if (!item) {
                 return
+            }
+
+            // External visuals may not implement the optional style contract.
+            if ("planStyle" in item) {
+                item.planStyle = Qt.binding(() => _root.planStyle)
             }
 
             item.parent = map

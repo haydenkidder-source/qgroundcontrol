@@ -12,6 +12,7 @@ import QGroundControl.FlightMap
 Item {
     id: control
 
+    property var planStyle: null
     property var map ///< Map control to place item in
     property var vehicle ///< Vehicle associated with this item
     property bool interactive: true

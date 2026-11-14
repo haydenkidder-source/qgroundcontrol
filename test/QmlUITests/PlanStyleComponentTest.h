@@ -8,4 +8,7 @@ class PlanStyleComponentTest : public UnitTest
 
 private slots:
     void _sharedComponents();
+    void _stockMissionVisuals_data();
+    void _stockMissionVisuals();
+    void _optionalVisualContract();
 };

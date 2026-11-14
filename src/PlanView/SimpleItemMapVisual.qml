@@ -63,6 +63,7 @@ MissionItemMapVisualBase {
         id: indicatorComponent
 
         MissionItemIndicator {
+            planStyle:        _root.planStyle
             coordinate:       _missionItem.coordinate
             indicatorGroup:   _root.indicatorGroup
             indicatorVisible: _missionItem.specifiesCoordinate
@@ -101,10 +102,13 @@ MissionItemMapVisualBase {
 
             sourceItem: QGCMapCircleVisuals {
                 id:                      loiterMapCircleVisuals
+                objectName:              "planSimpleLoiterVisual"
                 mapControl:              _root.map
                 mapCircle:               _mapCircle
                 centerDragHandleVisible: false
-                borderColor:             _missionItem.terrainCollision ? "red" : QGroundControl.globalPalette.mapMissionTrajectory
+                borderColor:             _missionItem.terrainCollision ? "red" :
+                                         (_root.planStyle && _root.planStyle.enabled ? _root.planStyle.lineColor :
+                                          QGroundControl.globalPalette.mapMissionTrajectory)
 
                 property bool blockSignals: false
 

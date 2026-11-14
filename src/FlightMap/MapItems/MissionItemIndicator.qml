@@ -9,6 +9,7 @@ import QGroundControl.PlanView
 MapQuickItem {
     id: _item
 
+    property var planStyle: null
     property var missionItem
     property int sequenceNumber
     property MissionItemIndicatorGroup indicatorGroup
@@ -20,6 +21,19 @@ MapQuickItem {
     readonly property var _group: indicatorGroup ? indicatorGroup.groupForItem(missionItem) : null
     readonly property bool _isGrouped: _group ? _group.items.length > 1 : false
     readonly property bool _isGroupRepresentative: !_group || _group.representative === missionItem
+
+    objectName: "planWaypoint"
+    readonly property real vehicleId: planStyle ? planStyle.vehicleId : 0
+    readonly property bool current: _isCurrentItem
+    readonly property bool grouped: _isGrouped
+    property alias renderedBodyColor: _label.renderedBodyColor
+    property alias renderedTextColor: _label.renderedTextColor
+    property alias renderedBorderColor: _label.renderedBorderColor
+    property alias renderedBorderWidth: _label.renderedBorderWidth
+    property alias renderedIndexText: _label.renderedIndexText
+    property alias checked: _label.checked
+    property alias index: _label.index
+    property alias label: _label.label
 
     signal clicked
 
@@ -44,6 +58,7 @@ MapQuickItem {
     sourceItem:
         MissionItemIndexLabel {
             id:                 _label
+            planStyle:          _item.planStyle
             checked:            _item._isCurrentItem
             label:              _item.missionItem.abbreviation
             index:              _item._usesAbbreviation ? -1 : _item.missionItem.sequenceNumber

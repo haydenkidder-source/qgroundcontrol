@@ -240,6 +240,12 @@ FlightMap {
                 Component.onCompleted: startStaticActiveVehicle(object)
             }
 
+            PlanStyleContext {
+                id: flyPlanStyle
+                objectName: "flyPlanStyleContext"
+                vehicleId: vehiclePlan._vehicle ? vehiclePlan._vehicle.id : 0
+            }
+
             Loader {
                 objectName: "flyViewVehiclePlan"
                 active:     QGroundControl.corePlugin.showAllVehiclePlans || vehiclePlan._vehicle === _activeVehicle
@@ -249,6 +255,7 @@ FlightMap {
                     largeMapView:           !pipMode
                     planMasterController:   masterController
                     vehicle:                vehiclePlan._vehicle
+                    planStyle:              flyPlanStyle
                 }
             }
         }

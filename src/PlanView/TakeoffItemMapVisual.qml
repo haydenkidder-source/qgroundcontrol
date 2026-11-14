@@ -11,6 +11,7 @@ import QGroundControl.FlightMap
 Item {
     id: _root
 
+    property var planStyle: null
     property var map        ///< Map control to place item in
     property var vehicle    ///< Vehicle associated with this item
     property bool interactive: true
@@ -98,6 +99,7 @@ Item {
         id: takeoffIndicatorComponent
 
         MissionItemIndicator {
+            planStyle:      _root.planStyle
             coordinate:     _missionItem.specifiesCoordinate ? _missionItem.coordinate : _missionItem.launchCoordinate
             indicatorGroup: _root.indicatorGroup
             interactive:    _root.interactive
@@ -112,6 +114,19 @@ Item {
         id: launchIndicatorComponent
 
         MapQuickItem {
+            objectName: "planWaypoint"
+            readonly property real vehicleId: _root.planStyle ? _root.planStyle.vehicleId : 0
+            readonly property int sequenceNumber: sourceItem.index > 0 ? sourceItem.index : _missionItem.sequenceNumber
+            readonly property bool current: _missionItem.isCurrentItem
+            readonly property bool grouped: false
+            readonly property color renderedBodyColor: sourceItem.renderedBodyColor
+            readonly property color renderedTextColor: sourceItem.renderedTextColor
+            readonly property color renderedBorderColor: sourceItem.renderedBorderColor
+            readonly property real renderedBorderWidth: sourceItem.renderedBorderWidth
+            readonly property bool checked: sourceItem.checked
+            readonly property int index: sourceItem.index
+            readonly property string label: sourceItem.label
+
             coordinate:     _missionItem.launchCoordinate
             anchorPoint.x:  sourceItem.anchorPointX
             anchorPoint.y:  sourceItem.anchorPointY
@@ -119,6 +134,7 @@ Item {
 
             sourceItem:
                 MissionItemIndexLabel {
+                    planStyle:          _root.planStyle
                     checked:            _missionItem.isCurrentItem
                     label:              qsTr("Home")
                     highlightSelected:  true

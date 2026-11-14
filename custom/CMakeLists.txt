@@ -409,6 +409,8 @@ if(QGC_BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/test/COPControllerTest.h
             ${CMAKE_CURRENT_SOURCE_DIR}/test/PlanStyleTest.cc
             ${CMAKE_CURRENT_SOURCE_DIR}/test/PlanStyleTest.h
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/PlanStyleUITest.cc
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/PlanStyleUITest.h
             ${CMAKE_CURRENT_SOURCE_DIR}/test/ExclusionZoneControllerTest.cc
             ${CMAKE_CURRENT_SOURCE_DIR}/test/ExclusionZoneControllerTest.h
             ${CMAKE_CURRENT_SOURCE_DIR}/test/COPStressTest.cc
@@ -458,6 +460,18 @@ if(QGC_BUILD_TESTING)
         Integration
         NoSanitizer
         Vehicle
+    )
+    cmake_language(
+        DEFER
+        DIRECTORY
+        "${CMAKE_SOURCE_DIR}"
+        CALL
+        add_qgc_test
+        PlanStyleUITest
+        LABELS
+        Integration
+        Vehicle
+        NoSanitizer
     )
     cmake_language(
         DEFER
