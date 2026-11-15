@@ -1,8 +1,19 @@
 # Video relay installers
 
-These installers and their relay, boot services and RTSP-in-QGC playback are **untested on hardware**.
-See [Video relay setup](../../VIDEO_RELAY_SETUP.md) for configuration, pipeline listings and
-hardware checks, and [Network addressing](../../NETWORK_ADDRESSING.md) for the IP and port scheme.
+On **2026-11-14**, both installers ran on Raspberry Pi 5 computers with Raspberry Pi OS 64-bit.
+The installer fetched MediaMTX v1.21.3, latest at the time. Both boot services started unattended
+after reboot, and RTSP over TCP worked locally on the GCS Pi and from a Windows laptop.
+RTSP-in-QGC remains **untested**. Picture quality after the radio fix, field-distance power
+and multiple-vehicle behavior remain unverified. See [Status](../../VIDEO_RELAY_SETUP.md#status)
+for the full scope of verification.
+
+See [Video relay setup](../../VIDEO_RELAY_SETUP.md) for configuration and pipeline listings,
+[Network addressing](../../NETWORK_ADDRESSING.md) for the IP and port scheme, and
+[Bench versus field transmit power](../../FIELD_RADIO_SETUP.md#bench-versus-field-transmit-power)
+for the radio findings. The guide also provides
+[link checks](../../VIDEO_RELAY_SETUP.md#checking-the-link),
+[Windows viewing instructions](../../VIDEO_RELAY_SETUP.md#windows-laptop-viewers) and
+[terminal basics](../../VIDEO_RELAY_SETUP.md#terminal-basics).
 
 ## Prerequisites
 
@@ -27,6 +38,17 @@ The GCS installer downloads the latest MediaMTX release by default. To pin a rel
 `/etc/mediamtx/mediamtx.yml`, replaces it with the generic `vehicleA`/5602, `vehicleB`/5603 and
 `vehicleC`/5604 paths, and enables and starts `mediamtx.service` as the `mediamtx` system account.
 The configuration has no authentication; review access control before field use.
+
+The GCS unit now includes `TimeoutStopSec=10` under `[Service]` to limit the stop wait to
+10 seconds. This directive has **not yet been exercised on hardware**. On existing installs,
+add that line under `[Service]` in `/etc/systemd/system/mediamtx.service`, then run:
+
+```bash
+sudo systemctl daemon-reload
+```
+
+Close connected viewers before stopping the relay; see
+[Slow MediaMTX stop](../../VIDEO_RELAY_SETUP.md#slow-mediamtx-stop).
 
 On each vehicle Pi, from the repository root, run through `sudo` as the intended camera account:
 

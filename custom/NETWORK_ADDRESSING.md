@@ -102,5 +102,8 @@ radio at a time to avoid duplicate IPs and losing access to the wrong device.
   before connecting a second one; connect and readdress them one at a time.
 - **Unexpected address changes:** check for two DHCP servers. Turn DHCP off on the radios;
   every device on this network must use a static address.
+- **Tiny pings work but video or larger packets fail:** follow the
+  [radio link checks](VIDEO_RELAY_SETUP.md#checking-the-link) and
+  [Bench versus field transmit power](FIELD_RADIO_SETUP.md#bench-versus-field-transmit-power).
 
 Repeat the laptop ping sweep after correcting any addressing problem.

@@ -89,8 +89,51 @@ Tracked internally, not in this repo - actual sysid/port/link-name assignments f
 security-sensitive network configuration and shouldn't be published. Keep that mapping in an
 internal-only document or password manager instead.
 
+## Bench versus field transmit power
+
+On 2026-11-14, Microhard pMDDL2450 radios a short distance apart on the bench at **20 dBm**
+transmit (TX) power produced heavy video artifacts and burst loss:
+
+- Comparing the vehicle's outgoing UDP video datagrams with datagrams received on the GCS Pi's
+  video port over the same 10 seconds showed about **44% loss**, with a longest silence of
+  about **0.76 seconds**.
+- A large-packet `ping -c 100 -i 0.2 -s 1200 <GCS Pi IP>` between the Pis showed **73% loss**
+  and about **190 ms** average round trip. Earlier tiny pings showed 0% loss and 3-14 ms.
+- Only the UDP-mode runs, `iperf3 -c <GCS Pi IP> -u -b 1M` and `iperf3 -c <GCS Pi IP> -u -b 3M`,
+  failed with `control socket has closed unexpectedly` on the client and
+  `unable to receive parameters from client: Bad file descriptor` on the server.
+
+Earlier in the day, before the problem appeared, a TCP `iperf3` test at the same **20 dBm**
+setting gave about **8 Mbit/s** with **45 retransmits**. Link quality varied over time;
+a single good test at high power does not prove the link is healthy.
+
+Receiver overload from nearby radios transmitting at high power is consistent with this
+evidence. Radio signal-strength and noise readings were **not collected**, so the cause was
+not confirmed with those readings.
+
+Lowering the radios' TX power from **20 dBm to 10 dBm** fixed the measured link problem.
+The record does not state whether one or both radios were changed; note each radio's setting
+when you do this. The same large-packet ping returned 100 of 100 replies (0% loss), typically about 3 ms and averaging
+8.3 ms, with occasional spikes to about 45 ms and about 110 ms on the first packet.
+The TCP test `iperf3 -c <GCS Pi IP> -t 5` then gave about **10.3 Mbit/s**, with **4 retransmits**.
+Picture quality after the radio power fix has not been confirmed.
+
+On the bench, keep radios a few metres apart and lower TX power. **10 dBm is a bench setting
+only; do not copy it to field use.** The operator must choose a separately tested, higher power
+for the actual field distance during field testing; no field-distance power was verified here.
+When diagnosing, read each radio's signal strength and noise on its web page. Menu locations
+are model-specific; do not assume a menu name.
+
+Follow [Checking the link](VIDEO_RELAY_SETUP.md#checking-the-link) for the service, large-packet
+ping and throughput commands. An earlier comparison of the Pis' total UDP counters gave a
+misleading "no loss" result because those counters include all UDP traffic. Count only the
+video port for video-loss measurements, or use the large-packet ping baseline. See the
+[relay status](VIDEO_RELAY_SETUP.md#status) for the verified and unverified video results.
+
 ## Pre-flight checklist
 
+- [ ] Confirm TX power suits the actual distance and was not left at the bench value; follow
+      [Bench versus field transmit power](#bench-versus-field-transmit-power).
 - [ ] Confirm each radio's serial-to-IP destination port matches your internal assignment record,
       not a shared default.
 - [ ] Confirm QGC has one UDP link per vehicle, each bound to the matching port, before

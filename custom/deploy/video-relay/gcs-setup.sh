@@ -58,6 +58,7 @@ User=mediamtx
 ExecStart=/opt/mediamtx/mediamtx /etc/mediamtx/mediamtx.yml
 Restart=always
 RestartSec=2
+TimeoutStopSec=10
 
 [Install]
 WantedBy=multi-user.target

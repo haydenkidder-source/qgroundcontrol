@@ -2,17 +2,37 @@
 
 ## Status
 
-- **Reported bench observations:** a vehicle USB webcam stream sent directly over User Datagram
-  Protocol (UDP) to the GCS side was received and displayed with some glitching, which the owner
-  attributed to 2.4 GHz interference. The receiving application used for that test is not recorded.
-  The owner reported the laptop ping sweeps as completed; the resulting address list matched the
-  addressing scheme. At the time of writing, the stream had not yet been pulled into the operator
-  laptop's QGroundControl (QGC).
-- **Untested on hardware:** the MediaMTX relay and the start-on-boot services described below.
-  Whether this QGC build accepts an `rtsp://` video source is also untested and must be
-  confirmed in the application. Do not treat direct UDP playback as proof of relay playback.
-- The old direct-to-receiver pipeline used Real-time Transport Protocol (RTP), with
-  `rtph264pay`. The relay pipeline below uses MPEG transport stream (MPEG-TS), not RTP.
+The following results were verified on the bench on **2026-11-14**, using one GCS Pi and
+one vehicle Pi, both Raspberry Pi 5 running Raspberry Pi OS 64-bit. Here, verified covers
+installation, unattended service startup, relay availability and external RTSP playback;
+it does not establish field performance or RTSP playback inside QGroundControl (QGC).
+
+**Verified:**
+
+- Both installers ran. The GCS installer fetched MediaMTX v1.21.3, the latest release at the time.
+- After reboot, `mediamtx` started by itself on the GCS Pi, bound User Datagram Protocol (UDP) ports
+  5602-5604 and served RTSP on 8554, with HLS on 8888 and WebRTC on 8889.
+- `vehicle-stream` started by itself at boot. Its pipeline reached PLAYING about 3 seconds
+  after boot and used about 20% of one core at 720p10 with a 1 Mbit/s target bitrate.
+- After both Pis rebooted, both services came up unattended. About 2 seconds after the vehicle
+  service started, MediaMTX logged `stream is available and online, 1 track (H264)` for its path.
+- RTSP readers connected using Transmission Control Protocol (TCP), locally on the GCS Pi
+  and from a Windows laptop.
+  Laptop playback worked with at least two different players; the exact players were not
+  recorded. GCS Pi CPU use stayed under about 15%.
+
+**Not verified:**
+
+- RTSP as a video source inside the custom QGC build; confirm support in the application.
+- Picture quality after the radio power fix has not been confirmed.
+- Field-distance transmit power and behavior with more than one vehicle.
+- Browser playback over HLS or WebRTC; listening ports alone do not verify playback.
+- The new `TimeoutStopSec=10` directive in the GCS unit; it has not yet been exercised on hardware.
+
+Heavy video artifacts on the bench led to the
+[radio power investigation](FIELD_RADIO_SETUP.md#bench-versus-field-transmit-power).
+The old direct-to-receiver pipeline used Real-time Transport Protocol (RTP), with
+`rtph264pay`. The relay pipeline below uses MPEG transport stream (MPEG-TS), not RTP.
 
 ## Video path
 
@@ -41,8 +61,8 @@ These are generic examples only; never share a port between vehicles.
 
 Operators request `rtsp://10.0.1.2:8554/<path>` using Real Time Streaming Protocol (RTSP).
 The configuration also enables HTTP Live Streaming (HLS) on port 8888 and browser viewing
-through Web Real-Time Communication (WebRTC) on port 8889. These relay viewing options remain
-untested on hardware.
+through Web Real-Time Communication (WebRTC) on port 8889. See [Status](#status) for the
+verified RTSP playback and the remaining checks.
 
 ## Installation prerequisites
 
@@ -130,10 +150,15 @@ User=mediamtx
 ExecStart=/opt/mediamtx/mediamtx /etc/mediamtx/mediamtx.yml
 Restart=always
 RestartSec=2
+TimeoutStopSec=10
 
 [Install]
 WantedBy=multi-user.target
 ```
+
+The installer now writes `TimeoutStopSec=10` to limit the stop wait to 10 seconds. This
+change has not yet been exercised on hardware. For existing installations, see
+[Slow MediaMTX stop](#slow-mediamtx-stop) for the unit edit and reload command.
 
 After changing the configuration, restart the service. Check status and follow its log:
 
@@ -266,21 +291,44 @@ journalctl -u vehicle-stream.service -f
 
 ## Viewing and checking the relay
 
-From the operator laptop, test the generic `vehicleA` path with FFmpeg's `ffplay` viewer:
+Test the generic `vehicleA` path with FFmpeg's `ffplay` viewer on the GCS Pi or operator laptop:
 
 ```bash
 ffplay -rtsp_transport tcp rtsp://10.0.1.2:8554/vehicleA
 ```
 
-Alternatively, in VLC open Media > Open Network Stream and enter that URL. Browser endpoints
-for the same example are `http://10.0.1.2:8888/vehicleA` (HLS) and
-`http://10.0.1.2:8889/vehicleA` (WebRTC). Confirm playback on hardware; these relay paths have
-not yet been verified. Confirm whether this QGC build offers and accepts an RTSP source in
-the application before trying to use the URL there.
+RTSP over TCP worked on the bench; see [Status](#status) for the scope of verification.
+Confirm whether this custom QGC build offers and accepts an RTSP source in the application
+before trying to use the URL there. RTSP-in-QGC remains untested.
 
-To check start-on-boot behavior, reboot each Pi after setup, inspect both services with the
-status and log commands above, then test playback again. This is a required hardware check,
-not a result already obtained.
+To repeat the start-on-boot check after setup changes, reboot each Pi, inspect both services
+with the status and log commands above, then test playback again. Both services already
+passed the unattended reboot check on 2026-11-14.
+
+### Windows laptop viewers
+
+Configure the laptop adapter with a unique address from
+[Network addressing](NETWORK_ADDRESSING.md), mask `255.255.0.0` and an empty gateway.
+Windows `ping` uses `-n` for the number of requests, rather than Linux's `-c`.
+The bench record confirms playback with at least two players but does not identify them;
+the following are viewing instructions, not a record of which players were used.
+
+- **VLC:** open Media > Open Network Stream and enter `rtsp://10.0.1.2:8554/vehicleA`.
+  In Preferences, select All settings, then Input / Codecs > Demuxers > RTP/RTSP, and enable
+  "Use RTP over RTSP (TCP)".
+- **FFmpeg's ffplay:** install from a Windows terminal, then open the RTSP URL:
+
+  ```powershell
+  winget install Gyan.FFmpeg
+  ffplay -fflags nobuffer -flags low_delay -rtsp_transport tcp rtsp://10.0.1.2:8554/vehicleA
+  ```
+
+- **Browser pages:** use `http://<GCS Pi>:8888/<path>/` for HLS or
+  `http://<GCS Pi>:8889/<path>/` for WebRTC. Replace `<GCS Pi>` with its IP address and `<path>`
+  with the configured name, for example `vehicleA`. Browser playback was not verified.
+
+Windows Firewall may block inbound UDP, affecting WebRTC or a direct-UDP receiver on the
+laptop. This was not verified on the bench. See [Troubleshooting](#troubleshooting) for other checks.
 
 Raspberry Pi OS has no firewall by default. If Uncomplicated Firewall (`ufw`) is enabled on
 the GCS Pi, allow the configured video UDP ports and TCP ports 8554, 8888 and 8889. For the
@@ -295,22 +343,180 @@ sudo ufw allow 8889/tcp
 
 ## Bandwidth and troubleshooting
 
-Bench parameters used so far are 1280x720 at 10 fps, about 1 Mbps, with a keyframe every five
-frames (0.5 seconds). The Raspberry Pi 5 has no hardware H.264 encoder; x264 runs on its processor
-and is comfortable at this size. These parameters do not establish that the relay works.
+The verified single-vehicle bench settings were 1280x720 at 10 fps, with a 1 Mbit/s target
+bitrate and a keyframe every five frames (0.5 seconds). The vehicle pipeline used about 20%
+of one core, and GCS Pi CPU use stayed under about 15%. These results do not establish
+capacity for multiple vehicles. Keep bandwidth headroom for MAVLink and other vehicles
+sharing radio airtime. See
+[Bench versus field transmit power](FIELD_RADIO_SETUP.md#bench-versus-field-transmit-power)
+for the measured link problems and the before/after results.
 
-An example mesh measurement in a noisy 2.4 GHz environment gave about 8 Mbps Transmission
-Control Protocol (TCP) throughput from vehicle to GCS, with some retransmissions. This is not
-a guarantee. Budget video well below that measurement and keep headroom for MAVLink and for
-other vehicles sharing radio airtime.
+### Checking the link
+
+Run order-sensitive commands **one at a time** and wait for each to finish. Pasting several
+commands at once can cancel a service stop with a later start. See
+[Terminal basics](#terminal-basics) if Linux commands are new to you.
+
+1. **Check the services.** On the GCS Pi:
+
+   ```bash
+   systemctl status mediamtx --no-pager
+   journalctl -u mediamtx -n 30 --no-pager
+   ```
+
+   On the vehicle Pi:
+
+   ```bash
+   systemctl status vehicle-stream --no-pager
+   journalctl -u vehicle-stream -n 30 --no-pager
+   ```
+
+2. **Check who owns the video port.** On the GCS Pi, use this command for the generic unit 2
+   port; substitute the assigned port for another unit:
+
+   ```bash
+   sudo ss -ulnp | grep 5602
+   ```
+
+   MediaMTX must own the port. See [Video port already in use](#video-port-already-in-use).
+
+3. **Measure large-packet loss with video stopped.** On the vehicle Pi, stop video first:
+
+   ```bash
+   sudo systemctl stop vehicle-stream
+   ```
+
+   When that finishes, run the following, replacing `<GCS Pi IP>` with the GCS Pi's address:
+
+   ```bash
+   ping -c 100 -i 0.2 -s 1200 <GCS Pi IP>
+   ```
+
+   Tiny pings earlier showed 0% loss and 3-14 ms round trips even while the large-packet test
+   later showed severe loss. Use the large-packet test for this baseline. Check each radio's
+   signal strength and noise readings on its web page; menu locations are model-specific.
+   Those readings were not collected during the bench investigation.
+
+4. **Measure throughput.** On the GCS Pi, start the server:
+
+   ```bash
+   iperf3 -s
+   ```
+
+   In a terminal on the vehicle Pi, run the TCP client:
+
+   ```bash
+   iperf3 -c <GCS Pi IP> -t 5
+   ```
+
+   Press Ctrl-C on the GCS Pi to stop the server when done. Restart video on the vehicle Pi
+   after completing the baseline checks:
+
+   ```bash
+   sudo systemctl start vehicle-stream
+   ```
+
+5. **Compare datagrams carefully.** The following helper was used on both Pis to inspect
+   their UDP counters. Run it on both at about the same moment while video is running:
+
+   ```bash
+   f() { awk '/^Udp:/ && $2 ~ /^[0-9]/ {print "InDatagrams="$2, "OutDatagrams="$5}' /proc/net/snmp; }
+   f; sleep 10; f
+   ```
+
+   Subtract the first reading from the second; compare the vehicle Pi's `OutDatagrams` change
+   with the GCS Pi's `InDatagrams` change. These totals count **all UDP traffic**, not just video,
+   so use them as a rough guide only. An earlier comparison of total counters misleadingly
+   suggested "no loss". Do not treat total UDP counter differences as a video-loss measurement.
+
+   The per-port loss figure in the bench investigation (about **44% over 10 seconds**) came
+   from a short throwaway listener script that counted only datagrams on the video port.
+   That script is not kept in this repository. Until a tool for per-port counting is added,
+   the large-packet ping in step 3 is the recommended baseline.
+
+In testing, an `ffprobe` run that was piped into `head` and ended by a timeout printed nothing,
+and output buffering is the suspected cause (not confirmed). Use a packet-count limit and
+write to a file. This example has not been run exactly as written on hardware:
+
+```bash
+ffprobe -rtsp_transport tcp -read_intervals "%+#20" -show_packets \
+  rtsp://10.0.1.2:8554/vehicleA > stream-packets.txt 2>&1
+```
+
+This probe inspects media packets; it is not a count of video UDP datagrams.
+
+### Troubleshooting
 
 - **No connection:** repeat the laptop ping sweep and mask checks in
   [Network addressing](NETWORK_ADDRESSING.md#troubleshooting).
-- **No relay video:** inspect both service logs. Check the camera format, destination host,
-  vehicle port and matching MediaMTX path. The relay requires MPEG-TS, not the old RTP stream.
+- **No relay video:** inspect both service logs using [Checking the link](#checking-the-link).
+  Check the camera format, destination host, vehicle port and matching MediaMTX path.
+  The relay requires MPEG-TS, not the old RTP stream.
 - **Camera fails at boot:** inspect the vehicle log and device path. The service retries every
-  three seconds after exit; hardware behavior still needs verification.
-- **Glitchy video under interference:** this occurred during direct UDP bench playback.
-  Separate radios and antennas, try another radio channel, or shorten the keyframe interval.
-  Smaller RTP/UDP packets are another mitigation to test; RTP applies to the old direct path,
-  while this relay uses MPEG-TS over UDP. The relay pipeline already uses 1316-byte datagrams.
+  three seconds after exit. Unattended startup worked in the bench test; recovery from a
+  camera-not-ready condition was not separately verified.
+- **Heavy artifacts or burst loss:** follow [Checking the link](#checking-the-link) and
+  [Bench versus field transmit power](FIELD_RADIO_SETUP.md#bench-versus-field-transmit-power).
+  Close radios at high power can overload each other's receivers; do not diagnose the link
+  from tiny pings alone. Picture quality after the radio power fix has not been confirmed.
+- **Windows laptop cannot view:** check the adapter mask and empty gateway, then follow
+  [Windows laptop viewers](#windows-laptop-viewers) to use RTSP over TCP. Windows Firewall
+  may block inbound UDP for WebRTC or direct UDP; this possibility was not verified.
+
+#### Video port already in use
+
+`bind: address already in use` for a video port in the MediaMTX log occurred when a leftover
+`gst-launch-1.0 ... udpsrc` test receiver still held that port. Find its process ID (PID) on
+the GCS Pi with `sudo ss -ulnp | grep 5602`, substituting the affected port. Stop the identified
+test receiver with `kill <PID>` (replace `<PID>` with its number), or reboot.
+
+The relay must own each video port on the GCS Pi. No other receiver, including QGC running
+on that Pi, may listen on it; viewers should connect to the relay instead.
+
+#### Timeouts for idle vehicle paths
+
+Repeating `[path X] ... read udp4 ...: i/o timeout` messages every 15 seconds are expected
+for each declared path with no vehicle sending. This is log noise, not a fault.
+
+#### MoQ certificate warning
+
+Startup warnings such as `[MoQ] certificate auto.key not found ... permission denied` concern
+a MediaMTX listener this project does not use. The warning was harmless in testing.
+MoQ has not yet been disabled.
+
+#### Slow MediaMTX stop
+
+`sudo systemctl stop mediamtx` can take a long time while MediaMTX waits for connected viewers
+to disconnect; systemd's default stop timeout is 90 seconds. Close VLC, browser tabs and
+leftover `ffmpeg` or `ffprobe` viewers first. On the GCS Pi, check for connections with:
+
+```bash
+sudo ss -tnp | grep -E ':8554|:8888|:8889'
+```
+
+The [GCS installer](deploy/video-relay/gcs-setup.sh) now adds `TimeoutStopSec=10` to the
+[GCS boot service](#gcs-boot-service). This directive has **not yet been exercised on hardware**.
+For an existing installation, add the line below under `[Service]` in
+`/etc/systemd/system/mediamtx.service`:
+
+```ini
+TimeoutStopSec=10
+```
+
+Then reload systemd's unit definitions:
+
+```bash
+sudo systemctl daemon-reload
+```
+
+## Terminal basics
+
+- `less script.sh` opens the script in a viewer and installs nothing. Press `q` to quit.
+  Reading a script before running it as root is a review step; run the appropriate installer
+  command from [Installation prerequisites](#installation-prerequisites) and the setup sections
+  when ready to install.
+- Ctrl-C stops a running command or a log follow such as `journalctl -f`.
+- `sudo` runs a command as administrator.
+- Tab completes file or command names. The Up arrow recalls the last command.
+- A stray character such as `~` pasted onto a package name makes `apt` fail with
+  "Unable to locate package"; nothing from that line installs. Check the pasted text before retrying.
