@@ -3,6 +3,7 @@
 #include <memory>
 
 #include <QtCore/QFile>
+#include <QtCore/QScopeGuard>
 #include <QtCore/QSet>
 #include <QtCore/QTemporaryDir>
 #include <QtQml/QQmlApplicationEngine>
@@ -11,12 +12,24 @@
 #include <QtQml/QQmlProperty>
 #include <QtQuick/QQuickItem>
 
+#include "AppSettings.h"
+#include "Fact.h"
 #include "FlightPathSegment.h"
+#include "GeoFenceController.h"
+#include "PlanMasterController.h"
 #include "QGCCorePlugin.h"
+#include "QGCFenceCircle.h"
+#include "QGCFencePolygon.h"
+#include "QGCMAVLink.h"
 #include "QGCMapCircle.h"
 #include "QGCMapPolygon.h"
 #include "QGCPlanStyle.h"
+#include "QGroundControlQmlGlobal.h"
 #include "QmlObjectListModel.h"
+#include "RallyPoint.h"
+#include "RallyPointController.h"
+#include "SettingsManager.h"
+#include "Vehicle.h"
 
 namespace {
 QList<QQuickItem*> componentPlanStyleItems(QQuickItem* root, const QString& name)
@@ -570,6 +583,217 @@ void PlanStyleComponentTest::_stockBoundaryVisuals()
     polygon.setVertexDrag(false);
     QCOMPARE(QQmlProperty(fill(true), QStringLiteral("border.width")).read().toReal(),
              fence ? (inclusion ? 2.0 : 0.0) : 5.0);
+}
+
+void PlanStyleComponentTest::_stockEditorVisuals_data()
+{
+    QTest::addColumn<bool>("disabledContext");
+    QTest::addColumn<bool>("px4");
+    QTest::addColumn<bool>("absolute");
+    QTest::newRow("null-ardupilot") << false << false << true;
+    QTest::newRow("disabled-ardupilot") << true << false << true;
+    QTest::newRow("null-px4") << false << true << true;
+    QTest::newRow("disabled-px4") << true << true << true;
+    QTest::newRow("null-ardupilot-relative") << false << false << false;
+    QTest::newRow("disabled-ardupilot-relative") << true << false << false;
+    QTest::newRow("null-px4-relative") << false << true << false;
+    QTest::newRow("disabled-px4-relative") << true << true << false;
+}
+
+void PlanStyleComponentTest::_stockEditorVisuals()
+{
+    QFETCH(bool, disabledContext);
+    QFETCH(bool, px4);
+    QFETCH(bool, absolute);
+    auto* plugin = QGCCorePlugin::instance();
+    QVERIFY(plugin);
+    auto destroyEngine = [plugin](QQmlApplicationEngine* engine) { plugin->destroyQmlApplicationEngine(engine); };
+    std::unique_ptr<QQmlApplicationEngine, decltype(destroyEngine)> engine(plugin->createQmlApplicationEngine(nullptr),
+                                                                           destroyEngine);
+    QVERIFY(engine);
+    auto* settings = SettingsManager::instance()->appSettings();
+    auto* firmware = settings->offlineEditingFirmwareClass();
+    auto* vehicleClass = settings->offlineEditingVehicleClass();
+    const auto savedFirmware = firmware->rawValue();
+    const auto savedVehicleClass = vehicleClass->rawValue();
+    const auto restoreSettings = qScopeGuard([=] {
+        firmware->setRawValue(savedFirmware);
+        vehicleClass->setRawValue(savedVehicleClass);
+    });
+    const auto autopilot = px4 ? MAV_AUTOPILOT_PX4 : MAV_AUTOPILOT_ARDUPILOTMEGA;
+    // Empty-mission initialization makes even the explicit test vehicle track these settings again.
+    firmware->setRawValue(QGCMAVLink::firmwareClass(autopilot));
+    vehicleClass->setRawValue(QGCMAVLink::vehicleClass(MAV_TYPE_QUADROTOR));
+    PlanMasterController master(autopilot, MAV_TYPE_QUADROTOR);
+    QVERIFY(master.controllerVehicle());
+    master.controllerVehicle()->setParent(&master);
+    master.start();
+    QVERIFY(master.controllerVehicle());
+    QVERIFY2(master.offline() && master.controllerVehicle()->firmwareType() == autopilot,
+             qPrintable(QStringLiteral("Expected offline %1 editor, got firmware %2")
+                            .arg(px4 ? QStringLiteral("PX4") : QStringLiteral("ArduPilot"))
+                            .arg(master.controllerVehicle()->firmwareType())));
+    QCOMPARE(master.controllerVehicle()->px4Firmware(), px4);
+    const QGeoCoordinate home(47.397742, 8.545594, 120);
+    auto* fence = master.geoFenceController();
+    const auto topLeft = home.atDistanceAndAzimuth(300, 315);
+    const auto bottomRight = home.atDistanceAndAzimuth(300, 135);
+    for (bool inclusion : {true, false}) {
+        fence->addInclusionPolygon(topLeft, bottomRight);
+        auto* polygon = fence->polygons()->value<QGCFencePolygon*>(fence->polygons()->count() - 1);
+        polygon->setInclusion(inclusion);
+        fence->addInclusionCircle(topLeft, bottomRight);
+        fence->circles()->value<QGCFenceCircle*>(fence->circles()->count() - 1)->setInclusion(inclusion);
+    }
+    fence->clearAllInteractive();
+    auto* rally = master.rallyPointController();
+    rally->addPoint(home.atDistanceAndAzimuth(100, 90));
+    rally->addPoint(home.atDistanceAndAzimuth(200, 90));
+    auto* point = rally->points()->value<RallyPoint*>(0);
+    QVERIFY(point);
+    for (int i = 0; i < rally->points()->count(); ++i) {
+        rally->points()->value<RallyPoint*>(i)->changeAltitudeFrame(QGroundControlQmlGlobal::AltitudeFrameRelative);
+    }
+    const auto frame =
+        absolute ? QGroundControlQmlGlobal::AltitudeFrameAbsolute : QGroundControlQmlGlobal::AltitudeFrameRelative;
+    // Changing to the current frame cancels terrain following but does not apply the seed altitude.
+    point->altitude()->setRawValue(137);
+    point->setAltitudeFrame(frame);
+    QCOMPARE(point->coordinate().altitude(), 137.0);
+    QCOMPARE(point->altitudeFrame(), frame);
+    QVERIFY(!point->terrainQueryPending());
+    rally->setCurrentRallyPoint(point);
+    engine->rootContext()->setContextProperty(QStringLiteral("testFence"), fence);
+    engine->rootContext()->setContextProperty(QStringLiteral("testRally"), rally);
+    QQmlComponent component(engine.get());
+    component.setData(R"(
+        import QtQuick
+        import QtLocation
+        import QtPositioning
+        import QGroundControl
+        import QGroundControl.Controls
+        import QGroundControl.FlightMap
+        import QGroundControl.PlanView
+        Map {
+            id: testMap
+            width: 640
+            height: 480
+            center: QtPositioning.coordinate(47.397742, 8.545594)
+            zoomLevel: 16
+            plugin: Plugin { name: "QGroundControl" }
+            property bool planView: true
+            property bool isSatelliteMap: false
+            property rect centerViewport: Qt.rect(0, 0, width, height)
+            property int _editingLayer: 3
+            property int _layerRally: 3
+            property bool disabledContext: false
+            property var style: disabledContext ? disabledStyle : null
+            readonly property color ordinary: palette.mapIndicator
+            QGCPalette { id: palette }
+            QtObject { id: mainWindow; function allowViewSwitch() { return true } }
+            QtObject {
+                id: disabledStyle
+                property bool enabled: false
+                property real vehicleId: 77
+                property color lineColor: "magenta"
+                property real boundaryLineWidth: 9
+                property var keepInDashPattern: [1, 9]
+                property var keepOutDashPattern: [7, 1]
+                property color keepOutFillColor: "cyan"
+                property color markerBorderColor: "cyan"
+                property real markerBorderWidth: 7
+                property color markerTextColor: "yellow"
+            }
+            GeoFenceMapVisuals {
+                map: testMap
+                myGeoFenceController: testFence
+                homePosition: QtPositioning.coordinate(47.397742, 8.545594)
+                planView: true
+                planStyle: testMap.style
+                opacity: 0.5
+            }
+            RallyPointMapVisuals {
+                map: testMap
+                myRallyPointController: testRally
+                planView: true
+                interactive: true
+                planStyle: testMap.style
+                opacity: 0.5
+            }
+        }
+    )",
+                      QUrl());
+    QTRY_VERIFY_WITH_TIMEOUT(component.status() != QQmlComponent::Loading, TestTimeout::shortMs());
+    QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+    std::unique_ptr<QObject> root(
+        component.createWithInitialProperties({{QStringLiteral("disabledContext"), disabledContext}}));
+    QVERIFY2(root, qPrintable(component.errorString()));
+    auto* map = qobject_cast<QQuickItem*>(root.get());
+    QVERIFY(map);
+    const auto named = [map](const QString& name) { return componentPlanStyleItems(map, name); };
+    QTRY_COMPARE_WITH_TIMEOUT(named(QStringLiteral("planFenceFill")).size(), 5, TestTimeout::shortMs());
+    QTRY_COMPARE_WITH_TIMEOUT(named(QStringLiteral("planRallyPoint")).size(), 2, TestTimeout::shortMs());
+    QVERIFY(named(QStringLiteral("planKeepInOutline")).isEmpty());
+    QVERIFY(named(QStringLiteral("planKeepOutOutline")).isEmpty());
+    for (auto* fill : named(QStringLiteral("planFenceFill"))) {
+        const bool inclusion = fill->property("inclusion").toBool();
+        QCOMPARE(QQmlProperty(fill, QStringLiteral("border.width")).read().toReal(), inclusion ? 2.0 : 0.0);
+        QCOMPARE(QQmlProperty(fill, QStringLiteral("border.color")).read().value<QColor>(),
+                 QColor(QStringLiteral("orange")));
+        QCOMPARE(fill->property("color").value<QColor>(),
+                 QColor(inclusion ? QStringLiteral("transparent") : QStringLiteral("orange")));
+        QCOMPARE(fill->opacity(), inclusion ? 0.5 : 0.1);
+    }
+    for (auto* marker : named(QStringLiteral("planRallyPoint"))) {
+        const bool selected = qvariant_cast<QObject*>(marker->property("rallyPointObject")) == point;
+        QCOMPARE(marker->property("markerShape").toString(), QStringLiteral("circle"));
+        QCOMPARE(marker->property("label").toString(), QStringLiteral("R"));
+        QCOMPARE(marker->property("markerBorderWidth").toReal(), 0.0);
+        QCOMPARE(marker->property("markerColor").value<QColor>(),
+                 selected ? QColor(QStringLiteral("green")) : map->property("ordinary").value<QColor>());
+        QCOMPARE(marker->property("checked").toBool(), selected);
+        QCOMPARE(marker->opacity(), 0.5);
+        auto* loader = qvariant_cast<QQuickItem*>(marker->property("sourceItem"));
+        QVERIFY(loader);
+        auto* source = qvariant_cast<QQuickItem*>(loader->property("item"));
+        QVERIFY(source);
+        QCOMPARE(source->property("renderedTextColor").value<QColor>(), QColor(QStringLiteral("white")));
+        const auto halos = componentPlanStyleItems(source, QStringLiteral("planWaypointSelectionHalo"));
+        QCOMPARE(halos.size(), 1);
+        QCOMPARE(halos.first()->isVisible(), selected);
+    }
+    QQuickItem* drag = nullptr;
+    for (auto* item : map->childItems()) {
+        if (qvariant_cast<QObject*>(item->property("rallyPointObject")) == point &&
+            item->metaObject()->indexOfProperty("itemCoordinate") >= 0) {
+            drag = item;
+        }
+    }
+    QVERIFY(drag && drag->isVisible());
+    auto moved = point->coordinate().atDistanceAndAzimuth(30, 45);
+    moved.setAltitude(-500);
+    QVERIFY(drag->setProperty("itemCoordinate", QVariant::fromValue(moved)));
+    QCOMPARE(point->coordinate().altitude(), 137.0);
+    QVERIFY(point->coordinate().distanceTo(moved) < 0.01);
+    QVERIFY(!point->terrainQueryPending());
+    QVERIFY(QMetaObject::invokeMethod(drag, "dragStop"));
+    QCOMPARE(point->terrainQueryPending(), px4 && absolute);
+    if (px4 && absolute) {
+        QTRY_VERIFY_WITH_TIMEOUT(!point->terrainQueryPending(), TestTimeout::mediumMs());
+        QVERIFY(!point->terrainQueryFailed());
+        // The unit-test tile provider returns zero terrain height outside its Point Nemo regions.
+        QCOMPARE(point->coordinate().altitude(), 0.0);
+    } else {
+        QCOMPARE(point->coordinate().altitude(), 137.0);
+    }
+    QCOMPARE(point->altitudeFrame(), frame);
+    QVERIFY(point->coordinate().distanceTo(moved) < 0.01);
+    point->changeAltitudeFrame(QGroundControlQmlGlobal::AltitudeFrameRelative, 137);
+    QVERIFY(!point->terrainQueryPending());
+    QVERIFY(map->setProperty("_editingLayer", 1));
+    for (auto* marker : named(QStringLiteral("planRallyPoint"))) {
+        QVERIFY(!marker->property("checked").toBool());
+    }
 }
 
 UT_REGISTER_TEST(PlanStyleComponentTest, TestLabel::Unit)
