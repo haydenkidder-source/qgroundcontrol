@@ -12,7 +12,9 @@
 #include <QtCore/QSet>
 #include <QtCore/QSettings>
 #include <QtCore/QTimer>
+#include <QtGui/QGuiApplication>
 #include <QtGui/QImage>
+#include <QtGui/QStyleHints>
 #include <QtQml/QQmlApplicationEngine>
 #include <QtQml/QQmlComponent>
 #include <QtQml/QQmlContext>
@@ -396,15 +398,20 @@ bool planStyleEditorProjected(QQuickItem* map)
         }
         if (item->metaObject()->indexOfProperty("itemCoordinate") >= 0) {
             auto* indicator = qvariant_cast<QQuickItem*>(item->property("itemIndicator"));
-            if (!indicator || !indicator->isVisible() ||
-                !item->property("itemCoordinate").value<QGeoCoordinate>().isValid()) {
+            if (!indicator || !indicator->isVisible()) {
+                continue;
+            }
+            // Idle polygon draggers keep their creation coordinate while the indicator follows model edits.
+            const auto coordinate = (item->property("_dragStartSignalled").toBool() ? item->property("itemCoordinate")
+                                                                                    : indicator->property("coordinate"))
+                                        .value<QGeoCoordinate>();
+            if (!coordinate.isValid()) {
                 continue;
             }
             const auto anchor = indicator->property("anchorPoint").toPointF() +
                                 QPointF(item->property("_touchMarginHorizontal").toReal(),
                                         item->property("_touchMarginVertical").toReal());
-            if (!planStyleProjectedPosition(map, item->property("itemCoordinate").value<QGeoCoordinate>(),
-                                            item->mapToScene(anchor))) {
+            if (!planStyleProjectedPosition(map, coordinate, item->mapToScene(anchor))) {
                 return false;
             }
         }
@@ -1686,8 +1693,12 @@ void PlanStyleUITest::_liveBoundaryVisuals()
     QVERIFY(!QTest::currentTestFailed());
     // Disabling the context tears down outlines and returns every actual fill to its stock branch.
     QList<QPointer<QQuickItem>> outlines;
+    QList<QPointer<QObject>> outlineLoaders;
     for (auto* item : named(QStringLiteral("planKeepInOutline")) + named(QStringLiteral("planKeepOutOutline"))) {
         outlines.append(item);
+        auto* loader = item->parent();
+        QVERIFY(loader && qvariant_cast<QQuickItem*>(loader->property("item")) == item);
+        outlineLoaders.append(loader);
     }
     QList<QPointer<QQuickItem>> styledMarkers;
     for (auto* marker : named(QStringLiteral("planRallyPoint"))) {
@@ -1697,7 +1708,25 @@ void PlanStyleUITest::_liveBoundaryVisuals()
         QVERIFY(styledMarkers.last());
     }
     polygon->setShowAltColor(false);
+    for (const auto& outline : outlines) {
+        QVERIFY(outline && outline->property("coalesceProjection").toBool());
+        QVERIFY(!outline->property("_projectionPending").toBool());
+    }
+    // Clear the real Loaders with projections queued, before returning to the event loop.
+    QVERIFY(root->setProperty("width", 780));
+    QVERIFY(root->setProperty("height", 580));
+    for (const auto& outline : outlines) {
+        QVERIFY(outline->property("_projectionPending").toBool());
+    }
     QVERIFY(root->setProperty("styleSupported", false));
+    for (const auto& loader : outlineLoaders) {
+        QVERIFY(loader && !loader->property("active").toBool());
+        QVERIFY(!qvariant_cast<QQuickItem*>(loader->property("item")));
+    }
+    QObject projectionBarrier;
+    bool projectionsDrained = false;
+    QTimer::singleShot(0, &projectionBarrier, [&] { projectionsDrained = true; });
+    QTRY_VERIFY_WITH_TIMEOUT(projectionsDrained, TestTimeout::shortMs());
     QTRY_VERIFY_WITH_TIMEOUT(
         named(QStringLiteral("planKeepInOutline")).isEmpty() && named(QStringLiteral("planKeepOutOutline")).isEmpty(),
         TestTimeout::shortMs());
@@ -2075,21 +2104,40 @@ void PlanStyleUITest::_editPlan(QQuickItem* view)
                  "The selected drag item must start with its model's coordinate altitude");
         const auto start = source->mapToScene(marker->property("anchorPoint").toPointF()).toPoint();
         const QPoint delta(-70, 50);
+        const int activationDistance = QGuiApplication::styleHints()->startDragDistance() + 4;
+        const QPoint activePointer = start + QPoint(-activationDistance - 4, activationDistance + 4);
         QTest::mousePress(_window, Qt::LeftButton, Qt::NoModifier, start);
+        // The threshold-crossing event rebases Qt's drag; the next move activates it.
+        QTest::mouseMove(_window, start + QPoint(-activationDistance, activationDistance));
+        QTest::mouseMove(_window, activePointer);
+        const bool active = waitForCondition(
+            [&] {
+                return planStyleRenderMap(map) && drag->property("_dragStartSignalled").toBool() &&
+                       planStyleMapItemProjected(map, marker);
+            },
+            TestTimeout::shortMs(), QStringLiteral("Plan point drag active and projected"));
+        if (!active) {
+            QTest::mouseRelease(_window, Qt::LeftButton, Qt::NoModifier, activePointer);
+            QVERIFY(active);
+        }
+        const auto activeAnchor = source->mapToScene(marker->property("anchorPoint").toPointF());
         for (int i = 1; i <= 10; ++i) {
-            QTest::mouseMove(_window, start + delta * i / 10);
+            QTest::mouseMove(_window, activePointer + delta * i / 10);
         }
         const bool moved = waitForCondition(
             [&] {
                 return planStyleRenderMap(map) &&
-                       point->property("coordinate").value<QGeoCoordinate>().distanceTo(before) > 1;
+                       point->property("coordinate").value<QGeoCoordinate>().distanceTo(before) > 1 &&
+                       planStyleMapItemProjected(map, marker);
             },
             TestTimeout::shortMs(), QStringLiteral("Plan point moved while held"));
         const auto held = point->property("coordinate").value<QGeoCoordinate>();
         const auto heldDragCoordinate = drag->property("itemCoordinate").value<QGeoCoordinate>();
         const auto heldAltitude = altitude->rawValue().toDouble();
-        QTest::mouseRelease(_window, Qt::LeftButton, Qt::NoModifier, start + delta);
+        const auto heldAnchor = source->mapToScene(marker->property("anchorPoint").toPointF());
+        QTest::mouseRelease(_window, Qt::LeftButton, Qt::NoModifier, activePointer + delta);
         QVERIFY(moved);
+        QVERIFY((heldAnchor - activeAnchor - delta).manhattanLength() < 5);
         // SimpleMissionItem coordinates are 2D; altitude lives in a separate Fact. Rally coordinates are 3D.
         QVERIFY(sameCoordinateAltitude(held));
         QVERIFY(sameCoordinateAltitude(heldDragCoordinate));
@@ -2098,7 +2146,8 @@ void PlanStyleUITest::_editPlan(QQuickItem* view)
         QCOMPARE(altitude->rawValue().toDouble(), beforeAltitude);
         QTRY_VERIFY_WITH_TIMEOUT(planStyleEditorProjected(map), TestTimeout::mediumMs());
         const auto end = planStyleSource(marker)->mapToScene(marker->property("anchorPoint").toPointF());
-        QVERIFY((end - start - delta).manhattanLength() < 5);
+        QVERIFY((end - activeAnchor - delta).manhattanLength() < 5);
+        QVERIFY((end - heldAnchor).manhattanLength() < 5);
     };
 
     _setPlanLayer(view, 1);

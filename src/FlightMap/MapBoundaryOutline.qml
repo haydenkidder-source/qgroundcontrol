@@ -39,7 +39,7 @@ MapQuickItem {
             _project()
         } else if (!_projectionPending) {
             _projectionPending = true
-            Qt.callLater(_flushProjection)
+            projectionTimer.start()
         }
     }
 
@@ -88,6 +88,13 @@ MapQuickItem {
     onMapControlChanged: _scheduleProjection()
 
     Component.onCompleted: _scheduleProjection()
+
+    Timer {
+        id: projectionTimer
+        interval: 0
+        repeat: false
+        onTriggered: root._flushProjection()
+    }
 
     Connections {
         target: root.mapControl
