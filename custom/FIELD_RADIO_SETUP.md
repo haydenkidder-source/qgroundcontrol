@@ -23,6 +23,10 @@ into command-timeout behavior on this same mesh, which also flagged this exact r
 1. **On each Microhard radio**, set its serial-to-IP forward destination to the *same* ground
    station IP, but a **distinct** destination port per vehicle. Do not let two radios share a
    destination port, even temporarily during testing.
+   Use UDP port `14550 + N`, where `N` is the vehicle's unit number (the third IP octet):
+   unit 2 uses 14552, unit 3 uses 14553. Unit 1 is the GCS, so no vehicle uses 14551.
+   See [Network addressing](NETWORK_ADDRESSING.md) for the address and port scheme and
+   [Video relay setup](VIDEO_RELAY_SETUP.md) for the companion computers' video path.
 2. **In QGC**, add one UDP comm link per vehicle, each listening on its assigned port. Do this
    from the vehicle's card on Application Settings > Vehicle Links: add a link, choose "Create New Link...",
    pick UDP and set the port. Do not rely on a single UDP link (or autoconnect) to receive
