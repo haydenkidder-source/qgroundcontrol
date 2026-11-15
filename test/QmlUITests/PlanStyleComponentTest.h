@@ -7,6 +7,8 @@ class PlanStyleComponentTest : public UnitTest
     Q_OBJECT
 
 private slots:
+    void _patternVisuals_data();
+    void _patternVisuals();
     void _sharedComponents();
     void _stockMissionVisuals_data();
     void _stockMissionVisuals();

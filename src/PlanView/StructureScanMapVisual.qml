@@ -11,6 +11,9 @@ import QGroundControl.FlightMap
 Item {
     id: _root
 
+    property var planStyle: null
+    readonly property bool _styled: planStyle && planStyle.enabled
+
     property var map        ///< Map control to place item in
     property var vehicle
 
@@ -32,12 +35,15 @@ Item {
     QGCDynamicObjectManager { id: objMgr }
 
     QGCMapPolygonVisuals {
+        planStyle:          _root.planStyle
+        patternOutline:     true
+        boundaryOpacity:    _root.opacity
         mapControl:         map
         mapPolygon:         _structurePolygon
         interactive:        _missionItem.isCurrentItem && _root.interactive
         borderWidth:        1
         borderColor:        "black"
-        interiorColor:      "green"
+        interiorColor:      _root._styled ? _root.planStyle.lineColor : "green"
         altColor:           "red"
         interiorOpacity:    0.5 * _root.opacity
     }
@@ -46,8 +52,8 @@ Item {
         mapControl:         map
         mapPolygon:         _flightPolygon
         interactive:        false
-        borderWidth:        2
-        borderColor:        "white"
+        borderWidth:        _root._styled ? _root.planStyle.missionLineWidth : 2
+        borderColor:        _root._styled ? _root.planStyle.lineColor : "white"
         interiorOpacity:    _root.opacity
     }
 
@@ -56,17 +62,21 @@ Item {
         id: entryPointComponent
 
         MapQuickItem {
+            objectName:     "planPatternEntryMarker"
             anchorPoint.x:  sourceItem.anchorPointX
             anchorPoint.y:  sourceItem.anchorPointY
             z:              QGroundControl.zOrderMapItems
             coordinate:     _missionItem.coordinate
-            visible:        _missionItem.exitCoordinate.isValid && _root.interactive
+            visible:        _missionItem.exitCoordinate.isValid && (_root._styled || _root.interactive)
+            opacity:        _root._styled ? _root.opacity : 1
 
             sourceItem: MissionItemIndexLabel {
+                objectName: "planPatternMarker"
+                planStyle:  _root.planStyle
                 index:      _missionItem.sequenceNumber
                 label:      qsTr("Entry")
                 checked:    _missionItem.isCurrentItem
-                onClicked:  _root.clicked(_missionItem.sequenceNumber)
+                onClicked:  if (!_root._styled || _root.interactive) _root.clicked(_missionItem.sequenceNumber)
             }
         }
     }
@@ -76,17 +86,21 @@ Item {
         id: exitPointComponent
 
         MapQuickItem {
+            objectName:     "planPatternExitMarker"
             anchorPoint.x:  sourceItem.anchorPointX
             anchorPoint.y:  sourceItem.anchorPointY
             z:              QGroundControl.zOrderMapItems
             coordinate:     _missionItem.exitCoordinate
-            visible:        _missionItem.exitCoordinate.isValid && _root.interactive
+            visible:        _missionItem.exitCoordinate.isValid && (_root._styled || _root.interactive)
+            opacity:        _root._styled ? _root.opacity : 1
 
             sourceItem: MissionItemIndexLabel {
+                objectName: "planPatternMarker"
+                planStyle:  _root.planStyle
                 index:      _missionItem.lastSequenceNumber
                 label:      qsTr("Exit")
                 checked:    _missionItem.isCurrentItem
-                onClicked:  _root.clicked(_missionItem.sequenceNumber)
+                onClicked:  if (!_root._styled || _root.interactive) _root.clicked(_missionItem.sequenceNumber)
             }
         }
     }

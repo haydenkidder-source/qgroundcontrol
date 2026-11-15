@@ -11,6 +11,9 @@ import QGroundControl.FlightMap
 Item {
     id: _root
 
+    property var    planStyle: null
+    readonly property bool _styled: planStyle && planStyle.enabled
+
     property var    map                                                 ///< Map control to place item in
     property bool   polygonInteractive: true
     property bool   interactive: true
@@ -67,12 +70,15 @@ Item {
     // Area polygon
     QGCMapPolygonVisuals {
         id:                 mapPolygonVisuals
+        planStyle:          _root.planStyle
+        patternOutline:     polygonBorderWidth > 0
+        boundaryOpacity:    _root.opacity
         mapControl:         map
         mapPolygon:         _mapPolygon
         interactive:        polygonInteractive && _missionItem.isCurrentItem && _root.interactive
         borderWidth:        polygonBorderWidth
         borderColor:        "black"
-        interiorColor:      QGroundControl.globalPalette.surveyPolygonInterior
+        interiorColor:      _root._styled ? _root.planStyle.lineColor : QGroundControl.globalPalette.surveyPolygonInterior
         altColor:           QGroundControl.globalPalette.surveyPolygonTerrainCollision
         interiorOpacity:    0.5 * _root.opacity
         visible:            !hideMapPolygon
@@ -83,8 +89,9 @@ Item {
         id: fullTransectsComponent
 
         MapPolyline {
-            line.color: "white"
-            line.width: 2
+            objectName: "planTransectFull"
+            line.color: _root._styled ? _root.planStyle.lineColor : "white"
+            line.width: _root._styled ? _root.planStyle.missionLineWidth : 2
             path:       _transectPoints
             visible:    _currentItem && !_vertexDrag
             opacity:    _root.opacity
@@ -96,8 +103,9 @@ Item {
         id: entryTransectComponent
 
         MapPolyline {
-            line.color: "white"
-            line.width: 2
+            objectName: "planTransectEntry"
+            line.color: _root._styled ? _root.planStyle.lineColor : "white"
+            line.width: _root._styled ? _root.planStyle.missionLineWidth : 2
             path:       _showPartialEntryExit ? [ _transectPoints[0], _transectPoints[1] ] : []
             visible:    _showPartialEntryExit && !_vertexDrag
             opacity:    _root.opacity
@@ -107,8 +115,9 @@ Item {
         id: exitTransectComponent
 
         MapPolyline {
-            line.color: "white"
-            line.width: 2
+            objectName: "planTransectExit"
+            line.color: _root._styled ? _root.planStyle.lineColor : "white"
+            line.width: _root._styled ? _root.planStyle.missionLineWidth : 2
             path:       _showPartialEntryExit ? [ _transectPoints[_lastPointIndex - 1], _transectPoints[_lastPointIndex] ] : []
             visible:    _showPartialEntryExit && !_vertexDrag
             opacity:    _root.opacity
@@ -120,6 +129,7 @@ Item {
         id: entryPointComponent
 
         MapQuickItem {
+            objectName:     "planPatternEntryMarker"
             anchorPoint.x:  sourceItem.anchorPointX
             anchorPoint.y:  sourceItem.anchorPointY
             z:              QGroundControl.zOrderMapItems
@@ -128,6 +138,8 @@ Item {
             opacity:        _root.opacity
 
             sourceItem: MissionItemIndexLabel {
+                objectName: "planPatternMarker"
+                planStyle:  _root.planStyle
                 index:      _missionItem.sequenceNumber
                 checked:    _missionItem.isCurrentItem
                 onClicked:  if(_root.interactive) _root.clicked(_missionItem.sequenceNumber)
@@ -139,6 +151,7 @@ Item {
         id: entryArrow1Component
 
         MapLineArrow {
+            objectName:     "planTransectArrow"
             fromCoord:      _transectPoints[_firstTrueTransectIndex]
             toCoord:        _transectPoints[_firstTrueTransectIndex + 1]
             arrowPosition:  1
@@ -152,6 +165,7 @@ Item {
         id: entryArrow2Component
 
         MapLineArrow {
+            objectName:     "planTransectArrow"
             fromCoord:      _transectPoints[nextTrueTransectIndex]
             toCoord:        _transectPoints[nextTrueTransectIndex + 1]
             arrowPosition:  1
@@ -167,6 +181,7 @@ Item {
         id: exitArrow1Component
 
         MapLineArrow {
+            objectName:     "planTransectArrow"
             fromCoord:      _transectPoints[_lastTrueTransectIndex - 1]
             toCoord:        _transectPoints[_lastTrueTransectIndex]
             arrowPosition:  3
@@ -180,6 +195,7 @@ Item {
         id: exitArrow2Component
 
         MapLineArrow {
+            objectName:     "planTransectArrow"
             fromCoord:      _transectPoints[prevTrueTransectIndex - 1]
             toCoord:        _transectPoints[prevTrueTransectIndex]
             arrowPosition:  13
@@ -196,6 +212,7 @@ Item {
         id: exitPointComponent
 
         MapQuickItem {
+            objectName:     "planPatternExitMarker"
             anchorPoint.x:  sourceItem.anchorPointX
             anchorPoint.y:  sourceItem.anchorPointY
             z:              QGroundControl.zOrderMapItems
@@ -204,6 +221,8 @@ Item {
             opacity:        _root.opacity
 
             sourceItem: MissionItemIndexLabel {
+                objectName: "planPatternMarker"
+                planStyle:  _root.planStyle
                 index:      _missionItem.lastSequenceNumber
                 checked:    _missionItem.isCurrentItem
                 onClicked:  if(_root.interactive) _root.clicked(_missionItem.sequenceNumber)

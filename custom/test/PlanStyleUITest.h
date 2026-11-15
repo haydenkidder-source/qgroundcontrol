@@ -9,6 +9,7 @@
 
 class COPController;
 class COPVehicle;
+class PlanMasterController;
 
 class PlanStyleUITest : public QmlUITestBase
 {
@@ -34,6 +35,8 @@ private:
     void _uploadPlan(Vehicle* vehicle, int count);
     void _checkPlan(QQuickItem* view, quint32 id, const QColor& color, int itemCount, int rallyCount);
     void _editPlan(QQuickItem* view);
+    void _insertPatterns(PlanMasterController* master);
+    void _editPatterns(QQuickItem* view);
     void _setPlanLayer(QQuickItem* view, int layer);
     bool _selectTab(quint32 sysid);
     QList<SharedLinkConfigurationPtr> _configs;
