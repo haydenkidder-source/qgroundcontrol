@@ -122,7 +122,7 @@ public:
     virtual bool showAllVehiclePlans() const { return true; }
 
     /// Optional plan presentation policy; a null result means stock styling.
-    virtual QGCPlanStyle* planStyle() const { return nullptr; }
+    [[nodiscard]] virtual QGCPlanStyle* planStyle() const { return nullptr; }
 
     /// @return An instance of an alternate position source (or NULL if not available)
     virtual QGeoPositionInfoSource *createPositionSource(QObject *parent) { Q_UNUSED(parent); return nullptr; }
