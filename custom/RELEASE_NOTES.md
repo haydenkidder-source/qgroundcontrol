@@ -1,5 +1,82 @@
 # Release notes
 
+## v1.14.0
+
+**Test build.** The changes pass the automated Unit and Integration suites with
+simulated (MockLink) vehicles, offscreen UI tests with real pointer drags and
+mutation checks of the tests. They have not been checked on real vehicles, radios
+or a real display. Treat v1.14.0 as a test build until the owner has accepted it
+on the bench.
+
+Based on v1.13.0 plus the PlanStyle changes (PR 55) below, with no upstream merge.
+
+### Fixes in the fork
+
+- **Fence outline logs**: switching Plan layers or removing a fence no longer logs
+  "attempted to evaluate a function in an invalid context" errors. These were log
+  noise, with no visible effect.
+
+### New in the fork
+
+- **Vehicle plan colours**: each vehicle's Fly page and the Plan editor use its COP
+  colour for the route and waypoint markers. Route lines are 4 px; terrain-collision
+  segments stay red. Home keeps its image, with a ring in the vehicle's colour.
+  The selected waypoint keeps its halo. Direction arrows stay white.
+- **Fence lines**: keep-in fences have a long-dash outline in the vehicle's colour,
+  3 px wide. Keep-out fences have a short-dash outline in the same colour and a red
+  fill at 35% opacity. Circle fences use the same styles; parameter-circle fences
+  use the keep-in style.
+- **Rally points**: diamonds in the vehicle's colour, with a white border and an R.
+  The selected point has a halo.
+- **Plan owner**: the Plan editor shows one plan, in the colour of the vehicle it
+  was loaded from or successfully sent to. Switch the active vehicle with unsent
+  edits and choose Keep: the plan keeps the first vehicle's colour until Load
+  replaces it with the new vehicle's plan and colour. Keeping unsent edits after
+  the owner disconnects also keeps the colour.
+- **Amber plans**: a fresh offline plan or a file opened offline uses neutral amber
+  with the same line styles. A file opened while connected uses the current
+  vehicle's colour. Editing between mission, fence and rally downloads leaves the
+  completed download without an owner, so it uses amber. A vehicle missing from
+  the COP colour registry uses amber until its entry appears; the plan already on
+  screen then takes that colour.
+- **Fence editing**: dashed outlines follow vertex, whole-polygon and circle drags.
+  Editing handles stay on top and clickable. The layer switcher still dims layers
+  you are not editing; fills and outlines get half opacity once.
+- **Point editing**: dragging a waypoint or rally point keeps its altitude. PX4
+  rally points using absolute altitude read the ground height again where the
+  point lands, as before.
+
+### Checking it on the bench
+
+1. Connect two vehicles with different COP colours. Give each a different plan
+   with a route, one keep-in fence, one keep-out fence and a rally point.
+2. Open each vehicle's Fly page. Confirm it shows only its own plan in its own
+   colour, with dashed fences and diamond rally points.
+3. Open the Plan page for each vehicle and confirm the colour. Make unsent edits,
+   switch the active vehicle and choose Keep. Confirm the colour stays, then Load
+   and confirm the plan and colour change to the new vehicle's.
+4. Start a new offline plan and confirm amber.
+
+### Changes to know about
+
+- **Stock builds**: QGroundControl without the custom plugin draws as before.
+- **COP overview**: looks as before. The COP and vehicle pages now share fence
+  outline components and line constants.
+- **Landing patterns**: fixed-wing and VTOL landing paths, approach and land
+  markers, and loiter rings also use the vehicle's colour.
+- **Other plan items**: survey, corridor scan, structure scan, polylines and the
+  perimeter scan keep their stock colours on Fly pages and in the Plan editor.
+- **GeoMap Plan engine**: if enabled in settings, keeps its stock look.
+- **Vehicle transfers**: nothing about what is sent to the vehicle changes.
+
+### Known issues
+
+- **Hardware checks**: only simulated vehicles were tested. The bench check above
+  has not been done, and the UI has not been checked on a real display.
+- **Plan colours**: survey, corridor scan, structure scan, polylines, perimeter
+  scan and the GeoMap engine are not restyled.
+- **Missing COP colour**: a vehicle uses amber until its COP registry entry exists.
+
 ## v1.13.0
 
 **Test build.** The UDP changes pass the automated Unit and Integration suites and a lab
