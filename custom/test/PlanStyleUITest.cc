@@ -356,7 +356,8 @@ qreal planStyleOpacityBelowMap(QQuickItem* item, QQuickItem* map)
 
 QQuickItem* planStyleMouseItemAt(QQuickItem* item, const QPointF& position)
 {
-    if (!item || !item->isVisible() || !item->isEnabled()) {
+    // MouseArea.enabled shadows Item.enabled. Both must allow the press.
+    if (!item || !item->isVisible() || !item->isEnabled() || !item->property("enabled").toBool()) {
         return nullptr;
     }
     for (auto* child : item->childItems()) {
@@ -1658,30 +1659,16 @@ void PlanStyleUITest::_liveBoundaryVisuals()
     QTRY_VERIFY_WITH_TIMEOUT(pointerReady(), TestTimeout::mediumMs());
     const auto clickPosition =
         clickSource->mapToScene(QPointF(clickSource->width() / 2, clickSource->height() / 2)).toPoint();
-    const auto mouseItemAtClick = [&](QQuickItem* item, auto&& self) -> QQuickItem* {
-        if (!item || !item->isVisible() || !item->isEnabled()) {
-            return nullptr;
-        }
-        for (auto* child : item->childItems()) {
-            if (auto* hit = self(child, self)) {
-                return hit;
-            }
-        }
-        return item->acceptedMouseButtons().testFlag(Qt::LeftButton) &&
-                       item->contains(item->mapFromScene(clickPosition))
-                   ? item
-                   : nullptr;
-    };
-    QVERIFY(mouseItemAtClick(clickSource.data(), mouseItemAtClick));
+    QVERIFY(planStyleMouseItemAt(clickSource, clickPosition));
     for (auto* marker : named(QStringLiteral("planRallyPoint"))) {
         if (marker != clickMarker) {
-            QVERIFY2(!mouseItemAtClick(planStyleSource(marker), mouseItemAtClick),
+            QVERIFY2(!planStyleMouseItemAt(planStyleSource(marker), clickPosition),
                      "Another rally marker accepts the target click");
         }
     }
     for (auto* item : map->childItems()) {
         if (item->isVisible() && item->metaObject()->indexOfProperty("itemCoordinate") >= 0) {
-            QVERIFY2(!mouseItemAtClick(item, mouseItemAtClick), "A visible drag item accepts the target click");
+            QVERIFY2(!planStyleMouseItemAt(item, clickPosition), "A visible drag item accepts the target click");
         }
     }
     QTest::mouseClick(&boundaryWindow, Qt::LeftButton, Qt::NoModifier, clickPosition);
@@ -2049,15 +2036,10 @@ void PlanStyleUITest::_editPlan(QQuickItem* view)
     auto* fence = master->geoFenceController();
     auto* rally = master->rallyPointController();
     const QColor color = QGCCorePlugin::instance()->planStyle()->vehicleColor(master->planVehicleId());
-    const auto markerFor = [map](const QString& name, const QGeoCoordinate& coordinate) -> QQuickItem* {
-        for (auto* marker : planStyleItems(map, name)) {
-            if (marker->property("coordinate").value<QGeoCoordinate>() == coordinate) {
-                return marker;
-            }
-        }
-        return nullptr;
-    };
     const auto dragFor = [map](QQuickItem* marker) -> QQuickItem* {
+        if (!marker) {
+            return nullptr;
+        }
         for (auto* item : map->childItems()) {
             if (item->metaObject()->indexOfProperty("itemCoordinate") >= 0 &&
                 qvariant_cast<QQuickItem*>(item->property("itemIndicator")) == marker) {
@@ -2066,15 +2048,25 @@ void PlanStyleUITest::_editPlan(QQuickItem* view)
         }
         return nullptr;
     };
-    const auto preparePointer = [&](QQuickItem* marker) {
-        QVERIFY(marker && marker->isVisible());
+    const auto preparePointer = [&](const auto& resolve, bool sourceCenter = false) {
         QVERIFY(map->setProperty("zoomLevel", 17));
-        QVERIFY(map->setProperty("center", marker->property("coordinate")));
         QTRY_VERIFY_WITH_TIMEOUT(planStyleEditorProjected(map), TestTimeout::mediumMs());
+        QPointer<QQuickItem> marker;
+        QTRY_VERIFY_WITH_TIMEOUT((marker = resolve()) && marker->isVisible(), TestTimeout::shortMs());
+        const auto coordinate = marker->property("coordinate");
+        QVERIFY(map->setProperty("center", coordinate));
+        // Rendering processes pending model edits; resolve Repeater handles after every wait.
+        QTRY_VERIFY_WITH_TIMEOUT(planStyleEditorProjected(map) && (marker = resolve()) && marker->isVisible() &&
+                                     planStyleMapItemProjected(map, marker),
+                                 TestTimeout::mediumMs());
         auto* source = planStyleSource(marker);
         QVERIFY(source);
-        const auto position = source->mapToScene(marker->property("anchorPoint").toPointF());
+        const auto localPosition = sourceCenter ? QPointF(source->width() / 2, source->height() / 2)
+                                                : marker->property("anchorPoint").toPointF();
+        const auto position = source->mapToScene(localPosition);
         QVERIFY(map->property("centerViewport").toRectF().contains(map->mapFromScene(position)));
+        QVERIFY(position.x() >= 0 && position.x() < _window->width() && position.y() >= 0 &&
+                position.y() < _window->height());
         QVERIFY(planStyleMouseItemAt(source, position) || planStyleMouseItemAt(dragFor(marker), position));
         for (auto* item : map->childItems()) {
             if (item->metaObject()->indexOfProperty("itemCoordinate") >= 0 && item != dragFor(marker)) {
@@ -2082,12 +2074,28 @@ void PlanStyleUITest::_editPlan(QQuickItem* view)
             }
         }
     };
-    const auto dragPoint = [&](QQuickItem* marker, QObject* point, Fact* altitude) {
-        preparePointer(marker);
+    const auto clickPoint = [&](const auto& resolve) {
+        preparePointer(resolve, true);
         QVERIFY(!QTest::currentTestFailed());
-        auto* drag = dragFor(marker);
+        QPoint position;
+        {
+            auto* marker = resolve();
+            QVERIFY(marker);
+            auto* source = planStyleSource(marker);
+            QVERIFY(source);
+            position = source->mapToScene(QPointF(source->width() / 2, source->height() / 2)).toPoint();
+        }
+        // No polish wait between resolving a rebuildable handle and delivering its click.
+        QTest::mouseClick(_window, Qt::LeftButton, Qt::NoModifier, position);
+    };
+    const auto dragPoint = [&](const auto& resolve, QObject* point, Fact* altitude) {
+        preparePointer(resolve);
+        QVERIFY(!QTest::currentTestFailed());
+        QPointer<QQuickItem> marker = resolve();
+        QVERIFY(marker);
+        QPointer<QQuickItem> drag = dragFor(marker);
         QVERIFY(drag && drag->isVisible());
-        auto* source = planStyleSource(marker);
+        QPointer<QQuickItem> source = planStyleSource(marker);
         QVERIFY(source);
         QVERIFY(drag->width() > 0 && drag->height() > 0);
         QCOMPARE(drag->property("_itemIndicatorWidth").toReal(), marker->width());
@@ -2112,8 +2120,8 @@ void PlanStyleUITest::_editPlan(QQuickItem* view)
         QTest::mouseMove(_window, activePointer);
         const bool active = waitForCondition(
             [&] {
-                return planStyleRenderMap(map) && drag->property("_dragStartSignalled").toBool() &&
-                       planStyleMapItemProjected(map, marker);
+                return planStyleRenderMap(map) && marker && drag && source &&
+                       drag->property("_dragStartSignalled").toBool() && planStyleMapItemProjected(map, marker);
             },
             TestTimeout::shortMs(), QStringLiteral("Plan point drag active and projected"));
         if (!active) {
@@ -2126,11 +2134,16 @@ void PlanStyleUITest::_editPlan(QQuickItem* view)
         }
         const bool moved = waitForCondition(
             [&] {
-                return planStyleRenderMap(map) &&
+                return planStyleRenderMap(map) && marker && drag && source &&
                        point->property("coordinate").value<QGeoCoordinate>().distanceTo(before) > 1 &&
                        planStyleMapItemProjected(map, marker);
             },
             TestTimeout::shortMs(), QStringLiteral("Plan point moved while held"));
+        if (!moved || !marker || !drag || !source) {
+            QTest::mouseRelease(_window, Qt::LeftButton, Qt::NoModifier, activePointer + delta);
+            QVERIFY(moved);
+            QVERIFY(marker && drag && source);
+        }
         const auto held = point->property("coordinate").value<QGeoCoordinate>();
         const auto heldDragCoordinate = drag->property("itemCoordinate").value<QGeoCoordinate>();
         const auto heldAltitude = altitude->rawValue().toDouble();
@@ -2145,7 +2158,10 @@ void PlanStyleUITest::_editPlan(QQuickItem* view)
         QCOMPARE(heldAltitude, beforeAltitude);
         QCOMPARE(altitude->rawValue().toDouble(), beforeAltitude);
         QTRY_VERIFY_WITH_TIMEOUT(planStyleEditorProjected(map), TestTimeout::mediumMs());
-        const auto end = planStyleSource(marker)->mapToScene(marker->property("anchorPoint").toPointF());
+        marker = resolve();
+        source = planStyleSource(marker);
+        QVERIFY(marker && source);
+        const auto end = source->mapToScene(marker->property("anchorPoint").toPointF());
         QVERIFY((end - activeAnchor - delta).manhattanLength() < 5);
         QVERIFY((end - heldAnchor).manhattanLength() < 5);
     };
@@ -2158,19 +2174,28 @@ void PlanStyleUITest::_editPlan(QQuickItem* view)
                  qIsFinite(waypoint->altitude()->rawValue().toDouble()),
              "Mission drag fixture must select a NAV_WAYPOINT with a finite altitude Fact");
     QVERIFY(qIsNaN(waypoint->coordinate().altitude()));
-    auto* waypointMarker = markerFor(QStringLiteral("planWaypoint"), waypoint->coordinate());
-    QVERIFY(waypointMarker);
-    preparePointer(waypointMarker);
+    const auto waypointMarkerFor = [&]() -> QQuickItem* {
+        for (auto* marker : planStyleItems(map, QStringLiteral("planWaypoint"))) {
+            if (qvariant_cast<QObject*>(marker->property("missionItem")) == waypoint) {
+                return marker;
+            }
+        }
+        return nullptr;
+    };
+    clickPoint(waypointMarkerFor);
     QVERIFY(!QTest::currentTestFailed());
-    QVERIFY(_clickItemAt(planStyleSource(waypointMarker), 0.5, 0.5, QStringLiteral("Plan waypoint")));
     QTRY_COMPARE_WITH_TIMEOUT(mission->currentPlanViewItem(), waypoint, TestTimeout::shortMs());
-    QTRY_VERIFY_WITH_TIMEOUT(dragFor(waypointMarker), TestTimeout::shortMs());
-    const auto waypointHalos = planStyleItems(waypointMarker, QStringLiteral("planWaypointSelectionHalo"));
-    QCOMPARE(waypointHalos.size(), 1);
-    QVERIFY(waypointHalos.first()->isVisible());
-    QCOMPARE(waypointMarker->property("renderedBodyColor").value<QColor>(), color);
+    QTRY_VERIFY_WITH_TIMEOUT(dragFor(waypointMarkerFor()), TestTimeout::shortMs());
+    {
+        auto* waypointMarker = waypointMarkerFor();
+        QVERIFY(waypointMarker);
+        const auto waypointHalos = planStyleItems(waypointMarker, QStringLiteral("planWaypointSelectionHalo"));
+        QCOMPARE(waypointHalos.size(), 1);
+        QVERIFY(waypointHalos.first()->isVisible());
+        QCOMPARE(waypointMarker->property("renderedBodyColor").value<QColor>(), color);
+    }
     QVERIFY(findVisibleItem(_rootItem, QStringLiteral("planPanel_inspectorLoader")));
-    dragPoint(waypointMarker, waypoint, waypoint->altitude());
+    dragPoint(waypointMarkerFor, waypoint, waypoint->altitude());
     QVERIFY(!QTest::currentTestFailed());
     QCOMPARE(mission->visualItems()->count(), 4);
 
@@ -2179,34 +2204,60 @@ void PlanStyleUITest::_editPlan(QQuickItem* view)
     rally->setCurrentRallyPoint(rally->points()->get(0));
     auto* point = rally->points()->value<RallyPoint*>(1);
     QVERIFY(point);
-    auto* rallyMarker = markerFor(QStringLiteral("planRallyPoint"), point->coordinate());
-    QVERIFY(rallyMarker);
-    preparePointer(rallyMarker);
+    const auto rallyMarkerFor = [&]() -> QQuickItem* {
+        for (auto* marker : planStyleItems(map, QStringLiteral("planRallyPoint"))) {
+            if (qvariant_cast<QObject*>(marker->property("rallyPointObject")) == point) {
+                return marker;
+            }
+        }
+        return nullptr;
+    };
+    clickPoint(rallyMarkerFor);
     QVERIFY(!QTest::currentTestFailed());
-    QVERIFY(_clickItemAt(planStyleSource(rallyMarker), 0.5, 0.5, QStringLiteral("Plan rally point")));
     QTRY_COMPARE_WITH_TIMEOUT(rally->currentRallyPoint(), static_cast<QObject*>(point), TestTimeout::shortMs());
-    QVERIFY(rallyMarker->property("checked").toBool());
-    const auto rallyHalos = planStyleItems(rallyMarker, QStringLiteral("planRallySelectionHalo"));
-    QCOMPARE(rallyHalos.size(), 1);
-    QVERIFY(rallyHalos.first()->isVisible());
+    {
+        auto* rallyMarker = rallyMarkerFor();
+        QVERIFY(rallyMarker);
+        QVERIFY(rallyMarker->property("checked").toBool());
+        const auto rallyHalos = planStyleItems(rallyMarker, QStringLiteral("planRallySelectionHalo"));
+        QCOMPARE(rallyHalos.size(), 1);
+        QVERIFY(rallyHalos.first()->isVisible());
+    }
     QCOMPARE(point->altitudeFrame(), QGroundControlQmlGlobal::AltitudeFrameRelative);
-    dragPoint(rallyMarker, point, point->altitude());
+    dragPoint(rallyMarkerFor, point, point->altitude());
     QVERIFY(!QTest::currentTestFailed());
     QCOMPARE(rally->points()->count(), 3);
     _setPlanLayer(view, 1);
     QVERIFY(!QTest::currentTestFailed());
-    QVERIFY(!dragFor(rallyMarker)->isVisible());
-    auto* rallySource = qvariant_cast<QQuickItem*>(planStyleSource(rallyMarker)->property("item"));
-    QVERIFY(rallySource && !rallySource->property("interactive").toBool());
-    QVERIFY(!planStyleMouseItemAt(rallySource, rallySource->mapToScene(QPointF(0, 0))));
+    {
+        auto* rallyMarker = rallyMarkerFor();
+        QVERIFY(rallyMarker && planStyleSource(rallyMarker));
+        auto* rallyDrag = dragFor(rallyMarker);
+        QVERIFY(rallyDrag && !rallyDrag->isVisible());
+        auto* rallySource = qvariant_cast<QQuickItem*>(planStyleSource(rallyMarker)->property("item"));
+        QVERIFY(rallySource && !rallySource->property("interactive").toBool());
+        QVERIFY(!planStyleMouseItemAt(rallySource, rallySource->mapToScene(QPointF(0, 0))));
+    }
 
     _setPlanLayer(view, 2);
     QVERIFY(!QTest::currentTestFailed());
-    QVERIFY(clickButton(QStringLiteral("planPanel_fenceRow_polygon_0")));
+    const bool tabbed = view->property("_useNewPlanPanel").toBool();
+    bool fenceSelected = false;
+    const auto selectFenceRow = [&](const QString& key) {
+        if (tabbed && fenceSelected) {
+            QVERIFY(clickButton(QStringLiteral("planPanel_fenceInspector_back")));
+        }
+        QTRY_VERIFY_WITH_TIMEOUT(findVisibleItem(_rootItem, QStringLiteral("planPanel_fenceList"), 0),
+                                 TestTimeout::shortMs());
+        QVERIFY(clickButton(QStringLiteral("planPanel_fenceRow_") + key));
+        fenceSelected = true;
+    };
+    selectFenceRow(QStringLiteral("polygon_0"));
+    QVERIFY(!QTest::currentTestFailed());
     auto* polygon = fence->polygons()->value<QGCFencePolygon*>(0);
     QVERIFY(polygon && polygon->interactive());
-    QQuickItem* polygonFill = nullptr;
-    QQuickItem* polygonOutline = nullptr;
+    QPointer<QQuickItem> polygonFill;
+    QPointer<QQuickItem> polygonOutline;
     for (auto* item : planStyleItems(map, QStringLiteral("planFenceFill"))) {
         if (item->property("boundaryKind").toString() == QStringLiteral("polygon") &&
             item->property("path").toList() == polygon->path()) {
@@ -2219,29 +2270,41 @@ void PlanStyleUITest::_editPlan(QQuickItem* view)
         }
     }
     QVERIFY(polygonFill && polygonOutline);
-    QQuickItem* vertexDrag = nullptr;
-    const auto findVertexDrag = [&] {
+    const auto belongsToPolygon = [polygon](QQuickItem* item) {
+        // Handles are parented to the map; their creation context identifies the owning polygon visuals.
+        auto* context = qmlContext(item);
+        auto* visuals = context ? qvariant_cast<QObject*>(context->contextProperty(QStringLiteral("_root"))) : nullptr;
+        return visuals && qvariant_cast<QObject*>(visuals->property("mapPolygon")) == polygon;
+    };
+    const auto findVertexDrag = [&]() -> QQuickItem* {
         for (auto* item : map->childItems()) {
             if (item->property("polygonVertex").isValid() && item->property("polygonVertex").toInt() == 0 &&
-                item->metaObject()->indexOfProperty("itemCoordinate") >= 0) {
+                item->metaObject()->indexOfProperty("itemCoordinate") >= 0 && belongsToPolygon(item)) {
                 return item;
             }
         }
-        return static_cast<QQuickItem*>(nullptr);
+        return nullptr;
     };
-    QTRY_VERIFY_WITH_TIMEOUT((vertexDrag = findVertexDrag()), TestTimeout::shortMs());
-    auto* vertexHandle = qvariant_cast<QQuickItem*>(vertexDrag->property("itemIndicator"));
-    QVERIFY(vertexHandle);
-    QVERIFY(vertexDrag->z() >= 51 && vertexDrag->z() <= 53);
-    QVERIFY(vertexHandle->z() >= 51 && vertexHandle->z() <= 53);
-    QVERIFY(polygonOutline->z() < vertexDrag->z());
-    preparePointer(vertexHandle);
+    const auto vertexHandleFor = [&]() -> QQuickItem* {
+        auto* drag = findVertexDrag();
+        return drag ? qvariant_cast<QQuickItem*>(drag->property("itemIndicator")) : nullptr;
+    };
+    preparePointer(vertexHandleFor);
     QVERIFY(!QTest::currentTestFailed());
+    QVERIFY(polygonFill && polygonOutline);
     const auto committed = polygonFill->property("path").toList();
     QSignalSpy committedChanges(polygon, &QGCMapPolygon::pathChanged);
     QVERIFY(committedChanges.isValid());
-    const auto start =
-        planStyleSource(vertexHandle)->mapToScene(vertexHandle->property("anchorPoint").toPointF()).toPoint();
+    QPoint start;
+    {
+        auto* vertexDrag = findVertexDrag();
+        auto* vertexHandle = vertexHandleFor();
+        QVERIFY(vertexDrag && vertexHandle);
+        QVERIFY(vertexDrag->z() >= 51 && vertexDrag->z() <= 53);
+        QVERIFY(vertexHandle->z() >= 51 && vertexHandle->z() <= 53);
+        QVERIFY(polygonOutline->z() < vertexDrag->z());
+        start = planStyleSource(vertexHandle)->mapToScene(vertexHandle->property("anchorPoint").toPointF()).toPoint();
+    }
     const QPoint delta(-60, 45);
     QTest::mousePress(_window, Qt::LeftButton, Qt::NoModifier, start);
     for (int i = 1; i <= 10; ++i) {
@@ -2249,11 +2312,16 @@ void PlanStyleUITest::_editPlan(QQuickItem* view)
     }
     const bool live = waitForCondition(
         [&] {
-            return planStyleRenderMap(map) && polygon->vertexDrag() &&
+            return planStyleRenderMap(map) && polygonOutline && polygonFill && polygon->vertexDrag() &&
                    polygonOutline->property("vertices").toList() != committed &&
                    polygonOutline->property("vertices").toList() == polygon->path();
         },
         TestTimeout::shortMs(), QStringLiteral("Plan vertex preview follows held pointer"));
+    if (!live || !polygonOutline || !polygonFill) {
+        QTest::mouseRelease(_window, Qt::LeftButton, Qt::NoModifier, start + delta);
+        QVERIFY(live);
+        QVERIFY(polygonOutline && polygonFill);
+    }
     const auto heldPath = polygonOutline->property("vertices").toList();
     const qreal heldBorder = QQmlProperty(polygonFill, QStringLiteral("border.width")).read().toReal();
     const int commitsWhileHeld = committedChanges.count();
@@ -2267,40 +2335,46 @@ void PlanStyleUITest::_editPlan(QQuickItem* view)
     QVERIFY(!QTest::currentTestFailed());
 
     // The same native editor also previews a whole-polygon centre drag before its committed-path notification.
+    QVERIFY(polygonOutline && polygonFill);
     const auto beforeCenter = polygonOutline->property("vertices").toList();
     polygon->setCenterDrag(true);
     polygon->setVertexDrag(true);
     polygon->setCenter(polygon->center().atDistanceAndAzimuth(40, 180));
-    QTRY_VERIFY_WITH_TIMEOUT(polygonOutline->property("vertices").toList() != beforeCenter, TestTimeout::shortMs());
+    QTRY_VERIFY_WITH_TIMEOUT(polygonOutline && polygonOutline->property("vertices").toList() != beforeCenter,
+                             TestTimeout::shortMs());
     QCOMPARE(polygonOutline->property("vertices").toList(), polygon->path());
+    QVERIFY(polygonFill);
     QCOMPARE(QQmlProperty(polygonFill, QStringLiteral("border.width")).read().toReal(), 0.0);
     polygon->setCenterDrag(false);
     polygon->setVertexDrag(false);
 
-    QQuickItem* splitHandle = nullptr;
-    for (auto* item : map->childItems()) {
-        if (item->property("vertexIndex").isValid() && !item->property("distance").isValid() && planStyleSource(item)) {
-            splitHandle = item;
-            break;
+    const auto splitHandleFor = [&]() -> QQuickItem* {
+        for (auto* item : map->childItems()) {
+            if (item->property("vertexIndex").isValid() && item->property("vertexIndex").toInt() == 0 &&
+                !item->property("distance").isValid() && planStyleSource(item) && belongsToPolygon(item)) {
+                return item;
+            }
         }
-    }
-    QVERIFY(splitHandle);
-    preparePointer(splitHandle);
+        return nullptr;
+    };
+    clickPoint(splitHandleFor);
     QVERIFY(!QTest::currentTestFailed());
-    QVERIFY(_clickItemAt(planStyleSource(splitHandle), 0.5, 0.5, QStringLiteral("fence split handle")));
     QTRY_COMPARE_WITH_TIMEOUT(polygon->count(), 4, TestTimeout::shortMs());
     QTRY_VERIFY_WITH_TIMEOUT(planStyleEditorProjected(map), TestTimeout::mediumMs());
-    QTRY_VERIFY_WITH_TIMEOUT((vertexDrag = findVertexDrag()), TestTimeout::shortMs());
-    QVERIFY(vertexDrag->isVisible());
-    QVERIFY(QMetaObject::invokeMethod(vertexDrag, "clicked"));
-    QQuickItem* removeVertex = nullptr;
+    QTRY_VERIFY_WITH_TIMEOUT(findVertexDrag(), TestTimeout::shortMs());
+    {
+        auto* vertexDrag = findVertexDrag();
+        QVERIFY(vertexDrag && vertexDrag->isVisible());
+        QVERIFY(QMetaObject::invokeMethod(vertexDrag, "clicked"));
+    }
+    QPointer<QQuickItem> removeVertex;
     QTRY_VERIFY_WITH_TIMEOUT((removeVertex = planStyleTab(_rootItem, QStringLiteral("Remove vertex"))),
                              TestTimeout::shortMs());
     QVERIFY(_clickItemAt(removeVertex, 0.5, 0.5, QStringLiteral("remove fence vertex")));
     QTRY_COMPARE_WITH_TIMEOUT(polygon->count(), 3, TestTimeout::shortMs());
     QTRY_VERIFY_WITH_TIMEOUT(planStyleEditorProjected(map), TestTimeout::mediumMs());
 
-    auto* trace = planStyleTab(map, QStringLiteral("Trace"));
+    QPointer<QQuickItem> trace = planStyleTab(map, QStringLiteral("Trace"));
     QVERIFY(trace);
     QVERIFY(_clickItemAt(trace, 0.5, 0.5, QStringLiteral("trace fence")));
     QTRY_VERIFY_WITH_TIMEOUT(polygon->traceMode(), TestTimeout::shortMs());
@@ -2316,41 +2390,46 @@ void PlanStyleUITest::_editPlan(QQuickItem* view)
         QTRY_COMPARE_WITH_TIMEOUT(polygon->count(), tracedVertices, TestTimeout::shortMs());
     }
     QTRY_COMPARE_WITH_TIMEOUT(polygon->count(), 3, TestTimeout::shortMs());
-    auto* done = planStyleTab(map, QStringLiteral("Done Tracing"));
+    QPointer<QQuickItem> done = planStyleTab(map, QStringLiteral("Done Tracing"));
     QVERIFY(done);
     QVERIFY(_clickItemAt(done, 0.5, 0.5, QStringLiteral("finish tracing")));
     QVERIFY(!polygon->traceMode());
     QTRY_VERIFY_WITH_TIMEOUT(planStyleEditorProjected(map), TestTimeout::mediumMs());
 
-    QVERIFY(clickButton(QStringLiteral("planPanel_fenceRow_circle_0")));
+    selectFenceRow(QStringLiteral("circle_0"));
+    QVERIFY(!QTest::currentTestFailed());
     auto* circle = fence->circles()->value<QGCFenceCircle*>(0);
     QVERIFY(circle && circle->interactive());
-    QQuickItem* circleVisual = nullptr;
-    for (auto* item : planStyleItems(map, QString())) {
-        if (qvariant_cast<QObject*>(item->property("mapCircle")) == circle &&
-            item->property("_dragHandlesComponent").isValid()) {
-            circleVisual = item;
-            break;
+    QPointer<QObject> oldHandles;
+    {
+        QQuickItem* circleVisual = nullptr;
+        for (auto* item : planStyleItems(map, QString())) {
+            if (qvariant_cast<QObject*>(item->property("mapCircle")) == circle &&
+                item->property("_dragHandlesComponent").isValid()) {
+                circleVisual = item;
+                break;
+            }
         }
-    }
-    QVERIFY(circleVisual);
-    auto* handles = qvariant_cast<QObject*>(circleVisual->property("_dragHandlesComponent"));
-    QVERIFY(handles);
-    auto* centerDrag = qvariant_cast<QQuickItem*>(handles->property("centerDragArea"));
-    auto* radiusDrag = qvariant_cast<QQuickItem*>(handles->property("radiusDragArea"));
-    QVERIFY(centerDrag && radiusDrag && centerDrag->isVisible() && radiusDrag->isVisible());
-    const auto center = circle->center().atDistanceAndAzimuth(30, 45);
-    QVERIFY(centerDrag->setProperty("itemCoordinate", QVariant::fromValue(center)));
-    QCOMPARE(circle->center(), center);
-    QVERIFY(radiusDrag->setProperty("itemCoordinate", QVariant::fromValue(center.atDistanceAndAzimuth(175, 90))));
-    QVERIFY(qAbs(circle->radius()->rawValue().toDouble() - 175) < 0.01);
-    for (const auto& property : {"centerDragHandle", "radiusDragHandle"}) {
-        auto* handle = qvariant_cast<QQuickItem*>(handles->property(property));
-        QVERIFY(handle && handle->z() == 52);
+        QVERIFY(circleVisual);
+        auto* handles = qvariant_cast<QObject*>(circleVisual->property("_dragHandlesComponent"));
+        QVERIFY(handles);
+        auto* centerDrag = qvariant_cast<QQuickItem*>(handles->property("centerDragArea"));
+        auto* radiusDrag = qvariant_cast<QQuickItem*>(handles->property("radiusDragArea"));
+        QVERIFY(centerDrag && radiusDrag && centerDrag->isVisible() && radiusDrag->isVisible());
+        const auto center = circle->center().atDistanceAndAzimuth(30, 45);
+        QVERIFY(centerDrag->setProperty("itemCoordinate", QVariant::fromValue(center)));
+        QCOMPARE(circle->center(), center);
+        QVERIFY(radiusDrag->setProperty("itemCoordinate", QVariant::fromValue(center.atDistanceAndAzimuth(175, 90))));
+        QVERIFY(qAbs(circle->radius()->rawValue().toDouble() - 175) < 0.01);
+        for (const auto& property : {"centerDragHandle", "radiusDragHandle"}) {
+            auto* handle = qvariant_cast<QQuickItem*>(handles->property(property));
+            QVERIFY(handle && handle->z() == 52);
+        }
+        oldHandles = handles;
     }
     planStyleCheckBoundaries(map, master->planVehicleId(), color, 2, 2);
     QVERIFY(!QTest::currentTestFailed());
-    QPointer<QObject> oldHandles = handles;
+    QVERIFY(oldHandles);
     _setPlanLayer(view, 1);
     QVERIFY(!QTest::currentTestFailed());
     QTRY_VERIFY_WITH_TIMEOUT(oldHandles.isNull(), TestTimeout::shortMs());
