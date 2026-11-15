@@ -80,7 +80,8 @@ continues streaming on any control failure. For existing installs, rerun `vehicl
 to replace the wrapper, then restart the service. The environment file is preserved, and an
 unset `CAM_CTRLS` still gets the default fix. Installer defaults remain 10 fps, 1000 kbit/s
 and a keyframe every 5 frames; the tuned values are documented only. The updated wrapper's
-automatic control application has not yet been exercised on hardware.
+automatic control application was **verified on hardware for a service restart on 2026-11-15**.
+Application after a full reboot or camera unplug/replug has not yet been tested.
 
 After updating the wrapper or editing the environment file:
 

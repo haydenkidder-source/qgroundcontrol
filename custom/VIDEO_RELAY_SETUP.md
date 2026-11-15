@@ -29,6 +29,10 @@ QGroundControl (QGC).
 - QGC was the viewer for the [latency tests](#tuning-latency), with Low Latency Mode already on.
   The VIDEO SOURCE TYPE (RTSP URL, direct MPEG-TS, etc.) was not recorded; these tests do not
   verify RTSP playback in QGC. Record the source type next time.
+- On **2026-11-15**, the vehicle Pi reran `vehicle-setup.sh`; the installed wrapper contained
+  the `CAM_CTRLS` lines and `vehicle-stream` was active. After manually setting
+  `exposure_dynamic_framerate=1` and reading back `value=1`, restarting `vehicle-stream` and
+  waiting 5 seconds gave `value=0`: automatic application at service start is verified on hardware.
 
 **Not verified:**
 
@@ -38,6 +42,8 @@ QGroundControl (QGC).
 - HLS playback; browser playback was reported with its endpoint not recorded, so neither the
   WebRTC nor HLS endpoint is independently verified. Listening ports alone do not verify playback.
 - The new `TimeoutStopSec=10` directive in the GCS unit; it has not yet been exercised on hardware.
+- Automatic camera-control application after a full reboot or camera unplug/replug has not yet
+  been tested.
 
 Heavy video artifacts on the bench led to the
 [radio power investigation](FIELD_RADIO_SETUP.md#bench-versus-field-transmit-power).
@@ -470,6 +476,12 @@ frame rate was turned off: 1 / 0.0666 s is about 15 fps. Setting
 `exposure_dynamic_framerate=0` let the camera deliver 30 fps. A darker or noisier picture is
 the trade-off for short exposure; more light is the real fix.
 
+On **2026-11-15**, with `exposure_dynamic_framerate=1`, a 12 second camera-only capture at
+1280x720 requested at 30 fps held a steady 15.04 fps throughout. Whether the lens was covered
+during that run was not confirmed, so it does not show that darkness lowers the frame rate
+further; the earlier daylight run also read 15.03 fps. The fading-light explanation for the
+frame-rate drop is a plausible hypothesis that was not demonstrated.
+
 An **untested alternative** is `auto_exposure=1` with `exposure_time_absolute` set manually.
 Its units are 0.1 ms; keep the value at or below 333 for 30 fps.
 
@@ -503,8 +515,18 @@ service after updating so an already running stream picks up the wrapper:
 sudo systemctl restart vehicle-stream.service
 ```
 
-The manual camera fix was measured on the bench; automatic application by the updated
-wrapper has not yet been exercised on hardware.
+Automatic application by the updated wrapper was **verified on hardware for a service restart
+on 2026-11-15** using this check, with the default control enabled:
+
+```bash
+v4l2-ctl -d /dev/video0 -c exposure_dynamic_framerate=1
+v4l2-ctl -d /dev/video0 --list-ctrls | grep exposure_dynamic_framerate # Expected: value=1
+sudo systemctl restart vehicle-stream
+sleep 5
+v4l2-ctl -d /dev/video0 --list-ctrls | grep exposure_dynamic_framerate # Expected: value=0
+```
+
+Automatic application after a full reboot or camera unplug/replug has not yet been tested.
 
 ### Measuring latency and frame rate
 
