@@ -146,3 +146,63 @@ void SerialPortManagerTest::_displayMetadataUsesCachedInventory()
     QCOMPARE(scans, 2);
     QCOMPARE(enumerated.size(), 2);
 }
+
+void SerialPortManagerTest::_ownerMetadata_data()
+{
+    QTest::addColumn<bool>("exclusion");
+    QTest::newRow("reservation") << false;
+    QTest::newRow("exclusion") << true;
+}
+
+void SerialPortManagerTest::_ownerMetadata()
+{
+    QFETCH(bool, exclusion);
+    std::optional<SerialPortManager::Owner> snapshot;
+    const QString location = QStringLiteral("/test/owner");
+    {
+        SerialPortManager ports;
+        const auto inspect = [&] {
+            return exclusion ? ports.exclusionInfo(QStringLiteral(" /test/owner "))
+                             : ports.reservationInfo(QStringLiteral(" /test/owner "));
+        };
+        QVERIFY(!inspect());
+        auto claim = exclusion ? ports.excludeFromAutoConnect(location, SerialPortManager::OwnerKind::GPSReceiver,
+                                                              QStringLiteral("GNSS receiver"))
+                               : ports.reservePort(location, SerialPortManager::OwnerKind::GPSReceiver,
+                                                   QStringLiteral("GNSS receiver"));
+        QVERIFY(claim);
+        snapshot = inspect();
+        QVERIFY(snapshot);
+        QCOMPARE(snapshot->kind, SerialPortManager::OwnerKind::GPSReceiver);
+        QCOMPARE(snapshot->label, QStringLiteral("GNSS receiver"));
+        QVERIFY(!ports.reservationInfo(QStringLiteral("/test/missing")));
+        QVERIFY(!ports.exclusionInfo(QStringLiteral("/test/missing")));
+        auto sharedClaim = claim;
+        claim.reset();
+        QVERIFY(inspect());
+        sharedClaim.reset();
+        QVERIFY(!inspect());
+        // Inspection must not retain the reservation or prevent a different owner claiming it.
+        auto replacement =
+            exclusion ? ports.excludeFromAutoConnect(location, SerialPortManager::OwnerKind::MAVLink,
+                                                     QStringLiteral("Telemetry"))
+                      : ports.reservePort(location, SerialPortManager::OwnerKind::MAVLink, QStringLiteral("Telemetry"));
+        QVERIFY(replacement);
+        QCOMPARE(inspect()->kind, SerialPortManager::OwnerKind::MAVLink);
+        QCOMPARE(inspect()->label, QStringLiteral("Telemetry"));
+        if (exclusion) {
+            const auto same =
+                ports.excludeFromAutoConnect(location, SerialPortManager::OwnerKind::Unknown, QStringLiteral("Other"));
+            QCOMPARE(same, replacement);
+            QCOMPARE(inspect()->label, QStringLiteral("Telemetry"));
+        }
+        replacement.reset();
+        QVERIFY(!inspect());
+        auto anonymous = exclusion ? ports.excludeFromAutoConnect(location) : ports.reservePort(location);
+        QVERIFY(anonymous);
+        QCOMPARE(inspect()->kind, SerialPortManager::OwnerKind::Unknown);
+        QVERIFY(inspect()->label.isEmpty());
+    }
+    QVERIFY(snapshot);
+    QCOMPARE(snapshot->label, QStringLiteral("GNSS receiver"));
+}
