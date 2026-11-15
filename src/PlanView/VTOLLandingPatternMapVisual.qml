@@ -12,6 +12,7 @@ Item {
     id: _root
 
     property var planStyle: null
+    readonly property bool _styled: planStyle && planStyle.enabled
     property var map        ///< Map control to place item in
     property var vehicle    ///< Vehicle associated with this item
     property bool interactive: true
@@ -207,11 +208,12 @@ Item {
 
         MapPolyline {
             objectName: "planPatternLine"
+            opacity: _root._styled ? _root.opacity : 1
             readonly property real vehicleId: _root.planStyle ? _root.planStyle.vehicleId : 0
             z:          QGroundControl.zOrderMapItems - 1   // Under item indicators
             line.color: _root.planStyle && _root.planStyle.enabled ? _root.planStyle.lineColor :
                         QGroundControl.globalPalette.mapMissionTrajectory
-            line.width: 2
+            line.width: _root._styled ? _root.planStyle.missionLineWidth : 2
             path:       _flightPath
         }
     }
@@ -222,6 +224,7 @@ Item {
 
         MapQuickItem {
             objectName: "planWaypoint"
+            opacity: _root._styled ? _root.opacity : 1
             readonly property real vehicleId: _root.planStyle ? _root.planStyle.vehicleId : 0
             readonly property int sequenceNumber: sourceItem.index > 0 ? sourceItem.index : _missionItem.sequenceNumber
             readonly property bool current: _missionItem.isCurrentItem
@@ -257,6 +260,7 @@ Item {
 
         MapQuickItem {
             objectName: "planWaypoint"
+            opacity: _root._styled ? _root.opacity : 1
             readonly property real vehicleId: _root.planStyle ? _root.planStyle.vehicleId : 0
             readonly property int sequenceNumber: sourceItem.index > 0 ? sourceItem.index : _missionItem.sequenceNumber
             readonly property bool current: _missionItem.isCurrentItem
@@ -291,11 +295,12 @@ Item {
 
         MapCircle {
             objectName: "planLoiterRing"
+            opacity: _root._styled ? _root.opacity : 1
             readonly property real vehicleId: _root.planStyle ? _root.planStyle.vehicleId : 0
             z:              QGroundControl.zOrderMapItems
             center:         _missionItem.finalApproachCoordinate
             radius:         _missionItem.loiterRadius.rawValue
-            border.width:   2
+            border.width:   _root._styled ? _root.planStyle.missionLineWidth : 2
             border.color:   _root.planStyle && _root.planStyle.enabled ? _root.planStyle.lineColor : "green"
             color:          "transparent"
             visible:        _useLoiterToAlt

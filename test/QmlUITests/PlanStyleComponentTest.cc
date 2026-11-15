@@ -15,6 +15,7 @@
 
 #include "AppSettings.h"
 #include "Fact.h"
+#include "FixedWingLandingComplexItem.h"
 #include "FlightPathSegment.h"
 #include "GeoFenceController.h"
 #include "PlanMasterController.h"
@@ -32,6 +33,7 @@
 #include "RallyPoint.h"
 #include "RallyPointController.h"
 #include "SettingsManager.h"
+#include "VTOLLandingComplexItem.h"
 #include "Vehicle.h"
 
 namespace {
@@ -797,6 +799,245 @@ void PlanStyleComponentTest::_stockEditorVisuals()
     for (auto* marker : named(QStringLiteral("planRallyPoint"))) {
         QVERIFY(!marker->property("checked").toBool());
     }
+}
+
+void PlanStyleComponentTest::_landingVisuals_data()
+{
+    QTest::addColumn<bool>("fixedWing");
+    QTest::addColumn<int>("contextMode");
+    QTest::addColumn<bool>("px4");
+    for (bool fixedWing : {false, true}) {
+        for (int mode : {0, 1, 2}) {
+            for (bool px4 : {false, true}) {
+                const auto name = QStringLiteral("%1-%2-%3")
+                                      .arg(fixedWing ? QStringLiteral("fw") : QStringLiteral("vtol"))
+                                      .arg(mode)
+                                      .arg(px4 ? QStringLiteral("px4") : QStringLiteral("apm"));
+                QTest::newRow(qPrintable(name)) << fixedWing << mode << px4;
+            }
+        }
+    }
+}
+
+void PlanStyleComponentTest::_landingVisuals()
+{
+    QFETCH(bool, fixedWing);
+    QFETCH(int, contextMode);
+    QFETCH(bool, px4);
+    const bool styled = contextMode == 2;
+    const auto firmware = px4 ? MAV_AUTOPILOT_PX4 : MAV_AUTOPILOT_ARDUPILOTMEGA;
+    const auto vehicleType = fixedWing ? MAV_TYPE_FIXED_WING : MAV_TYPE_VTOL_TAILSITTER_QUADROTOR;
+    const auto restore = PlanStylePatternTest::planStyleOfflineVehicleSettings(firmware, vehicleType);
+    PlanMasterController master(firmware, vehicleType);
+    QVERIFY(master.controllerVehicle());
+    master.controllerVehicle()->setParent(&master);
+    master.setFlyView(true);
+    master.start();
+    QCOMPARE(master.controllerVehicle()->firmwareType(), firmware);
+    QCOMPARE(master.controllerVehicle()->vehicleType(), vehicleType);
+    std::unique_ptr<LandingComplexItem> landing;
+    if (fixedWing) {
+        landing = std::make_unique<FixedWingLandingComplexItem>(&master, true);
+    } else {
+        landing = std::make_unique<VTOLLandingComplexItem>(&master, true);
+    }
+    landing->setSequenceNumber(10);
+    landing->setLandingCoordinate(QGeoCoordinate(47, 8, 100));
+    landing->useLoiterToAlt()->setRawValue(true);
+    QmlObjectListModel items;
+    items.append(landing.get());
+    auto* plugin = QGCCorePlugin::instance();
+    QVERIFY(plugin);
+    auto destroyEngine = [plugin](QQmlApplicationEngine* engine) { plugin->destroyQmlApplicationEngine(engine); };
+    std::unique_ptr<QQmlApplicationEngine, decltype(destroyEngine)> engine(plugin->createQmlApplicationEngine(nullptr),
+                                                                           destroyEngine);
+    QVERIFY(engine);
+    // Initialize ScreenTools before asynchronous visual dispatch, as in the other component rows.
+    QQmlComponent warmup(engine.get());
+    warmup.setData(R"(
+        import QtQuick
+        import QGroundControl.Controls
+        Item { property real h: ScreenTools.defaultFontPixelHeight }
+    )",
+                   QUrl());
+    QTRY_VERIFY_WITH_TIMEOUT(warmup.status() != QQmlComponent::Loading, TestTimeout::shortMs());
+    QVERIFY2(warmup.isReady(), qPrintable(warmup.errorString()));
+    std::unique_ptr<QObject> warmupRoot(warmup.create());
+    QVERIFY(warmupRoot);
+    engine->rootContext()->setContextProperty(QStringLiteral("testLandings"), &items);
+    QQmlComponent component(engine.get());
+    component.setData(R"(
+        import QtQuick
+        import QtQuick.Shapes
+        import QtPositioning
+        import QGroundControl
+        import QGroundControl.Controls
+        import QGroundControl.FlightMap
+        import QGroundControl.PlanView
+        FlightMap {
+            id: landingMap
+            width: 640; height: 480
+            center: QtPositioning.coordinate(47, 8)
+            zoomLevel: 16
+            planView: false
+            isSatelliteMap: false
+            allowGCSLocationCenter: false
+            allowVehicleLocationCenter: false
+            property rect centerViewport: Qt.rect(0, 0, width, height)
+            property int contextMode: 0
+            readonly property color trajectory: QGroundControl.globalPalette.mapMissionTrajectory
+            readonly property color ordinary: palette.mapIndicator
+            readonly property int dashStyle: ShapePath.DashLine
+            QGCPalette { id: palette }
+            QtObject {
+                id: style
+                property bool enabled: landingMap.contextMode === 2
+                property real vehicleId: 4294967295
+                property color lineColor: "magenta"
+                property real missionLineWidth: enabled ? 4 : 19
+                property real boundaryLineWidth: enabled ? 3 : 17
+                property var keepInDashPattern: enabled ? [6, 3] : [1, 19]
+                property color markerBorderColor: enabled ? "white" : "cyan"
+                property real markerBorderWidth: enabled ? 2 : 7
+                property color markerTextColor: enabled ? "black" : "yellow"
+            }
+            Repeater {
+                model: testLandings
+                MissionItemMapVisual {
+                    map: landingMap; vehicle: null; interactive: false; opacity: 0.5
+                    planStyle: landingMap.contextMode === 0 ? null : style
+                }
+            }
+        }
+    )",
+                      QUrl());
+    QTRY_VERIFY_WITH_TIMEOUT(component.status() != QQmlComponent::Loading, TestTimeout::shortMs());
+    QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+    std::unique_ptr<QObject> root(
+        component.createWithInitialProperties({{QStringLiteral("contextMode"), contextMode}}));
+    QVERIFY2(root, qPrintable(component.errorString()));
+    auto* map = qobject_cast<QQuickItem*>(root.get());
+    QVERIFY(map);
+    const auto named = [map](const QString& name) { return componentPlanStyleItems(map, name); };
+    QTRY_COMPARE_WITH_TIMEOUT(named(QStringLiteral("planPatternLine")).size(), 1, TestTimeout::mediumMs());
+    QTRY_COMPARE_WITH_TIMEOUT(named(QStringLiteral("planLoiterRing")).size(), 1, TestTimeout::mediumMs());
+    QTRY_COMPARE_WITH_TIMEOUT(named(QStringLiteral("planWaypoint")).size(), 2, TestTimeout::mediumMs());
+    auto* line = named(QStringLiteral("planPatternLine")).first();
+    auto* ring = named(QStringLiteral("planLoiterRing")).first();
+    QCOMPARE(QQmlProperty(line, QStringLiteral("line.width")).read().toReal(), styled ? 4.0 : 2.0);
+    QCOMPARE(QQmlProperty(line, QStringLiteral("line.color")).read().value<QColor>(),
+             styled ? QColor(Qt::magenta) : map->property("trajectory").value<QColor>());
+    QCOMPARE(QQmlProperty(ring, QStringLiteral("border.width")).read().toReal(), styled ? 4.0 : 2.0);
+    QCOMPARE(QQmlProperty(ring, QStringLiteral("border.color")).read().value<QColor>(),
+             QColor(styled ? QStringLiteral("magenta") : QStringLiteral("green")));
+    QCOMPARE(ring->property("color").value<QColor>().alpha(), 0);
+    QCOMPARE(line->opacity(), styled ? 0.5 : 1.0);
+    QCOMPARE(ring->opacity(), styled ? 0.5 : 1.0);
+    QCOMPARE(line->z(), 49.0);
+    QCOMPARE(ring->z(), 50.0);
+    for (bool selected : {false, true}) {
+        landing->setIsCurrentItem(selected);
+        for (auto* marker : named(QStringLiteral("planWaypoint"))) {
+            auto* label = qvariant_cast<QQuickItem*>(marker->property("sourceItem"));
+            QVERIFY(label);
+            QTRY_COMPARE_WITH_TIMEOUT(marker->property("checked").toBool(), selected, TestTimeout::shortMs());
+            QCOMPARE(label->property("renderedBodyColor").value<QColor>(),
+                     styled ? QColor(Qt::magenta)
+                            : (selected ? QColor(QStringLiteral("green")) : map->property("ordinary").value<QColor>()));
+            QCOMPARE(label->property("renderedBorderWidth").toReal(), styled ? 2.0 : 0.0);
+            QCOMPARE(label->property("renderedBorderColor").value<QColor>(),
+                     QColor(styled ? QStringLiteral("white") : QStringLiteral("black")));
+            QCOMPARE(label->property("renderedTextColor").value<QColor>(),
+                     QColor(styled ? QStringLiteral("black") : QStringLiteral("white")));
+            QCOMPARE(label->property("small").toBool(), !selected);
+            QCOMPARE(marker->opacity(), styled ? 0.5 : 1.0);
+            QCOMPARE(marker->z(), 50.0);
+            const int index = marker->property("index").toInt();
+            QVERIFY(index == landing->sequenceNumber() || index == landing->lastSequenceNumber());
+            QCOMPARE(label->property("renderedIndexText").toString(), QString::number(index));
+            const bool entry = index == landing->sequenceNumber();
+            QCOMPARE(marker->property("coordinate").value<QGeoCoordinate>(),
+                     entry ? landing->finalApproachCoordinate() : landing->landingCoordinate());
+            QCOMPARE(label->property("label").toString(),
+                     entry ? QStringLiteral("Loiter") : (fixedWing ? QString() : QStringLiteral("Land")));
+            const auto halos = componentPlanStyleItems(label, QStringLiteral("planWaypointSelectionHalo"));
+            QCOMPARE(halos.size(), 1);
+            QCOMPARE(halos.first()->isVisible(), styled && selected);
+        }
+        for (bool loiter : {false, true}) {
+            landing->useLoiterToAlt()->setRawValue(loiter);
+            QTRY_COMPARE_WITH_TIMEOUT(ring->isVisible(), loiter, TestTimeout::shortMs());
+            const QVariantList expected{
+                QVariant::fromValue(loiter ? landing->slopeStartCoordinate() : landing->finalApproachCoordinate()),
+                QVariant::fromValue(landing->landingCoordinate())};
+            QTRY_COMPARE_WITH_TIMEOUT(line->property("path").toList(), expected, TestTimeout::shortMs());
+        }
+    }
+    QTRY_COMPARE_WITH_TIMEOUT(named(QStringLiteral("planPatternOutline")).size(), styled && fixedWing ? 2 : 0,
+                              TestTimeout::shortMs());
+    if (!fixedWing) {
+        QVERIFY(named(QStringLiteral("planLandingArea")).isEmpty());
+        QVERIFY(named(QStringLiteral("planGlideSlope")).isEmpty());
+        return;
+    }
+    QTRY_COMPARE_WITH_TIMEOUT(named(QStringLiteral("planLandingArea")).size(), 1, TestTimeout::shortMs());
+    QTRY_COMPARE_WITH_TIMEOUT(named(QStringLiteral("planGlideSlope")).size(), 1, TestTimeout::shortMs());
+    auto* area = named(QStringLiteral("planLandingArea")).first();
+    auto* slope = named(QStringLiteral("planGlideSlope")).first();
+    QCOMPARE(area->property("path").toList().size(), 4);
+    QCOMPARE(slope->property("path").toList().size(), 3);
+    for (auto* fill : {area, slope}) {
+        QCOMPARE(QQmlProperty(fill, QStringLiteral("border.width")).read().toReal(), styled ? 0.0 : 1.0);
+        QCOMPARE(QQmlProperty(fill, QStringLiteral("border.color")).read().value<QColor>(), QColor(Qt::black));
+        QCOMPARE(fill->opacity(), styled ? 0.25 : 0.5);
+        QCOMPARE(fill->z(), styled ? 48.0 : 50.0);
+        QVERIFY(fill->isVisible());
+        const QColor normal =
+            styled ? QColor(Qt::magenta) : QColor(fill == area ? QStringLiteral("green") : QStringLiteral("orange"));
+        QCOMPARE(fill->property("color").value<QColor>(), normal);
+        if (styled) {
+            QList<QQuickItem*> matches;
+            for (auto* outline : named(QStringLiteral("planPatternOutline"))) {
+                if (outline->property("vertices").toList() == fill->property("path").toList()) {
+                    matches.append(outline);
+                }
+            }
+            QCOMPARE(matches.size(), 1);
+            auto* outline = matches.first();
+            QCOMPARE(outline->property("renderedStrokeColor").value<QColor>(), QColor(Qt::magenta));
+            QCOMPARE(outline->property("renderedStrokeWidth").toReal(), 3.0);
+            QCOMPARE(outline->property("renderedDashPattern").toList(), QVariantList({6.0, 3.0}));
+            QCOMPARE(outline->property("renderedStrokeStyle").toInt(), map->property("dashStyle").toInt());
+            auto* shape = qvariant_cast<QQuickItem*>(outline->property("sourceItem"));
+            QVERIFY(shape);
+            int strokes = 0;
+            for (auto* child : shape->findChildren<QObject*>()) {
+                strokes += child->metaObject()->indexOfProperty("strokeWidth") >= 0 ? 1 : 0;
+            }
+            QCOMPARE(strokes, 1);
+            QCOMPARE(outline->opacity(), 0.5);
+            QCOMPARE(outline->z(), 49.0);
+            QCOMPARE(outline->acceptedMouseButtons(), Qt::NoButton);
+        }
+    }
+    QTRY_VERIFY_WITH_TIMEOUT(landing->flightPathSegments()->count() > 0, TestTimeout::mediumMs());
+    auto* segment = landing->flightPathSegments()->value<FlightPathSegment*>(0);
+    QVERIFY(segment && segment->totalDistance() > 0);
+    QVERIFY(segment->setProperty("distanceBetween", segment->totalDistance()));
+    QVERIFY(segment->setProperty("finalDistanceBetween", segment->totalDistance()));
+    QVERIFY(segment->setProperty("amslTerrainHeights", QVariantList{1.0e6, 1.0e6}));
+    segment->setCoord1AMSLAlt(-100);
+    segment->setCoord2AMSLAlt(-100);
+    QVERIFY(landing->terrainCollision());
+    QTRY_COMPARE_WITH_TIMEOUT(slope->property("color").value<QColor>(), QColor(Qt::red), TestTimeout::shortMs());
+    QCOMPARE(area->property("color").value<QColor>(),
+             QColor(styled ? QStringLiteral("magenta") : QStringLiteral("green")));
+    segment->setCoord1AMSLAlt(2.0e6);
+    segment->setCoord2AMSLAlt(2.0e6);
+    QVERIFY(!landing->terrainCollision());
+    QTRY_COMPARE_WITH_TIMEOUT(slope->property("color").value<QColor>(),
+                              QColor(styled ? QStringLiteral("magenta") : QStringLiteral("orange")),
+                              TestTimeout::shortMs());
 }
 
 void PlanStyleComponentTest::_patternVisuals_data()

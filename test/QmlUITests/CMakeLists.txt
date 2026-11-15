@@ -9,6 +9,7 @@ target_sources(
         ${CMAKE_CURRENT_SOURCE_DIR}/QmlUITestBase.h
         ${CMAKE_CURRENT_SOURCE_DIR}/PlanStyleComponentTest.cc
         ${CMAKE_CURRENT_SOURCE_DIR}/PlanStyleComponentTest.h
+        ${CMAKE_CURRENT_SOURCE_DIR}/PlanStylePatternTest.h
         ${CMAKE_CURRENT_SOURCE_DIR}/VehicleConfigUITestBase.cc
         ${CMAKE_CURRENT_SOURCE_DIR}/VehicleConfigUITestBase.h
         ${CMAKE_CURRENT_SOURCE_DIR}/TopLevelViewsTest.cc
