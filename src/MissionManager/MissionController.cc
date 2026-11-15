@@ -112,7 +112,7 @@ void MissionController::_init(void)
 // Called when new mission items have completed downloading from Vehicle
 void MissionController::_newMissionItemsAvailableFromVehicle(bool removeAllRequested)
 {
-    if (!_managerVehicle || (sender() && sender() != _missionManager)) {
+    if (!_managerVehicle) {
         return;
     }
     const quint32 vehicleId = _managerVehicle->isOfflineEditingVehicle() ? 0 : _managerVehicle->id();

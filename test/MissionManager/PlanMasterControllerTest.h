@@ -72,6 +72,8 @@ private slots:
     void _testPlanVehicleIdKeepAndLoad();
     void _testPlanVehicleIdDirtyDisconnectKeepsAssociation();
     void _testPlanVehicleIdExplicitDownloads();
+    void _testPlanVehicleIdEditDuringDownload_data();
+    void _testPlanVehicleIdEditDuringDownload();
     void _testPlanVehicleIdCachedShowWaitsForReplacement();
     void _testPlanVehicleIdPartialSectionAdoption_data();
     void _testPlanVehicleIdPartialSectionAdoption();

@@ -848,8 +848,7 @@ void PlanMasterController::_showPlanFromManagerVehicle(void)
 
 void PlanMasterController::_initialPlanRequestCompleteChanged(bool initialPlanRequestComplete)
 {
-    if ((sender() && sender() != _managerVehicle.data()) || !initialPlanRequestComplete ||
-        _loadSequence != SyncSequence::InitialPlanLoad) {
+    if (!initialPlanRequestComplete || _loadSequence != SyncSequence::InitialPlanLoad) {
         return;
     }
     qCDebug(PlanMasterControllerLog) << "_initialPlanRequestCompleteChanged: initial download complete";

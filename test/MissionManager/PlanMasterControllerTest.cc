@@ -1458,6 +1458,108 @@ void PlanMasterControllerTest::_testPlanVehicleIdExplicitDownloads()
     QCOMPARE(MultiVehicleManager::instance()->activeVehicle(), _vehicle);
 }
 
+void PlanMasterControllerTest::_testPlanVehicleIdEditDuringDownload_data()
+{
+    QTest::addColumn<int>("editAfterSection");
+    QTest::newRow("edit before mission replacement is discarded") << -1;
+    QTest::newRow("edit after mission adoption leaves mixture unattached") << 0;
+    QTest::newRow("edit after fence adoption leaves mixture unattached") << 1;
+}
+
+void PlanMasterControllerTest::_testPlanVehicleIdEditDuringDownload()
+{
+    QFETCH(int, editAfterSection);
+    AppSettings* const settings = SettingsManager::instance()->appSettings();
+    settings->offlineEditingFirmwareClass()->setRawValue(int(QGCMAVLink::FirmwareClassPX4));
+    settings->offlineEditingVehicleClass()->setRawValue(int(QGCMAVLink::VehicleClassMultiRotor));
+    MissionController* const mission = _masterController->missionController();
+    GeoFenceController* const fence = _masterController->geoFenceController();
+    RallyPointController* const rally = _masterController->rallyPointController();
+
+    // Keep an edited offline buffer through the initial connection, then explicitly replace it with A's plan.
+    _masterController->loadFromFile(":/unittest/MissionPlanner.waypoints");
+    QVERIFY(mission->insertSimpleMissionItem(mission->plannedHomePosition().atDistanceAndAzimuth(100, 45), -1));
+    QVERIFY(_masterController->dirtyForSave());
+    _connectMockLink(MAV_AUTOPILOT_PX4);
+    QVERIFY(_vehicle);
+    QVERIFY(_mockLink);
+    QTRY_VERIFY_WITH_TIMEOUT(_vehicle->initialPlanRequestComplete(), TestTimeout::longMs());
+    QCOMPARE(_masterController->managerVehicle(), _vehicle);
+    QCOMPARE(_masterController->planVehicleId(), quint32(0));
+    QCOMPARE(mission->visualItems()->count(), 7);
+    QVERIFY(fence->supported());
+    QVERIFY(rally->supported());
+    QVERIFY(!_masterController->syncInProgress());
+    _mockLink->loadSimpleMultirotorMission();
+
+    QSignalSpy changed(_masterController, &PlanMasterController::planVehicleIdChanged);
+    QSignalSpy missionComplete(mission, &MissionController::newItemsFromVehicle);
+    QSignalSpy fenceComplete(fence, &GeoFenceController::loadComplete);
+    QSignalSpy complete(_vehicle->rallyPointManager(), &RallyPointManager::loadComplete);
+    QList<quint32> notifiedIds;
+    QGeoCoordinate editedCoordinate;
+    int editCount = 0;
+    const auto insertEdit = [&] {
+        VisualMissionItem* const item =
+            mission->insertSimpleMissionItem(mission->plannedHomePosition().atDistanceAndAzimuth(200, 45), -1);
+        QVERIFY(item);
+        editedCoordinate = item->coordinate();
+        ++editCount;
+        QCOMPARE(_masterController->planVehicleId(), quint32(0));
+        QCOMPARE(changed.count(), 0);
+    };
+    QObject observer;
+    connect(_masterController, &PlanMasterController::planVehicleIdChanged, &observer,
+            [&] { notifiedIds.append(_masterController->planVehicleId()); });
+    // The master's earlier direct connections have started the next section before these callbacks run.
+    connect(mission, &MissionController::newItemsFromVehicle, &observer, [&] {
+        QCOMPARE(mission->visualItems()->count(), 4);
+        QVERIFY(fence->syncInProgress());
+        QCOMPARE(complete.count(), 0);
+        QCOMPARE(_masterController->planVehicleId(), quint32(0));
+        QCOMPARE(changed.count(), 0);
+        if (editAfterSection == 0) {
+            insertEdit();
+        }
+    });
+    connect(fence, &GeoFenceController::loadComplete, &observer, [&] {
+        QVERIFY(rally->syncInProgress());
+        QCOMPARE(complete.count(), 0);
+        QCOMPARE(_masterController->planVehicleId(), quint32(0));
+        QCOMPARE(changed.count(), 0);
+        if (editAfterSection == 1) {
+            insertEdit();
+        }
+    });
+
+    _masterController->loadFromVehicle();
+    QVERIFY(mission->syncInProgress());
+    QCOMPARE(missionComplete.count(), 0);
+    QCOMPARE(_masterController->planVehicleId(), quint32(0));
+    QCOMPARE(changed.count(), 0);
+    if (editAfterSection == -1) {
+        insertEdit();
+        QCOMPARE(mission->visualItems()->count(), 8);
+    }
+
+    QTRY_COMPARE_WITH_TIMEOUT(complete.count(), 1, TestTimeout::longMs());
+    QCOMPARE(missionComplete.count(), 1);
+    QCOMPARE(fenceComplete.count(), 1);
+    QVERIFY(!_masterController->syncInProgress());
+    QCOMPARE(editCount, 1);
+    QCOMPARE(_masterController->planVehicleId(), editAfterSection == -1 ? _vehicle->id() : quint32(0));
+    QCOMPARE(changed.count(), editAfterSection == -1 ? 1 : 0);
+    QCOMPARE(notifiedIds, editAfterSection == -1 ? QList<quint32>{_vehicle->id()} : QList<quint32>{});
+    QCOMPARE(mission->visualItems()->count(), editAfterSection == -1 ? 4 : 5);
+    if (editAfterSection == -1) {
+        for (int i = 0; i < mission->visualItems()->count(); ++i) {
+            QVERIFY(mission->visualItems()->value<VisualMissionItem*>(i)->coordinate() != editedCoordinate);
+        }
+    } else {
+        QCOMPARE(mission->visualItems()->value<VisualMissionItem*>(4)->coordinate(), editedCoordinate);
+    }
+}
+
 void PlanMasterControllerTest::_testPlanVehicleIdCachedShowWaitsForReplacement()
 {
     _connectMockLink(MAV_AUTOPILOT_PX4);
