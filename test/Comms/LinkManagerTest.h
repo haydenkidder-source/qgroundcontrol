@@ -3,6 +3,8 @@
 #include "CommsTest.h"
 #include "LinkConfiguration.h"
 
+class LinkManager;
+
 /// Tests for LinkManager::_reconnectAutoConnectLinks() — the auto-connect link
 /// re-establishment driven off the auto-connect timer (PR #14547).
 class LinkManagerTest : public CommsTest
@@ -15,6 +17,27 @@ private slots:
     void _testCreationDiagnostics();
     void _testUdpAutoConnectDefaults();
 #ifndef QGC_NO_SERIAL_LINK
+    void _testSerialNoticeLoss_data();
+    void _testSerialNoticeLoss();
+    void _testSerialNoticeWorkerReasons_data();
+    void _testSerialNoticeWorkerReasons();
+    void _testSerialNoticeTransitions();
+    void _testSerialNoticeEscalationAfterLoss();
+    void _testSerialNoticeEscalationAfterCreationFailure();
+    void _testSerialNoticeDiscovery_data();
+    void _testSerialNoticeDiscovery();
+    void _testSerialNoticeOwners_data();
+    void _testSerialNoticeOwners();
+    void _testSerialNoticeSuppression();
+    void _testSerialNoticePeriodicObservation();
+    void _testSerialNoticeSavedPrecedence();
+    void _testSerialNoticeConfigurationLifetime();
+    void _testSerialNoticeStaleDiscovery();
+    void _testSerialNoticePolicyTransitions();
+    void _testSerialNoticeHistoryCap();
+    void _testSerialNoticeAutomaticOpen_data();
+    void _testSerialNoticeAutomaticOpen();
+    void _testSerialNoticeUiVocabulary();
     void _testSavedSerialOwnerClearsDiscoverySkip();
     void _testSerialLossDiagnostics_data();
     void _testSerialLossDiagnostics();
@@ -45,6 +68,9 @@ private slots:
     void _testDynamicUdpLinkIgnoresSameNamedUserLink();
 
 private:
+#ifndef QGC_NO_SERIAL_LINK
+    SharedLinkInterfacePtr _serialNoticeLink(LinkManager& manager, SharedLinkConfigurationPtr& config);
+#endif
     SharedLinkConfigurationPtr _addMockConfig(const QString &name, bool dynamic, bool autoConnect);
     void _reconnect();
     void _expectUdpBindFailureLogs();

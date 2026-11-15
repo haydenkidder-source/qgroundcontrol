@@ -29,6 +29,22 @@ struct SerialConnectionSettings
     bool bootloader = false;
 };
 
+/// Value snapshot captured only on the worker thread; no translated text or port pointer crosses threads.
+struct SerialOpenOutcome
+{
+    enum class Stage
+    {
+        Open,
+        Configuration,
+        Bootloader
+    };
+    Stage stage = Stage::Open;
+    QSerialPort::SerialPortError error = QSerialPort::NoError;
+    QString errorString;
+    bool automatic = false;
+};
+Q_DECLARE_METATYPE(SerialOpenOutcome)
+
 /*===========================================================================*/
 
 class SerialConfiguration : public LinkConfiguration
@@ -136,6 +152,7 @@ signals:
     void dataReceived(const QByteArray &data);
     void dataSent(const QByteArray &data);
     void errorOccurred(const QString &errorString);
+    void openFailed(const SerialOpenOutcome& outcome);
 
 public slots:
     void setupPort();
@@ -153,12 +170,15 @@ private slots:
 
 private:
     bool _configurePort();
+    void _reportOpenFailure(SerialOpenOutcome::Stage stage);
 
     const SerialConnectionSettings _settings;
     const SerialPortManager::ReservationPtr _reservation;
     QSerialPort *_port = nullptr;
     std::atomic<bool> _isConnected{false};
     bool _errorEmitted = false;
+    bool _opening = false;
+    bool _openOutcomeEmitted = false;
 };
 
 /*===========================================================================*/
@@ -177,6 +197,9 @@ public:
     bool isRadioLink() const override { return _serialConfig->sikRadio() || LinkInterface::isRadioLink(); }
 
     const QSerialPort *port() const { return _worker->port(); }
+
+signals:
+    void openFailed(const SerialOpenOutcome& outcome);
 
 public slots:
     void disconnect() override;

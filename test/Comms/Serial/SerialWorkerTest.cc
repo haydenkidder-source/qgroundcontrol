@@ -1,12 +1,14 @@
 #include "SerialWorkerTest.h"
 
-#include <QtCore/QFile>
-#include <QtCore/QScopeGuard>
-#include <QtTest/QSignalSpy>
-
+#include <atomic>
 #include <cstdlib>
 #include <fcntl.h>
 #include <unistd.h>
+
+#include <QtCore/QFile>
+#include <QtCore/QScopeGuard>
+#include <QtCore/QThread>
+#include <QtTest/QSignalSpy>
 
 #include "SerialLink.h"
 
@@ -55,6 +57,7 @@ void SerialWorkerTest::_occupiedPort()
     config.setAutoConnect(autoConnect);
     SerialWorker worker(config.connectionSettings());
     worker.setupPort();
+    QSignalSpy outcomes(&worker, &SerialWorker::openFailed);
     QSignalSpy errors(&worker, &SerialWorker::errorOccurred);
     QSignalSpy disconnected(&worker, &SerialWorker::disconnected);
     if (!autoConnect) {
@@ -63,6 +66,12 @@ void SerialWorkerTest::_occupiedPort()
     }
     worker.connectToPort();
     QCOMPARE(worker.port()->error(), QSerialPort::PermissionError);
+    QCOMPARE(outcomes.count(), 1);
+    const auto outcome = qvariant_cast<SerialOpenOutcome>(outcomes.first().first());
+    QCOMPARE(outcome.stage, SerialOpenOutcome::Stage::Open);
+    QCOMPARE(outcome.automatic, autoConnect);
+    QCOMPARE(outcome.error, QSerialPort::PermissionError);
+    QVERIFY(!outcome.errorString.isEmpty());
     QVERIFY(!worker.isConnected());
     QCOMPARE(disconnected.count(), 1);
     QCOMPARE(errors.count(), autoConnect ? 0 : 1);
@@ -86,10 +95,12 @@ void SerialWorkerTest::_settingsSnapshotAndAvailability()
     config.setPortName(QStringLiteral("/test/changed-after-snapshot"));
     config.setBaud(9600);
     QSignalSpy connected(&worker, &SerialWorker::connected);
+    QSignalSpy outcomes(&worker, &SerialWorker::openFailed);
     QSignalSpy errors(&worker, &SerialWorker::errorOccurred);
     QSignalSpy disconnected(&worker, &SerialWorker::disconnected);
     worker.connectToPort();
     QCOMPARE(connected.size(), 1);
+    QVERIFY(outcomes.isEmpty());
     QVERIFY(errors.isEmpty());
     QCOMPARE(worker.port()->baudRate(), 115200);
     worker.checkPortAvailability({name});
@@ -122,10 +133,16 @@ void SerialWorkerTest::_configurationFailure()
     settings.baud = forceDtrLow ? 115200 : -1;
     SerialWorker worker(settings);
     QSignalSpy connected(&worker, &SerialWorker::connected);
+    QSignalSpy outcomes(&worker, &SerialWorker::openFailed);
     QSignalSpy errors(&worker, &SerialWorker::errorOccurred);
     QSignalSpy disconnected(&worker, &SerialWorker::disconnected);
     worker.connectToPort();
     QVERIFY(connected.isEmpty());
+    QCOMPARE(outcomes.count(), 1);
+    const auto outcome = qvariant_cast<SerialOpenOutcome>(outcomes.first().first());
+    QCOMPARE(outcome.stage, SerialOpenOutcome::Stage::Configuration);
+    QVERIFY(outcome.error != QSerialPort::NoError);
+    QVERIFY(!outcome.errorString.isEmpty());
     QCOMPARE(errors.size(), 1);
     QCOMPARE(disconnected.size(), 1);
     QVERIFY(!worker.isConnected());
@@ -165,6 +182,7 @@ void SerialWorkerTest::_missingPort()
     settings.portName = QStringLiteral("/test/qgc-nonexistent-serial-port");
     settings.autoConnect = autoConnect;
     SerialWorker worker(settings);
+    QSignalSpy outcomes(&worker, &SerialWorker::openFailed);
     QSignalSpy errors(&worker, &SerialWorker::errorOccurred);
     QSignalSpy disconnected(&worker, &SerialWorker::disconnected);
     if (!autoConnect) {
@@ -173,10 +191,106 @@ void SerialWorkerTest::_missingPort()
     }
     worker.connectToPort();
     QVERIFY(!worker.isConnected());
+    QCOMPARE(outcomes.count(), 1);
+    const auto outcome = qvariant_cast<SerialOpenOutcome>(outcomes.first().first());
+    QCOMPARE(outcome.stage, SerialOpenOutcome::Stage::Open);
+    QCOMPARE(outcome.automatic, autoConnect);
+    QCOMPARE(outcome.error, QSerialPort::DeviceNotFoundError);
+    QVERIFY(!outcome.errorString.isEmpty());
     QCOMPARE(errors.size(), autoConnect ? 0 : 1);
     QCOMPARE(disconnected.size(), 1);
     if (!autoConnect) {
         verifyExpectedLogMessage();
         verifyExpectedLogMessage();
     }
+}
+
+void SerialWorkerTest::_queuedOpenOutcome_data()
+{
+    QTest::addColumn<bool>("occupied");
+    QTest::newRow("access-denied") << true;
+    QTest::newRow("device-not-found") << false;
+}
+
+void SerialWorkerTest::_queuedOpenOutcome()
+{
+    QFETCH(bool, occupied);
+    QFile master;
+    const QString portName = openPseudoTerminal(master);
+    QVERIFY(!portName.isEmpty());
+    QSerialPort blocker(portName);
+    if (occupied) {
+        QVERIFY(blocker.open(QIODevice::ReadWrite));
+    }
+    SerialConnectionSettings settings;
+    settings.portName = occupied ? portName : QStringLiteral("/test/queued-absent-port");
+    settings.autoConnect = true;
+    QThread workerThread;
+    auto* worker = new SerialWorker(settings);
+    worker->moveToThread(&workerThread);
+    (void) connect(&workerThread, &QThread::finished, worker, &QObject::deleteLater);
+    QObject receiver;
+    SerialOpenOutcome received;
+    int receivedCount = 0;
+    bool receivedOnApplicationThread = false;
+    std::atomic<bool> emittedOnWorkerThread{false};
+    (void) connect(
+        worker, &SerialWorker::openFailed, worker,
+        [&emittedOnWorkerThread, &workerThread](const SerialOpenOutcome&) {
+            emittedOnWorkerThread.store(QThread::currentThread() == &workerThread);
+        },
+        Qt::DirectConnection);
+    (void) connect(
+        worker, &SerialWorker::openFailed, &receiver,
+        [&](const SerialOpenOutcome& outcome) {
+            received = outcome;
+            ++receivedCount;
+            receivedOnApplicationThread = QThread::currentThread() == receiver.thread();
+        },
+        Qt::QueuedConnection);
+    (void) connect(&workerThread, &QThread::started, worker, &SerialWorker::connectToPort);
+    workerThread.start();
+    const auto stopWorker = qScopeGuard([&] {
+        workerThread.quit();
+        workerThread.wait();
+    });
+    QTRY_COMPARE_WITH_TIMEOUT(receivedCount, 1, TestTimeout::shortMs());
+    QVERIFY(emittedOnWorkerThread.load());
+    QVERIFY(receivedOnApplicationThread);
+    QCOMPARE(received.stage, SerialOpenOutcome::Stage::Open);
+    QVERIFY(received.automatic);
+    QCOMPARE(received.error, occupied ? QSerialPort::PermissionError : QSerialPort::DeviceNotFoundError);
+    QVERIFY(!received.errorString.isEmpty());
+    // Queue a marker behind the complete open attempt, then inspect only application-thread state.
+    bool drained = false;
+    QVERIFY(QMetaObject::invokeMethod(
+        worker,
+        [&receiver, &drained] {
+            (void) QMetaObject::invokeMethod(&receiver, [&drained] { drained = true; }, Qt::QueuedConnection);
+        },
+        Qt::QueuedConnection));
+    QTRY_VERIFY_WITH_TIMEOUT(drained, TestTimeout::shortMs());
+    QCOMPARE(receivedCount, 1);
+}
+
+void SerialWorkerTest::_bootloaderOutcome()
+{
+    SerialConnectionSettings settings;
+    settings.portName = QStringLiteral("/test/bootloader");
+    settings.autoConnect = true;
+    settings.bootloader = true;
+    SerialWorker worker(settings);
+    QSignalSpy outcomes(&worker, &SerialWorker::openFailed);
+    QSignalSpy errors(&worker, &SerialWorker::errorOccurred);
+    QSignalSpy disconnected(&worker, &SerialWorker::disconnected);
+    expectLogMessage("Comms.Serial.SerialLink", QtWarningMsg, QRegularExpression("Not connecting to bootloader"));
+    worker.connectToPort();
+    verifyExpectedLogMessage();
+    QCOMPARE(outcomes.count(), 1);
+    const auto outcome = qvariant_cast<SerialOpenOutcome>(outcomes.first().first());
+    QCOMPARE(outcome.stage, SerialOpenOutcome::Stage::Bootloader);
+    QCOMPARE(outcome.error, QSerialPort::NoError);
+    QCOMPARE(errors.count(), 1);
+    QCOMPARE(disconnected.count(), 1);
+    QVERIFY(!worker.isConnected());
 }

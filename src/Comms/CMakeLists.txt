@@ -16,6 +16,9 @@ target_sources(
         LinkInterface.h
         LinkManager.cc
         LinkManager.h
+        LinkManagerSerialNotices.cc
+        SerialConnectionNotice.cc
+        SerialConnectionNotice.h
         LogReplayLink.cc
         LogReplayLink.h
         LogReplayLinkController.cc
