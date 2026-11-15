@@ -7,6 +7,8 @@ target_sources(
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/QmlUITestBase.cc
         ${CMAKE_CURRENT_SOURCE_DIR}/QmlUITestBase.h
+        ${CMAKE_CURRENT_SOURCE_DIR}/PlanStyleComponentTest.cc
+        ${CMAKE_CURRENT_SOURCE_DIR}/PlanStyleComponentTest.h
         ${CMAKE_CURRENT_SOURCE_DIR}/VehicleConfigUITestBase.cc
         ${CMAKE_CURRENT_SOURCE_DIR}/VehicleConfigUITestBase.h
         ${CMAKE_CURRENT_SOURCE_DIR}/TopLevelViewsTest.cc
@@ -88,6 +90,7 @@ set_source_files_properties(
 
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
+add_qgc_test(PlanStyleComponentTest LABELS Unit)
 add_qgc_test(TopLevelViewsTest LABELS Integration NoSanitizer TIMEOUT 120)
 add_qgc_test(PX4VehicleConfigUITest LABELS Integration NoSanitizer TIMEOUT 180)
 add_qgc_test(APMVehicleConfigUITest LABELS Integration NoSanitizer TIMEOUT 360)

@@ -12,6 +12,9 @@ Item {
     id: _root
     z: QGroundControl.zOrderMapItems
 
+    property var    planStyle: null
+    readonly property bool _styled: planStyle && planStyle.enabled
+
     property var    map
     property var    myGeoFenceController
     property bool   interactive:            false   ///< true: user can interact with items
@@ -88,6 +91,10 @@ Item {
         delegate : QGCMapPolygonVisuals {
             parent:             _root
             mapControl:         map
+            planStyle:          _root.planStyle
+            boundaryKind:       "polygon"
+            inclusion:          object.inclusion
+            boundaryOpacity:    _root.opacity
             mapPolygon:         object
             borderWidth:        object.inclusion ? _borderWidthInclusion : _borderWidthExclusion
             borderColor:        _borderColor
@@ -103,6 +110,10 @@ Item {
         delegate : QGCMapCircleVisuals {
             parent:             _root
             mapControl:         map
+            planStyle:          _root.planStyle
+            boundaryKind:       "circle"
+            inclusion:          object.inclusion
+            boundaryOpacity:    _root.opacity
             mapCircle:          object
             borderWidth:        object.inclusion ? _borderWidthInclusion : _borderWidthExclusion
             borderColor:        _borderColor
@@ -117,15 +128,44 @@ Item {
         id: paramCircleFenceComponent
 
         MapCircle {
+            id: parameterFill
+            objectName: "planFenceFill"
+            readonly property real vehicleId: _root.planStyle ? _root.planStyle.vehicleId : 0
+            readonly property string boundaryKind: "parameterCircle"
+            readonly property bool inclusion: true
             color:          _interiorColorInclusion
             opacity:        _interiorOpacityInclusion
             border.color:   _borderColor
-            border.width:   _borderWidthInclusion
+            border.width:   _root._styled ? 0 : _borderWidthInclusion
             center:         homePosition
             radius:         _radius
             visible:        homePosition.isValid && _radius > 0
 
             property real _radius: myGeoFenceController.paramCircularFence
+
+            Loader {
+                active: _root._styled
+                sourceComponent: MapBoundaryOutline {
+                    objectName: "planKeepInOutline"
+                    readonly property real vehicleId: _root.planStyle ? _root.planStyle.vehicleId : 0
+                    readonly property string boundaryKind: "parameterCircle"
+                    mapControl: _root.map
+                    vertices: circleVertices(parameterFill.center, parameterFill.radius)
+                    lineColor: _root._styled ? _root.planStyle.lineColor : "transparent"
+                    lineWidth: _root._styled ? _root.planStyle.boundaryLineWidth : 0
+                    dashPattern: _root._styled ? _root.planStyle.keepInDashPattern : []
+                    opacity: _root.opacity
+                    visible: parameterFill.visible
+                    z: parameterFill.z + 1
+                    coalesceProjection: true
+                    Component.onCompleted: _root.map.addMapItem(this)
+                    Component.onDestruction: {
+                        if (_root.map) {
+                            _root.map.removeMapItem(this)
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -147,6 +187,13 @@ Item {
         id: breachReturnPointComponent
 
         MapQuickItem {
+            objectName: "planBreachReturnPoint"
+            readonly property real vehicleId: _root.planStyle ? _root.planStyle.vehicleId : 0
+            readonly property color markerColor: sourceItem.renderedBodyColor
+            readonly property color markerBorderColor: sourceItem.renderedBorderColor
+            readonly property real markerBorderWidth: sourceItem.renderedBorderWidth
+            readonly property color markerTextColor: sourceItem.renderedTextColor
+            readonly property string label: sourceItem.label
             anchorPoint.x:  sourceItem.anchorPointX
             anchorPoint.y:  sourceItem.anchorPointY
             z:              QGroundControl.zOrderMapItems
@@ -154,6 +201,7 @@ Item {
             opacity:        _root.opacity
 
             sourceItem: MissionItemIndexLabel {
+                planStyle:  _root.planStyle
                 label:      qsTr("B", "Breach Return Point item indicator")
                 checked:    true
             }

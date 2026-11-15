@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QtCore/QPointer>
 #include <QtCore/QTranslator>
 #include <QtQml/QQmlAbstractUrlInterceptor>
 
@@ -11,6 +12,7 @@ class PlanCreator;
 
 class CustomOptions;
 class CustomPlugin;
+class CustomPlanStyle;
 class QQmlApplicationEngine;
 
 Q_DECLARE_LOGGING_CATEGORY(CustomLog)
@@ -93,6 +95,8 @@ public:
 
     /// A vehicle's page shows only that vehicle's plan; COP overlays are the place to compare plans.
     bool showAllVehiclePlans() const final { return false; }
+
+    QGCPlanStyle* planStyle() const final;
     QUrl navigationHeader() const final;
     QUrl flyViewOverlay() const final;
     QUrl notificationFooter() const final;
@@ -102,7 +106,8 @@ private slots:
 
 private:
     CustomOptions* _options = nullptr;
-    QQmlApplicationEngine* _qmlEngine = nullptr;
+    CustomPlanStyle* _planStyle = nullptr;
+    QPointer<QQmlApplicationEngine> _qmlEngine;
     class CustomOverrideInterceptor* _urlInterceptor = nullptr;
 };
 

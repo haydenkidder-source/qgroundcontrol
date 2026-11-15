@@ -65,6 +65,9 @@ void GeoFenceController::_init(void)
 void GeoFenceController::setBreachReturnPoint(const QGeoCoordinate& breachReturnPoint)
 {
     if (_breachReturnPoint != breachReturnPoint) {
+        if (breachReturnPoint.isValid()) {
+            _masterController->_planElementWillAdd();
+        }
         _breachReturnPoint = breachReturnPoint;
         setDirty(true);
         emit breachReturnPointChanged(breachReturnPoint);
@@ -73,6 +76,7 @@ void GeoFenceController::setBreachReturnPoint(const QGeoCoordinate& breachReturn
 
 void GeoFenceController::_managerVehicleChanged(Vehicle* managerVehicle)
 {
+    _itemsRequested = false;
     if (_managerVehicle) {
         _geoFenceManager->disconnect(this);
         _managerVehicle->disconnect(this);
@@ -208,6 +212,7 @@ void GeoFenceController::save(QJsonObject& json)
 
 void GeoFenceController::removeAll(void)
 {
+    _masterController->_planElementCleared();
     setBreachReturnPoint(QGeoCoordinate());
     _polygons.clearAndDeleteContents();
     _circles.clearAndDeleteContents();
@@ -315,11 +320,19 @@ void GeoFenceController::_setReturnPointFromManager(QGeoCoordinate breachReturnP
 
 void GeoFenceController::_managerLoadComplete(void)
 {
+    if (!_managerVehicle || (sender() && sender() != _geoFenceManager)) {
+        return;
+    }
+    const quint32 vehicleId = _managerVehicle->isOfflineEditingVehicle() ? 0 : _managerVehicle->id();
     // Fly view always reloads on _loadComplete
     // Plan view only reloads if:
     //  - Load was specifically requested
     //  - There is no current Plan
     if (_flyView || _itemsRequested || isEmpty()) {
+        if (!isEmpty() || !_geoFenceManager->polygons().isEmpty() || !_geoFenceManager->circles().isEmpty() ||
+            _geoFenceManager->breachReturnPoint().isValid()) {
+            _masterController->_planElementWillLoadFromVehicle(vehicleId);
+        }
         _setReturnPointFromManager(_geoFenceManager->breachReturnPoint());
         _setFenceFromManager(_geoFenceManager->polygons(), _geoFenceManager->circles());
         setDirty(false);
@@ -330,6 +343,9 @@ void GeoFenceController::_managerLoadComplete(void)
 
 void GeoFenceController::_managerSendComplete(bool error)
 {
+    if (!_managerVehicle || (sender() && sender() != _geoFenceManager)) {
+        return;
+    }
     // Fly view always reloads on manager sendComplete
     if (!error && _flyView) {
         showPlanFromManagerVehicle();
@@ -338,7 +354,11 @@ void GeoFenceController::_managerSendComplete(bool error)
 
 void GeoFenceController::_managerRemoveAllComplete(bool error)
 {
+    if (!_managerVehicle || (sender() && sender() != _geoFenceManager)) {
+        return;
+    }
     if (!error) {
+        _masterController->_planElementCleared();
         // Remove all from vehicle so we always update
         showPlanFromManagerVehicle();
     }
@@ -377,6 +397,7 @@ bool GeoFenceController::showPlanFromManagerVehicle(void)
 
 void GeoFenceController::addInclusionPolygon(QGeoCoordinate topLeft, QGeoCoordinate bottomRight)
 {
+    _masterController->_planElementWillAdd();
     QGeoCoordinate topRight(topLeft.latitude(), bottomRight.longitude());
     QGeoCoordinate bottomLeft(bottomRight.latitude(), topLeft.longitude());
 
@@ -410,6 +431,7 @@ void GeoFenceController::addInclusionPolygon(QGeoCoordinate topLeft, QGeoCoordin
 
 void GeoFenceController::addInclusionCircle(QGeoCoordinate topLeft, QGeoCoordinate bottomRight)
 {
+    _masterController->_planElementWillAdd();
     QGeoCoordinate topRight(topLeft.latitude(), bottomRight.longitude());
     QGeoCoordinate bottomLeft(bottomRight.latitude(), topLeft.longitude());
 
@@ -437,6 +459,7 @@ void GeoFenceController::deletePolygon(int index)
 
     QGCFencePolygon* polygon = qobject_cast<QGCFencePolygon*>(_polygons.removeAt(index));
     polygon->deleteLater();
+    _masterController->_planElementRemoved();
 }
 
 void GeoFenceController::deleteCircle(int index)
@@ -447,6 +470,7 @@ void GeoFenceController::deleteCircle(int index)
 
     QGCFenceCircle* circle = qobject_cast<QGCFenceCircle*>(_circles.removeAt(index));
     circle->deleteLater();
+    _masterController->_planElementRemoved();
 }
 
 void GeoFenceController::clearAllInteractive(void)

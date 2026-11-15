@@ -40,6 +40,9 @@ public:
     Q_PROPERTY(bool                     flyView                 MEMBER _flyView)
     Q_PROPERTY(Vehicle*                 controllerVehicle       READ controllerVehicle                      CONSTANT)                               ///< Offline controller vehicle
     Q_PROPERTY(Vehicle*                 managerVehicle          READ managerVehicle                         NOTIFY managerVehicleChanged)           ///< Either active vehicle or _controllerVehicle if no active vehicle
+    /// System id of the vehicle whose plan the editor currently displays, 0 when the content is not attributed to a
+    /// vehicle
+    Q_PROPERTY(quint32 planVehicleId READ planVehicleId NOTIFY planVehicleIdChanged)
     Q_PROPERTY(MissionController*       missionController       READ missionController                      CONSTANT)
     Q_PROPERTY(GeoFenceController*      geoFenceController      READ geoFenceController                     CONSTANT)
     Q_PROPERTY(RallyPointController*    rallyPointController    READ rallyPointController                   CONSTANT)
@@ -92,6 +95,8 @@ public:
     GeoFenceController* geoFenceController(void) { return &_geoFenceController; }
     RallyPointController* rallyPointController(void) { return &_rallyPointController; }
 
+    quint32 planVehicleId() const { return _planVehicleId; }
+
     bool offline(void) const { return _offline; }
     bool containsItems(void) const;
     bool showCreateFromTemplate(void) const { return !containsItems() && !_userSelectedManualCreation; }
@@ -114,7 +119,8 @@ public:
     QJsonDocument saveToJson();
 
     Vehicle* controllerVehicle(void) { return _controllerVehicle; }
-    Vehicle* managerVehicle(void) { return _managerVehicle; }
+
+    Vehicle* managerVehicle(void);
 
     static constexpr int kPlanFileVersion = 1;
     static constexpr const char* kPlanFileType = "Plan";
@@ -123,6 +129,7 @@ public:
     static constexpr const char* kJsonRallyPointsObjectKey = "rallyPoints";
 
 signals:
+    void planVehicleIdChanged();
     void containsItemsChanged();
     void showCreateFromTemplateChanged();
     void syncInProgressChanged(void);
@@ -143,9 +150,9 @@ private slots:
     void _loadMissionComplete(void);
     void _loadGeoFenceComplete(void);
     void _loadRallyPointsComplete(void);
-    void _sendMissionComplete(void);
-    void _sendGeoFenceComplete(void);
-    void _sendRallyPointsComplete(void);
+    void _sendMissionComplete(bool error = false);
+    void _sendGeoFenceComplete(bool error = false);
+    void _sendRallyPointsComplete(bool error = false);
     void _updateOverallDirty(void);
     void _updateShowCreateFromTemplate(void);
     void _updatePlanCreatorsList(void);
@@ -162,8 +169,24 @@ private:
         GeoFence,
         RallyPoints,
         InitialPlanLoad,
+        CachedMission,
+        CachedGeoFence,
+        CachedRallyPoints,
+        FailedLoad,
     };
 
+    friend class MissionController;
+    friend class GeoFenceController;
+    friend class RallyPointController;
+
+    void _setPlanVehicleId(quint32 vehicleId);
+    quint32 _editingVehicleId() const;
+    void _planElementWillLoadFromVehicle(quint32 vehicleId);
+    void _planContentsChanged();
+    void _planElementWillAdd();
+    void _planElementCleared();
+    void _planElementRemoved();
+    void _planLoadFailed();
     void _commonInit(void);
     void _showPlanFromManagerVehicle(void);
     void _initialPlanRequestCompleteChanged(bool initialPlanRequestComplete);
@@ -185,7 +208,10 @@ private:
 
     MultiVehicleManager* _multiVehicleMgr = nullptr;
     Vehicle* _controllerVehicle = nullptr;    ///< Offline controller vehicle
-    Vehicle* _managerVehicle = nullptr;       ///< Either active vehicle or _controllerVehicle if none
+    QPointer<Vehicle> _managerVehicle;        ///< Either active vehicle or _controllerVehicle if none
+    quint32 _planVehicleId = 0;
+    quint32 _loadVehicleId = 0;               ///< Captured at download/adoption start; 0 after a transfer error
+    quint32 _sendVehicleId = 0;               ///< Captured at upload start; 0 after a transfer error
     bool _flyView = true;
     bool _offline = true;
     MissionController _missionController;

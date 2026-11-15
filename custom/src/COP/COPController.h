@@ -144,6 +144,9 @@ public:
 
     bool unacknowledged() const { return _unacknowledged; }
 
+    /// Returns the remembered entry color without allocating an entry; invalid for unknown ids.
+    Q_INVOKABLE QColor colorForSysid(quint32 sysid) const;
+
     Q_INVOKABLE void initialize(VehicleRoleController* roles);
     Q_INVOKABLE void selectVehicle(quint32 sysid);
     Q_INVOKABLE void assumeControl();
@@ -152,6 +155,7 @@ public:
     Q_INVOKABLE void acknowledge();
 
 signals:
+    void entriesChanged();
     void selectionChanged();
     void messagesChanged();
 

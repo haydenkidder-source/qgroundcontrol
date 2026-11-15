@@ -253,6 +253,12 @@ COPVehicle* COPController::selected() const
     return _find(_selectedSysid);
 }
 
+QColor COPController::colorForSysid(quint32 sysid) const
+{
+    const auto* entry = _find(sysid);
+    return entry ? entry->color() : QColor();
+}
+
 COPVehicle* COPController::_remember(quint32 sysid)
 {
     if (sysid == 0) {
@@ -269,6 +275,7 @@ COPVehicle* COPController::_remember(quint32 sysid)
         ids.append(_vehicles.value<COPVehicle*>(i)->sysid());
     }
     QSettings().setValue(QStringLiteral("COP/VehicleOrder"), ids);
+    emit entriesChanged();
     return entry;
 }
 

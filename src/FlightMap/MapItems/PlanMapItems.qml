@@ -12,6 +12,7 @@ import QGroundControl.PlanView
 Item {
     id: _root
 
+    property var    planStyle: null
     property var    map                     ///< Map control to show items on
     property bool   largeMapView            ///< true: map takes up entire view, false: map is in small window
     property var    planMasterController    ///< Reference to PlanMasterController for vehicle
@@ -42,6 +43,7 @@ Item {
         model: largeMapView ? _missionController.visualItems : 0
 
         delegate: MissionItemMapVisual {
+            planStyle:      _root.planStyle
             map:            _map
             vehicle:        _vehicle
             indicatorGroup: _missionItemIndicatorGroup
@@ -69,6 +71,7 @@ Item {
 
         MapItemGroup {
             MissionLineView {
+                planStyle: _root.planStyle
                 model: _missionController.simpleFlightPathSegments
             }
 

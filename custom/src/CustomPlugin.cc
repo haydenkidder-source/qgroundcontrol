@@ -11,6 +11,7 @@
 #include "MainThreadStallMonitor.h"
 #include "PerimeterScanComplexItem.h"
 #include "PerimeterScanPlanCreator.h"
+#include "PlanStyle/CustomPlanStyle.h"
 #include "QGCLoggingCategory.h"
 #include "QGCMAVLink.h"
 #include "QGCPalette.h"
@@ -40,6 +41,7 @@ CustomOptions::CustomOptions(CustomPlugin* plugin, QObject* parent)
 CustomPlugin::CustomPlugin(QObject* parent)
     : QGCCorePlugin(parent)
     , _options(new CustomOptions(this, this))
+    , _planStyle(new CustomPlanStyle(this))
 {
     qCDebug(CustomLog) << this;
 
@@ -220,15 +222,33 @@ void CustomPlugin::paletteOverride(const QString& colorName, QGCPalette::Palette
     }
 }
 
+QGCPlanStyle* CustomPlugin::planStyle() const
+{
+    return _planStyle;
+}
+
 QQmlApplicationEngine* CustomPlugin::createQmlApplicationEngine(QObject* parent)
 {
     _qmlEngine = QGCCorePlugin::createQmlApplicationEngine(parent);
+    if (!_qmlEngine) {
+        return nullptr;
+    }
     _qmlEngine->addImportPath("qrc:/qml/Custom/Widgets");
     _qmlEngine->addImportPath("qrc:/qml/Custom/Plan");
     // TODO: Investigate _qmlEngine->setExtraSelectors({"custom"})
 
     _urlInterceptor = new CustomOverrideInterceptor();
     _qmlEngine->addUrlInterceptor(_urlInterceptor);
+    const auto* interceptor = _urlInterceptor;
+    connect(_qmlEngine, &QObject::destroyed, this, [this, interceptor]() {
+        if (_urlInterceptor == interceptor) {
+            _planStyle->attachRegistry(nullptr);
+            delete _urlInterceptor;
+            _urlInterceptor = nullptr;
+            _qmlEngine = nullptr;
+        }
+    });
+    _planStyle->attachRegistry(_qmlEngine->singletonInstance<COPController*>("QGC", "COPController"));
 
     return _qmlEngine;
 }
@@ -236,6 +256,7 @@ QQmlApplicationEngine* CustomPlugin::createQmlApplicationEngine(QObject* parent)
 void CustomPlugin::destroyQmlApplicationEngine(QQmlApplicationEngine* qmlEngine)
 {
     if (qmlEngine && (qmlEngine == _qmlEngine)) {
+        _planStyle->attachRegistry(nullptr);
         qmlEngine->removeUrlInterceptor(_urlInterceptor);
         delete _urlInterceptor;
         _urlInterceptor = nullptr;

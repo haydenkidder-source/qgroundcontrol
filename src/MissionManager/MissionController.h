@@ -416,7 +416,7 @@ private:
 
 private:
     Vehicle*                    _controllerVehicle =            nullptr;
-    Vehicle*                    _managerVehicle =               nullptr;
+    QPointer<Vehicle> _managerVehicle;
     MissionManager*             _missionManager =               nullptr;
     QmlObjectListModel*         _visualItems =                  nullptr;
     QPersistentModelIndex       _planFileGroupIndex;            ///< Persistent index for "Plan File" group in tree

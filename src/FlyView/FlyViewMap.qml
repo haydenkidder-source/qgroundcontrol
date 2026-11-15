@@ -240,6 +240,12 @@ FlightMap {
                 Component.onCompleted: startStaticActiveVehicle(object)
             }
 
+            PlanStyleContext {
+                id: flyPlanStyle
+                objectName: "flyPlanStyleContext"
+                vehicleId: vehiclePlan._vehicle ? vehiclePlan._vehicle.id : 0
+            }
+
             Loader {
                 objectName: "flyViewVehiclePlan"
                 active:     QGroundControl.corePlugin.showAllVehiclePlans || vehiclePlan._vehicle === _activeVehicle
@@ -249,6 +255,7 @@ FlightMap {
                     largeMapView:           !pipMode
                     planMasterController:   masterController
                     vehicle:                vehiclePlan._vehicle
+                    planStyle:              flyPlanStyle
                 }
             }
         }
@@ -260,7 +267,15 @@ FlightMap {
         largeMapView:   !pipMode
     }
 
+    PlanStyleContext {
+        id: flyFencePlanStyle
+        objectName: "flyFencePlanStyleContext"
+        vehicleId: _root._activeVehicle && _root._planMasterController &&
+                   _root._planMasterController.managerVehicle === _root._activeVehicle ? _root._activeVehicle.id : 0
+    }
+
     GeoFenceMapVisuals {
+        planStyle:              flyFencePlanStyle
         map:                    _root
         myGeoFenceController:   _geoFenceController
         interactive:            false
@@ -274,14 +289,52 @@ FlightMap {
 
         delegate: MapQuickItem {
             id:             itemIndicator
+            objectName: "planRallyPoint"
+            readonly property real vehicleId: flyFencePlanStyle.vehicleId
+            readonly property bool checked: markerLoader.item ? markerLoader.item.checked : false
+            readonly property string markerShape: markerLoader.item && "markerShape" in markerLoader.item
+                                                  ? markerLoader.item.markerShape : "circle"
+            readonly property color markerColor: markerLoader.item
+                                                 ? ("markerShape" in markerLoader.item ? markerLoader.item.markerColor
+                                                                                      : markerLoader.item.renderedBodyColor)
+                                                 : "transparent"
+            readonly property color markerBorderColor: markerLoader.item
+                                                       ? ("markerShape" in markerLoader.item ? markerLoader.item.markerBorderColor
+                                                                                            : markerLoader.item.renderedBorderColor)
+                                                       : "transparent"
+            readonly property real markerBorderWidth: markerLoader.item
+                                                     ? ("markerShape" in markerLoader.item ? markerLoader.item.markerBorderWidth
+                                                                                          : markerLoader.item.renderedBorderWidth)
+                                                     : 0
+            readonly property string label: markerLoader.item ? markerLoader.item.label : ""
             anchorPoint.x:  sourceItem.anchorPointX
             anchorPoint.y:  sourceItem.anchorPointY
             coordinate:     object.coordinate
             z:              QGroundControl.zOrderMapItems
 
-            sourceItem: MissionItemIndexLabel {
-                id:         itemIndexLabel
-                label:      qsTr("R", "rally point map item label")
+            sourceItem: Loader {
+                id: markerLoader
+                readonly property real anchorPointX: item ? item.anchorPointX : 0
+                readonly property real anchorPointY: item ? item.anchorPointY : 0
+                sourceComponent: flyFencePlanStyle.enabled ? styledMarker : stockMarker
+
+                Component {
+                    id: styledMarker
+                    RallyPointMarker {
+                        color: flyFencePlanStyle.enabled ? flyFencePlanStyle.lineColor : "transparent"
+                        borderColor: flyFencePlanStyle.enabled ? flyFencePlanStyle.markerBorderColor : "transparent"
+                        borderWidth: flyFencePlanStyle.enabled ? flyFencePlanStyle.markerBorderWidth : 0
+                        textColor: flyFencePlanStyle.enabled ? flyFencePlanStyle.markerTextColor : "transparent"
+                        checked: object === _rallyPointController.currentRallyPoint
+                    }
+                }
+                Component {
+                    id: stockMarker
+                    MissionItemIndexLabel {
+                        id:         itemIndexLabel
+                        label:      qsTr("R", "rally point map item label")
+                    }
+                }
             }
         }
     }

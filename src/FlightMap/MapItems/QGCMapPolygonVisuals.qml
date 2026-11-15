@@ -23,6 +23,12 @@ Item {
     property int    borderWidth:        0
     property color  borderColor:        "black"
 
+    property var    planStyle: null
+    property string boundaryKind: ""
+    property bool   inclusion: true
+    property real   boundaryOpacity: opacity
+    readonly property bool _styledBoundary: planStyle && planStyle.enabled && boundaryKind === "polygon"
+
     property bool   _circleMode:                false
     property real   _circleRadius
     property bool   _circleRadiusDrag:          false
@@ -271,12 +277,45 @@ Item {
         id: polygonComponent
 
         MapPolygon {
-            color:          mapPolygon.showAltColor ? altColor : interiorColor
-            opacity:        interiorOpacity
+            id: fenceFill
+            objectName: _root.boundaryKind !== "" ? "planFenceFill" : ""
+            readonly property real vehicleId: _root.planStyle ? _root.planStyle.vehicleId : 0
+            readonly property string boundaryKind: _root.boundaryKind
+            readonly property bool inclusion: _root.inclusion
+            color:          _root._styledBoundary
+                            ? (_root.inclusion ? "transparent" : _root.planStyle.keepOutFillColor)
+                            : (mapPolygon.showAltColor ? altColor : interiorColor)
+            opacity:        _root._styledBoundary ? _root.boundaryOpacity : interiorOpacity
             visible:        _root.visible
             border.color:   mapPolygon.vertexDrag ? "orange" : borderColor
-            border.width:   mapPolygon.vertexDrag ? 3 : borderWidth
+            border.width:   _root._styledBoundary ? 0 : (mapPolygon.vertexDrag ? 3 : borderWidth)
             path:           mapPolygon.vertexDrag ? mapPolygon.dragPath : mapPolygon.path
+
+            Loader {
+                active: _root._styledBoundary
+                sourceComponent: MapBoundaryOutline {
+                    objectName: _root.inclusion ? "planKeepInOutline" : "planKeepOutOutline"
+                    readonly property real vehicleId: _root.planStyle ? _root.planStyle.vehicleId : 0
+                    readonly property string boundaryKind: _root.boundaryKind
+                    mapControl: _root.mapControl
+                    vertices: fenceFill.path
+                    lineColor: _root._styledBoundary ? _root.planStyle.lineColor : "transparent"
+                    lineWidth: _root._styledBoundary ? _root.planStyle.boundaryLineWidth : 0
+                    dashPattern: _root._styledBoundary
+                                 ? (_root.inclusion ? _root.planStyle.keepInDashPattern : _root.planStyle.keepOutDashPattern)
+                                 : []
+                    opacity: _root.boundaryOpacity
+                    visible: fenceFill.visible
+                    z: fenceFill.z + 1
+                    coalesceProjection: true
+                    Component.onCompleted: _root.mapControl.addMapItem(this)
+                    Component.onDestruction: {
+                        if (_root.mapControl) {
+                            _root.mapControl.removeMapItem(this)
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -284,7 +323,7 @@ Item {
         id: edgeLengthHandleComponent
 
         MapQuickItem {
-            id:             mapQuickItem
+            id:             edgeLengthMapItem
             anchorPoint.x:  sourceItem.width / 2
             anchorPoint.y:  sourceItem.height / 2
             visible:        !_circleMode
@@ -348,7 +387,7 @@ Item {
         id: splitHandleComponent
 
         MapQuickItem {
-            id:             mapQuickItem
+            id:             splitHandleMapItem
             anchorPoint.x:  sourceItem.width / 2
             anchorPoint.y:  sourceItem.height / 2
             visible:        !_circleMode && !_isVertexBeingDragged && !mapPolygon.centerDrag
@@ -357,7 +396,7 @@ Item {
 
             sourceItem: SplitIndicator {
                 z:          _zorderSplitHandle
-                onClicked:  if(_root.interactive) mapPolygon.splitPolygonSegment(mapQuickItem.vertexIndex)
+                onClicked:  if(_root.interactive) mapPolygon.splitPolygonSegment(splitHandleMapItem.vertexIndex)
             }
         }
     }
@@ -430,13 +469,13 @@ Item {
     Component {
         id: centerDragHandle
         MapQuickItem {
-            id:             mapQuickItem
-            anchorPoint.x:  dragHandle.width  * 0.5
-            anchorPoint.y:  dragHandle.height * 0.5
+            id:             centerDragMapItem
+            anchorPoint.x:  centerDragHandleVisual.width  * 0.5
+            anchorPoint.y:  centerDragHandleVisual.height * 0.5
             z:              _zorderDragHandle
             visible:        !_isVertexBeingDragged
             sourceItem: Rectangle {
-                id:             dragHandle
+                id:             centerDragHandleVisual
                 width:          ScreenTools.defaultFontPixelHeight * 1.5
                 height:         width
                 radius:         width * 0.5
@@ -461,16 +500,16 @@ Item {
         id: dragHandleComponent
 
         MapQuickItem {
-            id:             mapQuickItem
-            anchorPoint.x:  dragHandle.width  / 2
-            anchorPoint.y:  dragHandle.height / 2
+            id:             vertexDragMapItem
+            anchorPoint.x:  vertexDragHandleVisual.width  / 2
+            anchorPoint.y:  vertexDragHandleVisual.height / 2
             z:              _zorderDragHandle
             visible:        !_circleMode && !mapPolygon.centerDrag
 
             property int polygonVertex
 
             sourceItem: Rectangle {
-                id:             dragHandle
+                id:             vertexDragHandleVisual
                 width:          ScreenTools.defaultFontPixelHeight * 1.5
                 height:         width
                 radius:         width * 0.5
@@ -708,14 +747,14 @@ Item {
         id: radiusDragHandleComponent
 
         MapQuickItem {
-            id:             mapQuickItem
-            anchorPoint.x:  dragHandle.width / 2
-            anchorPoint.y:  dragHandle.height / 2
+            id:             radiusMapItem
+            anchorPoint.x:  radiusDragHandleVisual.width / 2
+            anchorPoint.y:  radiusDragHandleVisual.height / 2
             z:              QGroundControl.zOrderMapItems + 2
             visible:        !mapPolygon.centerDrag
 
             sourceItem: Rectangle {
-                id:         dragHandle
+                id:         radiusDragHandleVisual
                 width:      ScreenTools.defaultFontPixelHeight * 1.5
                 height:     width
                 radius:     width / 2

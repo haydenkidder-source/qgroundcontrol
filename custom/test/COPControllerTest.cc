@@ -103,6 +103,36 @@ void COPControllerTest::_colorAssignedByDiscoveryOrder()
     QCOMPARE(restored.selected()->color(), third->color());
 }
 
+void COPControllerTest::_colorLookupAndEntriesChanged()
+{
+    VehicleRoleController roles;
+    COPController controller;
+    QSignalSpy changed(&controller, &COPController::entriesChanged);
+    QVERIFY(changed.isValid());
+    controller.initialize(&roles);
+    QCOMPARE(changed.count(), 0);
+    const auto order = QSettings().value(QStringLiteral("COP/VehicleOrder"));
+    QVERIFY(!controller.colorForSysid(0).isValid());
+    QVERIFY(!controller.colorForSysid(257).isValid());
+    QCOMPARE(controller.vehicles()->count(), 0);
+    QCOMPARE(QSettings().value(QStringLiteral("COP/VehicleOrder")), order);
+    QCOMPARE(changed.count(), 0);
+    roles.addEntry(257, QStringLiteral("Plane"), QString(), 0);
+    QCOMPARE(changed.count(), 1);
+    controller.selectVehicle(257);
+    QVERIFY(controller.selected());
+    QCOMPARE(controller.colorForSysid(257), controller.selected()->color());
+    QCOMPARE(changed.count(), 1);
+    roles.addEntry(257, QStringLiteral("Rover"), QStringLiteral("Renamed"), 0);
+    QCOMPARE(changed.count(), 1);
+    roles.addEntry(1, QStringLiteral("Copter"), QString(), 0);
+    QCOMPARE(changed.count(), 2);
+    QCOMPARE(controller.vehicles()->count(), 2);
+    QVERIFY(!controller.colorForSysid(999).isValid());
+    QCOMPARE(changed.count(), 2);
+    QCOMPARE(controller.vehicles()->count(), 2);
+}
+
 void COPControllerTest::_pendingControl_data()
 {
     VehicleSystemIdTestData::addValidRows();

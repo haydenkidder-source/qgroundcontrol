@@ -23,6 +23,12 @@ Item {
     property bool   radiusLabelVisible:       false
     property real   _radius:                  mapCircle ? mapCircle.radius.rawValue : 0
 
+    property var    planStyle: null
+    property string boundaryKind: ""
+    property bool   inclusion: true
+    property real   boundaryOpacity: opacity
+    readonly property bool _styledBoundary: planStyle && planStyle.enabled && boundaryKind === "circle"
+
     property var    _circleComponent
     property var    _topRotationIndicatorComponent
     property var    _bottomRotationIndicatorComponent
@@ -150,12 +156,44 @@ Item {
         id: circleComponent
 
         MapCircle {
-            color:          interiorColor
-            opacity:        interiorOpacity
+            id: fenceFill
+            objectName: _root.boundaryKind !== "" ? "planFenceFill" : ""
+            readonly property real vehicleId: _root.planStyle ? _root.planStyle.vehicleId : 0
+            readonly property string boundaryKind: _root.boundaryKind
+            readonly property bool inclusion: _root.inclusion
+            color:          _root._styledBoundary
+                            ? (_root.inclusion ? "transparent" : _root.planStyle.keepOutFillColor) : interiorColor
+            opacity:        _root._styledBoundary ? _root.boundaryOpacity : interiorOpacity
             border.color:   borderColor
-            border.width:   borderWidth
+            border.width:   _root._styledBoundary ? 0 : borderWidth
             center:         mapCircle.center
             radius:         _radius
+
+            Loader {
+                active: _root._styledBoundary
+                sourceComponent: MapBoundaryOutline {
+                    objectName: _root.inclusion ? "planKeepInOutline" : "planKeepOutOutline"
+                    readonly property real vehicleId: _root.planStyle ? _root.planStyle.vehicleId : 0
+                    readonly property string boundaryKind: _root.boundaryKind
+                    mapControl: _root.mapControl
+                    vertices: circleVertices(fenceFill.center, fenceFill.radius)
+                    lineColor: _root._styledBoundary ? _root.planStyle.lineColor : "transparent"
+                    lineWidth: _root._styledBoundary ? _root.planStyle.boundaryLineWidth : 0
+                    dashPattern: _root._styledBoundary
+                                 ? (_root.inclusion ? _root.planStyle.keepInDashPattern : _root.planStyle.keepOutDashPattern)
+                                 : []
+                    opacity: _root.boundaryOpacity
+                    visible: fenceFill.visible
+                    z: fenceFill.z + 1
+                    coalesceProjection: true
+                    Component.onCompleted: _root.mapControl.addMapItem(this)
+                    Component.onDestruction: {
+                        if (_root.mapControl) {
+                            _root.mapControl.removeMapItem(this)
+                        }
+                    }
+                }
+            }
         }
     }
 

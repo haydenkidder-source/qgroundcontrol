@@ -12,6 +12,7 @@ import QGroundControl.FlightMap
 Item {
     id: _root
 
+    property var planStyle: null
     property var map        ///< Map control to place item in
     property var vehicle    ///< Vehicle associated with this item
     property bool interactive: true
@@ -244,8 +245,11 @@ Item {
         id: flightPathComponent
 
         MapPolyline {
+            objectName: "planPatternLine"
+            readonly property real vehicleId: _root.planStyle ? _root.planStyle.vehicleId : 0
             z:          QGroundControl.zOrderMapItems - 1   // Under item indicators
-            line.color: QGroundControl.globalPalette.mapMissionTrajectory
+            line.color: _root.planStyle && _root.planStyle.enabled ? _root.planStyle.lineColor :
+                        QGroundControl.globalPalette.mapMissionTrajectory
             line.width: 2
             path:       _flightPath
         }
@@ -256,6 +260,19 @@ Item {
         id: finalApproachComponent
 
         MapQuickItem {
+            objectName: "planWaypoint"
+            readonly property real vehicleId: _root.planStyle ? _root.planStyle.vehicleId : 0
+            readonly property int sequenceNumber: sourceItem.index > 0 ? sourceItem.index : _missionItem.sequenceNumber
+            readonly property bool current: _missionItem.isCurrentItem
+            readonly property bool grouped: false
+            readonly property color renderedBodyColor: sourceItem.renderedBodyColor
+            readonly property color renderedTextColor: sourceItem.renderedTextColor
+            readonly property color renderedBorderColor: sourceItem.renderedBorderColor
+            readonly property real renderedBorderWidth: sourceItem.renderedBorderWidth
+            readonly property bool checked: sourceItem.checked
+            readonly property int index: sourceItem.index
+            readonly property string label: sourceItem.label
+
             anchorPoint.x:  sourceItem.anchorPointX
             anchorPoint.y:  sourceItem.anchorPointY
             z:              QGroundControl.zOrderMapItems
@@ -263,6 +280,7 @@ Item {
 
             sourceItem:
                 MissionItemIndexLabel {
+                planStyle:  _root.planStyle
                 index:      _missionItem.sequenceNumber
                 label:      _useLoiterToAlt ? qsTr("Loiter") : qsTr("Approach")
                 checked:    _missionItem.isCurrentItem
@@ -277,6 +295,19 @@ Item {
         id: landingPointComponent
 
         MapQuickItem {
+            objectName: "planWaypoint"
+            readonly property real vehicleId: _root.planStyle ? _root.planStyle.vehicleId : 0
+            readonly property int sequenceNumber: sourceItem.index > 0 ? sourceItem.index : _missionItem.sequenceNumber
+            readonly property bool current: _missionItem.isCurrentItem
+            readonly property bool grouped: false
+            readonly property color renderedBodyColor: sourceItem.renderedBodyColor
+            readonly property color renderedTextColor: sourceItem.renderedTextColor
+            readonly property color renderedBorderColor: sourceItem.renderedBorderColor
+            readonly property real renderedBorderWidth: sourceItem.renderedBorderWidth
+            readonly property bool checked: sourceItem.checked
+            readonly property int index: sourceItem.index
+            readonly property string label: sourceItem.label
+
             anchorPoint.x:  sourceItem.anchorPointX
             anchorPoint.y:  sourceItem.anchorPointY
             z:              QGroundControl.zOrderMapItems
@@ -284,6 +315,7 @@ Item {
 
             sourceItem:
                 MissionItemIndexLabel {
+                planStyle:  _root.planStyle
                 index:      _missionItem.lastSequenceNumber
                 checked:    _missionItem.isCurrentItem
 
@@ -296,11 +328,13 @@ Item {
         id: loiterRadiusComponent
 
         MapCircle {
+            objectName: "planLoiterRing"
+            readonly property real vehicleId: _root.planStyle ? _root.planStyle.vehicleId : 0
             z:              QGroundControl.zOrderMapItems
             center:         _missionItem.finalApproachCoordinate
             radius:         _missionItem.loiterRadius.rawValue
             border.width:   2
-            border.color:   "green"
+            border.color:   _root.planStyle && _root.planStyle.enabled ? _root.planStyle.lineColor : "green"
             color:          "transparent"
             visible:        _useLoiterToAlt
         }
@@ -399,6 +433,7 @@ Item {
         id: landingAreaComponent
 
         MapPolygon {
+            objectName: "planLandingArea"
             z:              QGroundControl.zOrderMapItems
             border.width:   1
             border.color:   "black"
@@ -432,6 +467,7 @@ Item {
         id: glideSlopeComponent
 
         MapPolygon {
+            objectName: "planGlideSlope"
             z:              QGroundControl.zOrderMapItems
             border.width:   1
             border.color:   "black"

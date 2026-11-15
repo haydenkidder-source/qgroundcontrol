@@ -382,6 +382,12 @@ Item {
                 property rect centerViewport: _root._centerViewport
                 property real _nonInteractiveOpacity: _root._nonInteractiveOpacity
 
+                PlanStyleContext {
+                    id: planViewPlanStyle
+                    objectName: "planViewPlanStyleContext"
+                    vehicleId: _root._planMasterController.planVehicleId
+                }
+
                 // Initial map position duplicates Fly view position
                 Component.onCompleted: qtLocationMap.center = QGroundControl.flightMapPosition
 
@@ -408,6 +414,7 @@ Item {
                     model: _missionController.visualItems
                     delegate: MissionItemMapVisual {
                         map: qtLocationMap
+                        planStyle: planViewPlanStyle
                         opacity: _editingLayer == _layerMission ? 1 : qtLocationMap._nonInteractiveOpacity
                         interactive: _editingLayer == _layerMission
                         vehicle: _planMasterController.controllerVehicle
@@ -418,6 +425,7 @@ Item {
 
                 // Add lines between waypoints
                 MissionLineView {
+                    planStyle: planViewPlanStyle
                     showSpecialVisual: _missionController.isROIBeginCurrentItem
                     model: _missionController.simpleFlightPathSegments
                     opacity: _editingLayer == _layerMission ? 1 : qtLocationMap._nonInteractiveOpacity
@@ -508,6 +516,7 @@ Item {
 
                 GeoFenceMapVisuals {
                     objectName: "planView_geoFenceMapVisuals"
+                    planStyle: planViewPlanStyle
                     map: qtLocationMap
                     myGeoFenceController: _geoFenceController
                     interactive: _editingLayer == _layerFence
@@ -518,6 +527,7 @@ Item {
 
                 RallyPointMapVisuals {
                     objectName: "planView_rallyPointMapVisuals"
+                    planStyle: planViewPlanStyle
                     map: qtLocationMap
                     myRallyPointController: _rallyPointController
                     interactive: _editingLayer == _layerRally

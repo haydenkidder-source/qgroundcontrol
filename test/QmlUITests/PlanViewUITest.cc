@@ -107,6 +107,13 @@ void PlanViewUITest::_navigateToPlanAndCenterMap()
     QVERIFY2(map, "planView_map not found");
     // Only the GeoMap engine has a camera, so this keeps the GeoMap rows from silently running on QtLocation
     QCOMPARE(map->property("camera").isValid(), _geoMapEngine);
+    QQuickItem* const planView = findVisibleItem(_rootItem, QStringLiteral("mainView_plan"));
+    QVERIFY(planView);
+    QCOMPARE(planView->findChildren<QObject*>(QStringLiteral("planViewPlanStyleContext")).size(),
+             _geoMapEngine ? 0 : 1);
+    if (_geoMapEngine) {
+        QVERIFY(map->findChildren<QObject*>(QStringLiteral("planStyleContext")).isEmpty());
+    }
     verifyVisibility(QStringLiteral("geoMapModeButton"), _geoMapEngine, QStringLiteral("GeoMap camera controls"));
     if (QTest::currentTestFailed())
         return;

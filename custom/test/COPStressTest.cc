@@ -3,6 +3,7 @@
 #include <QtCore/QDir>
 #include <QtCore/QRegularExpression>
 #include <QtCore/QSettings>
+#include <QtCore/QStringList>
 #include <QtCore/QTimer>
 #include <QtQml/QQmlApplicationEngine>
 #include <QtQuick/QQuickItem>
@@ -682,12 +683,37 @@ void COPStressUITest::_overlayBoundariesUseDistinctDashPatterns()
     // type match.
     const QVariantList keepInDash = outlines(keepInName).first()->property("dashPattern").toList();
     const QVariantList keepOutDash = outlines(keepOutName).first()->property("dashPattern").toList();
+    QCOMPARE(keepInDash, QVariantList({6.0, 3.0}));
     QVERIFY(keepInDash.size() >= 2);
+    QCOMPARE(keepOutDash, QVariantList({2.0, 2.0}));
     QVERIFY(keepOutDash.size() >= 2);
     QVERIFY(keepInDash.first().toDouble() > keepOutDash.first().toDouble());
     for (auto* outline : outlines(keepOutName)) {
         QCOMPARE(outline->property("dashPattern").toList(), keepOutDash);
     }
+
+    auto* legend = findItem(_rootItem, QStringLiteral("copOverlayLegend"));
+    QVERIFY(legend);
+    QVERIFY(legend->isVisible());
+    const auto legendTexts = [](QQuickItem* item, auto&& collect) -> QStringList {
+        QStringList texts;
+        if (!item || !item->isVisible()) {
+            return texts;
+        }
+        if (item->metaObject()->indexOfProperty("text") >= 0) {
+            texts.append(item->property("text").toString());
+        }
+        for (auto* child : item->childItems()) {
+            texts.append(collect(child, collect));
+        }
+        return texts;
+    };
+    QTRY_VERIFY_WITH_TIMEOUT(legendTexts(legend, legendTexts).contains(QStringLiteral("Route (S start, E end)")),
+                             TestTimeout::shortMs());
+    const QStringList texts = legendTexts(legend, legendTexts);
+    QVERIFY(texts.contains(QStringLiteral("Keep-in fence (stay inside)")));
+    QVERIFY(texts.contains(QStringLiteral("Keep-out zone (stay outside)")));
+    QVERIFY(texts.contains(QStringLiteral("Rally point")));
 
     // Each outline is projected onto the map as a closed ring that starts and ends at its anchor point, which sits on
     // the first vertex's map position. Qt's dash stroker drops dashes outside the Shape's bounds, so every point must

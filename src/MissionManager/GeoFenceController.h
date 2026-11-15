@@ -98,7 +98,7 @@ private slots:
 private:
     void _init(void);
 
-    Vehicle*            _managerVehicle =               nullptr;
+    QPointer<Vehicle> _managerVehicle;
     GeoFenceManager*    _geoFenceManager =              nullptr;
     bool                _dirty =                        false;
     QmlObjectListModel  _polygons;

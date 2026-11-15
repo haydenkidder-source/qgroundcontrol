@@ -15,6 +15,9 @@ MissionItemMapVisualBase {
         id: homeIndicatorComponent
 
         MapQuickItem {
+            objectName: "planHomeMarker"
+            readonly property real vehicleId: control.planStyle ? control.planStyle.vehicleId : 0
+            property alias renderedBorderColor: homeAccent.border.color
             coordinate: control._missionItem.coordinate
             visible: control._missionItem.specifiesCoordinate
             z: QGroundControl.zOrderMapItems
@@ -34,6 +37,22 @@ MissionItemMapVisualBase {
                 sourceSize.width: width
                 sourceSize.height: height
                 fillMode: Image.PreserveAspectFit
+
+                Rectangle {
+                    id: homeAccent
+                    objectName: "planHomeAccent"
+                    readonly property real vehicleId: control.planStyle ? control.planStyle.vehicleId : 0
+                    property alias renderedBorderColor: homeAccent.border.color
+
+                    anchors.centerIn: parent
+                    width: parent.width + border.width * 4
+                    height: width
+                    radius: width / 2
+                    color: "transparent"
+                    border.color: control.planStyle && control.planStyle.enabled ? control.planStyle.lineColor : "transparent"
+                    border.width: control.planStyle && control.planStyle.enabled ? control.planStyle.markerBorderWidth : 0
+                    visible: control.planStyle && control.planStyle.enabled
+                }
 
                 MouseArea {
                     anchors.fill: parent

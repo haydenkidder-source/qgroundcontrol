@@ -19,12 +19,15 @@ Rectangle {
     property var hostWindow
     readonly property var selected: COPController.selected
     property bool centered: false
-    // Keep-out zones are red whatever the vehicle color, so "forbidden" never depends on which vehicle owns it.
-    readonly property color _keepOutColor: "#E53935"
-    // The vehicle color is taken, so the boundary types are told apart by dash length (multiples of line width):
-    // long dashes keep a vehicle in, short dashes keep it out, and the route is solid.
-    readonly property var _keepInDash: [6, 3]
-    readonly property var _keepOutDash: [2, 2]
+    readonly property var _style: QGroundControl.corePlugin.planStyle
+    readonly property color _keepOutFill: _style ? _style.keepOutFillColor : Qt.rgba(229 / 255, 57 / 255, 53 / 255, 0.35)
+    readonly property var _keepInDash: _style ? _style.keepInDashPattern : [6, 3]
+    readonly property var _keepOutDash: _style ? _style.keepOutDashPattern : [2, 2]
+    readonly property real _missionLineWidth: _style ? _style.missionLineWidth : 4
+    readonly property real _boundaryLineWidth: _style ? _style.boundaryLineWidth : 3
+    readonly property color _markerBorderColor: _style ? _style.markerBorderColor : "white"
+    readonly property real _markerBorderWidth: _style ? _style.markerBorderWidth : 2
+    readonly property color _markerTextColor: _style ? _style.markerTextColor : "black"
     readonly property int _circleOutlineSegments: 120
     readonly property bool overview: COPController.selectedSysid === 0
 
@@ -160,7 +163,7 @@ Rectangle {
                         required property var modelData
                         path: modelData.path
                         color: modelData.inclusion ? "transparent"
-                               : Qt.rgba(root._keepOutColor.r, root._keepOutColor.g, root._keepOutColor.b, 0.35)
+                               : root._keepOutFill
                         border.width: 0
                     }
                 }
@@ -172,6 +175,7 @@ Rectangle {
                         mapControl: map
                         vertices: modelData.path
                         lineColor: modelData.color
+                        lineWidth: root._boundaryLineWidth
                         dashPattern: modelData.inclusion ? root._keepInDash : root._keepOutDash
                     }
                 }
@@ -182,7 +186,7 @@ Rectangle {
                         center: modelData.center
                         radius: modelData.radius
                         color: modelData.inclusion ? "transparent"
-                               : Qt.rgba(root._keepOutColor.r, root._keepOutColor.g, root._keepOutColor.b, 0.35)
+                               : root._keepOutFill
                         border.width: 0
                     }
                 }
@@ -194,6 +198,7 @@ Rectangle {
                         mapControl: map
                         vertices: modelData.outline
                         lineColor: modelData.color
+                        lineWidth: root._boundaryLineWidth
                         dashPattern: modelData.inclusion ? root._keepInDash : root._keepOutDash
                     }
                 }
@@ -215,13 +220,13 @@ Rectangle {
                                 height: width
                                 rotation: 45
                                 color: rallyItem.modelData.color
-                                border.color: "white"
-                                border.width: 2
+                                border.color: root._markerBorderColor
+                                border.width: root._markerBorderWidth
                             }
                             QGCLabel {
                                 anchors.centerIn: parent
                                 text: qsTr("R")
-                                color: "black"
+                                color: root._markerTextColor
                                 font.bold: true
                                 font.pointSize: ScreenTools.smallFontPointSize
                             }
@@ -234,7 +239,7 @@ Rectangle {
                         required property var modelData
                         path: modelData.path
                         line.color: modelData.color
-                        line.width: 4
+                        line.width: root._missionLineWidth
                     }
                 }
                 MapItemView {
@@ -252,13 +257,13 @@ Rectangle {
                             height: width
                             radius: width / 2
                             color: waypointItem.modelData.color
-                            border.color: "white"
-                            border.width: 2
+                            border.color: root._markerBorderColor
+                            border.width: root._markerBorderWidth
                             QGCLabel {
                                 anchors.centerIn: parent
                                 visible: dot.labelled
                                 text: waypointItem.modelData.start ? qsTr("S") : qsTr("E")
-                                color: "black"
+                                color: root._markerTextColor
                                 font.bold: true
                                 font.pointSize: ScreenTools.smallFontPointSize
                             }
@@ -289,7 +294,7 @@ Rectangle {
                             height: label.implicitHeight + ScreenTools.defaultFontPixelHeight
                             color: QGroundControl.globalPalette.window
                             border.color: vehicleMarker.object.color
-                            border.width: 2
+                            border.width: root._markerBorderWidth
                             QGCLabel {
                                 id: label
                                 anchors.centerIn: parent
@@ -332,7 +337,7 @@ Rectangle {
                             spacing: ScreenTools.defaultFontPixelWidth
                             Rectangle {
                                 Layout.preferredWidth: legend.swatchWidth
-                                Layout.preferredHeight: 4
+                                Layout.preferredHeight: root._missionLineWidth
                                 color: QGroundControl.globalPalette.textPrimary
                             }
                             QGCLabel { text: qsTr("Route (S start, E end)"); font.pointSize: ScreenTools.smallFontPointSize }
@@ -349,11 +354,12 @@ Rectangle {
                                     Layout.preferredWidth: legend.swatchWidth
                                     Layout.preferredHeight: ScreenTools.defaultFontPixelHeight * 0.8
                                     color: modelData.filled
-                                           ? Qt.rgba(root._keepOutColor.r, root._keepOutColor.g, root._keepOutColor.b, 0.35)
+                                           ? root._keepOutFill
                                            : "transparent"
                                     COPDashedLine {
                                         anchors.fill: parent
                                         color: QGroundControl.globalPalette.textPrimary
+                                        lineWidth: root._boundaryLineWidth
                                         dashPattern: modelData.dash
                                         points: [Qt.point(0, height / 2), Qt.point(width, height / 2)]
                                     }

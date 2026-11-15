@@ -6,13 +6,26 @@ import QGroundControl
 
 /// The MissionLineView control is used to add lines between mission items
 MapItemView {
+    id: root
+
+    property var planStyle: null
     property bool showSpecialVisual: false
     delegate: MapPolyline {
-        line.width: 3
+        id: route
+        objectName: "planMissionRoute"
+
+        readonly property real vehicleId: root.planStyle ? root.planStyle.vehicleId : 0
+        readonly property string layerKind: "route"
+        property alias renderedColor: route.line.color
+        property alias renderedWidth: route.line.width
+        readonly property bool terrainCollision: _terrainCollision
+
+        line.width: root.planStyle && root.planStyle.enabled ? root.planStyle.missionLineWidth : 3
         // Note: Special visuals for ROI are hacked out for now since they are not working correctly
         line.color: _terrainCollision ?
                         "red" :
-                        (false/*showSpecialVisual*/ ? "green" : QGroundControl.globalPalette.mapMissionTrajectory)
+                        (root.planStyle && root.planStyle.enabled ? root.planStyle.lineColor :
+                         (false/*showSpecialVisual*/ ? "green" : QGroundControl.globalPalette.mapMissionTrajectory))
         z:          QGroundControl.zOrderWaypointLines
         path:       _calcMissionLinePath()
 

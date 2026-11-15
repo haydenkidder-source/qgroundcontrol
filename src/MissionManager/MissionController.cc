@@ -112,6 +112,10 @@ void MissionController::_init(void)
 // Called when new mission items have completed downloading from Vehicle
 void MissionController::_newMissionItemsAvailableFromVehicle(bool removeAllRequested)
 {
+    if (!_managerVehicle) {
+        return;
+    }
+    const quint32 vehicleId = _managerVehicle->isOfflineEditingVehicle() ? 0 : _managerVehicle->id();
     qCDebug(MissionControllerLog) << "_newMissionItemsAvailableFromVehicle flyView:count" << _flyView << _missionManager->missionItems().count();
 
     // Fly view always reloads on _loadComplete
@@ -119,6 +123,7 @@ void MissionController::_newMissionItemsAvailableFromVehicle(bool removeAllReque
     //  - Load was specifically requested
     //  - There is no current Plan
     if (_flyView || removeAllRequested || _itemsRequested || isEmpty()) {
+        _masterController->_planElementWillLoadFromVehicle(vehicleId);
         // Fly Mode (accept if):
         //      - Always accepts new items from the vehicle so Fly view is kept up to date
         // Edit Mode (accept if):
@@ -269,6 +274,7 @@ int MissionController::_nextSequenceNumber(void)
 
 VisualMissionItem* MissionController::_insertSimpleMissionItemWorker(QGeoCoordinate coordinate, MAV_CMD command, int visualItemIndex, bool makeCurrentItem)
 {
+    _masterController->_planElementWillAdd();
     int sequenceNumber = _nextSequenceNumber();
     SimpleMissionItem * newItem = new SimpleMissionItem(_masterController, _flyView, false /* forLoad */);
     newItem->setSequenceNumber(sequenceNumber);
@@ -335,6 +341,7 @@ VisualMissionItem* MissionController::insertVTOLMulticopterTakeoffItem(
 
 VisualMissionItem* MissionController::_insertTakeoffItemWorker(MAV_CMD command, int visualItemIndex, bool makeCurrentItem)
 {
+    _masterController->_planElementWillAdd();
     int sequenceNumber = _nextSequenceNumber();
     _takeoffMissionItem = new TakeoffMissionItem(command, _masterController, _flyView, _settingsItem, false /* forLoad */);
     _takeoffMissionItem->setSequenceNumber(sequenceNumber);
@@ -445,6 +452,7 @@ VisualMissionItem* MissionController::insertComplexMissionItemFromKMLOrSHP(QStri
 
 void MissionController::_insertComplexMissionItemWorker(const QGeoCoordinate& mapCenterCoordinate, ComplexMissionItem* complexItem, int visualItemIndex, bool makeCurrentItem)
 {
+    _masterController->_planElementWillAdd();
     int sequenceNumber = _nextSequenceNumber();
     bool surveyStyleItem = qobject_cast<SurveyComplexItem*>(complexItem) ||
             qobject_cast<CorridorScanComplexItem*>(complexItem) ||
@@ -602,6 +610,7 @@ void MissionController::_setupNewVisualItems(QmlObjectListModel* newItems)
 
 void MissionController::removeAll(void)
 {
+    _masterController->_planElementCleared();
     _setupNewVisualItems();
     _initAllVisualItems();
     setDirty(true);
@@ -844,6 +853,7 @@ void MissionController::_initLoadedVisualItems(QmlObjectListModel* loadedVisualI
 
 bool MissionController::load(const QJsonObject& json, QString& errorString)
 {
+    _masterController->_planElementCleared();
     QString errorStr;
     QString errorMessage = tr("Mission: %1");
     QmlObjectListModel* loadedVisualItems = new QmlObjectListModel(this);
@@ -859,6 +869,7 @@ bool MissionController::load(const QJsonObject& json, QString& errorString)
 
 bool MissionController::loadTextFile(QFile& file, QString& errorString)
 {
+    _masterController->_planElementCleared();
     QString     errorStr;
     QString     errorMessage = tr("Mission: %1");
     QByteArray  bytes = file.readAll();
@@ -1648,6 +1659,7 @@ void MissionController::_itemCommandChanged(void)
 
 void MissionController::_managerVehicleChanged(Vehicle* managerVehicle)
 {
+    _itemsRequested = false;
     if (_managerVehicle) {
         _missionManager->disconnect(this);
         _managerVehicle->disconnect(this);
@@ -1945,6 +1957,7 @@ bool MissionController::showPlanFromManagerVehicle (void)
         qCCritical(MissionControllerLog) << "MissionController::showPlanFromManagerVehicle called while offline";
         return true;    // stops further propagation of showPlanFromManagerVehicle due to error
     } else {
+        _itemsRequested = true;
         if (!_managerVehicle->initialPlanRequestComplete()) {
             // The vehicle hasn't completed initial load, we can just wait for newMissionItemsAvailable to be signalled automatically
             qCDebug(MissionControllerLog) << "showPlanFromManagerVehicle: !initialPlanRequestComplete, wait for signal";
@@ -1965,6 +1978,9 @@ bool MissionController::showPlanFromManagerVehicle (void)
 
 void MissionController::_managerSendComplete(bool error)
 {
+    if (!_managerVehicle || (sender() && sender() != _missionManager)) {
+        return;
+    }
     // Fly view always reloads on send complete
     if (!error && _flyView) {
         showPlanFromManagerVehicle();
@@ -1973,7 +1989,11 @@ void MissionController::_managerSendComplete(bool error)
 
 void MissionController::_managerRemoveAllComplete(bool error)
 {
+    if (!_managerVehicle || (sender() && sender() != _missionManager)) {
+        return;
+    }
     if (!error) {
+        _masterController->_planElementCleared();
         // Remove all from vehicle so we always update
         showPlanFromManagerVehicle();
     }
@@ -2434,6 +2454,7 @@ void MissionController::_recalcPlanViewState(void)
 
 void MissionController::_allItemsRemoved(void)
 {
+    _masterController->_planElementRemoved();
     _setApplyDefaultMissionAltitudeAvailable(false);
 
     // When there are no mission items we track changes to firmware/vehicle type. This allows a vehicle connection
