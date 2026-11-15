@@ -149,9 +149,18 @@ void VideoStreamController::setEnabled(bool enabled)
     }
 }
 
+void VideoStreamController::setUriOverride(const QString& uri)
+{
+    if (_uriOverride != uri) {
+        _uriOverride = uri;
+        scheduleApply();
+    }
+}
+
 std::optional<VideoReceiver::Config> VideoStreamController::_resolvedConfig() const
 {
-    return VideoStreamResolver::resolve(VideoStreamResolver::snapshot(_videoSettings), _streamInfo, _role);
+    return VideoStreamResolver::resolve(VideoStreamResolver::snapshot(_videoSettings), _streamInfo, _role,
+                                        _uriOverride);
 }
 
 VideoReceiver::DisplayConfig VideoStreamController::_resolvedDisplayConfig() const

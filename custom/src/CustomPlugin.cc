@@ -9,6 +9,7 @@
 #include "COPController.h"
 #include "CustomSettings.h"
 #include "MainThreadStallMonitor.h"
+#include "MultiVehicleManager.h"
 #include "PerimeterScanComplexItem.h"
 #include "PerimeterScanPlanCreator.h"
 #include "PlanStyle/CustomPlanStyle.h"
@@ -371,4 +372,12 @@ bool CustomPlugin::startStandardVideoReceivers() const
 {
     auto* controller = _qmlEngine ? _qmlEngine->singletonInstance<COPController*>("QGC", "COPController") : nullptr;
     return !controller || controller->selectedSysid() != 0;
+}
+
+QString CustomPlugin::primaryVideoUriOverride(Vehicle* vehicle) const
+{
+    if (!vehicle || !MultiVehicleManager::instance()->vehicles()->contains(vehicle)) {
+        return {};
+    }
+    return COPVehicle::savedVideoUri(vehicle->id());
 }

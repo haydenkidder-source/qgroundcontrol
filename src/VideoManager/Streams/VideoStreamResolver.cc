@@ -129,13 +129,16 @@ VideoReceiver::DisplayConfig VideoStreamResolver::displayConfig(const Settings& 
 }
 
 std::optional<VideoReceiver::Config> VideoStreamResolver::resolve(const Settings& settings,
-                                                                  const QGCVideoStreamInfo* streamInfo, Role role)
+                                                                  const QGCVideoStreamInfo* streamInfo, Role role,
+                                                                  const QString& uriOverride)
 {
-    QString uri;
-    if (isAutoStream(streamInfo)) {
-        uri = autoStreamUri(*streamInfo);
-    } else if (role == Role::Primary) {
-        uri = manualUri(settings);
+    QString uri = (role == Role::Primary) ? uriOverride.trimmed() : QString();
+    if (uri.isEmpty()) {
+        if (isAutoStream(streamInfo)) {
+            uri = autoStreamUri(*streamInfo);
+        } else if (role == Role::Primary) {
+            uri = manualUri(settings);
+        }
     }
     if (uri.isEmpty()) {
         return std::nullopt;

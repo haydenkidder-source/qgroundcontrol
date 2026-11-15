@@ -21,15 +21,19 @@ across restarts. A system ID must identify the same physical vehicle throughout 
 
 Each connected vehicle has its own `VideoReceiver` and output sink. The session uses that
 vehicle's advertised camera stream, or the saved URI entered in its tile. URI overrides
-are COP display settings and do not change vehicle parameters or FlyView video settings.
+also supply the stock primary preview while that vehicle is active. They take priority over
+advertised streams and manual Video settings, without changing vehicle parameters or any
+stock Video settings. An empty URI preserves stock preview behaviour: the advertised stream,
+then the manual Video settings. The thermal stream is unchanged.
 Use distinct endpoints, such as `udp://0.0.0.0:5600` and `udp://0.0.0.0:5601`, or distinct
 RTSP URLs. Duplicate endpoints are rejected instead of displaying one feed under two labels.
 No synthetic feed is substituted when a vehicle has not advertised a stream.
 
 The existing video backend initializes asynchronously. Receivers are stopped when their
 vehicle disconnects, their tile becomes hidden, or the operator leaves COP. Receiver
-workers finish before their sinks are released. A default-enabled core-plugin startup
-hook prevents the standard FlyView receiver from competing for COP's UDP endpoints.
+workers finish before their sinks are released. A default-enabled core-plugin hook keeps
+the standard receivers stopped while the COP overview owns the endpoints. Leaving the
+overview disables tile sessions and releases their endpoints before standard playback starts.
 
 ## Map and notifications
 

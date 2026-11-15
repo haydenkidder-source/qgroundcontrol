@@ -403,6 +403,7 @@ if(QGC_BUILD_TESTING)
         ${CMAKE_PROJECT_NAME}
         PRIVATE
             ${CMAKE_CURRENT_SOURCE_DIR}/test/VehicleSystemIdTestData.h
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/COPTestHelpers.h
             ${CMAKE_CURRENT_SOURCE_DIR}/test/AppLogViewerUITest.cc
             ${CMAKE_CURRENT_SOURCE_DIR}/test/AppLogViewerUITest.h
             ${CMAKE_CURRENT_SOURCE_DIR}/test/COPControllerTest.cc
@@ -573,6 +574,7 @@ if(QGC_BUILD_TESTING)
         PRIVATE
         "${CMAKE_SOURCE_DIR}/${QGC_CUSTOM_DIR}/test/COPVideoSessionTest.cc"
         "${CMAKE_SOURCE_DIR}/${QGC_CUSTOM_DIR}/test/COPVideoSessionTest.h"
+        "${CMAKE_SOURCE_DIR}/${QGC_CUSTOM_DIR}/test/COPTestHelpers.h"
         "${CMAKE_SOURCE_DIR}/test/VideoManager/VideoManagerPortTest.cc"
         "${CMAKE_SOURCE_DIR}/test/VideoManager/VideoManagerPortTest.h"
     )
@@ -595,6 +597,17 @@ if(QGC_BUILD_TESTING)
         COPVideoSessionTest
         LABELS
         Unit
+    )
+    cmake_language(
+        DEFER
+        DIRECTORY
+        "${CMAKE_SOURCE_DIR}"
+        CALL
+        add_qgc_test
+        COPVideoPreviewTest
+        LABELS
+        Integration
+        Vehicle
     )
     cmake_language(
         DEFER

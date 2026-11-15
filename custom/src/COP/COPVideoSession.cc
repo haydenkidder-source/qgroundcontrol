@@ -5,6 +5,7 @@
 #include <QtCore/QCoreApplication>
 #include <QtCore/QGlobalStatic>
 #include <QtCore/QHash>
+#include <QtCore/QSet>
 #include <QtCore/QUrl>
 
 #include "Fact.h"
@@ -22,6 +23,8 @@
 namespace {
 using COPVideoOwners = QHash<QString, QPointer<COPVideoSession>>;
 Q_GLOBAL_STATIC(COPVideoOwners, copVideoOwners)
+using COPVideoSessions = QSet<COPVideoSession*>;
+Q_GLOBAL_STATIC(COPVideoSessions, copVideoSessions)
 }  // namespace
 
 COPVideoSession::COPVideoSession(QObject* parent)
@@ -40,6 +43,7 @@ COPVideoSession::COPVideoSession(QObject* parent)
         VideoManager::instance()->whenVideoBackendReady(context, std::move(continuation));
     })
 {
+    copVideoSessions->insert(this);
     _refresh.setInterval(1000);
     connect(&_refresh, &QTimer::timeout, this, &COPVideoSession::_update);
     connect(QCoreApplication::instance(), &QCoreApplication::aboutToQuit, this, &COPVideoSession::shutdown);
@@ -55,6 +59,19 @@ COPVideoSession::COPVideoSession(QObject* parent)
 COPVideoSession::~COPVideoSession()
 {
     shutdown();
+    if (!copVideoSessions.isDestroyed()) {
+        copVideoSessions->remove(this);
+    }
+}
+
+void COPVideoSession::disableAll()
+{
+    const auto sessions = copVideoSessions->values();
+    for (COPVideoSession* session : sessions) {
+        if (copVideoSessions->contains(session)) {
+            session->setEnabled(false);
+        }
+    }
 }
 
 void COPVideoSession::shutdown()
@@ -107,11 +124,12 @@ void COPVideoSession::setOutput(QQuickItem* output)
 
 void COPVideoSession::setUri(const QString& uri)
 {
-    if (_uri == uri) {
+    const QString value = uri.trimmed();
+    if (_uri == value) {
         return;
     }
     _invalidate();
-    _uri = uri;
+    _uri = value;
     emit configurationChanged();
     _queueUpdate();
 }
@@ -196,22 +214,10 @@ void COPVideoSession::_update()
     auto* cameras = _vehicle->cameraManager();
     auto* stream = cameras ? cameras->currentStreamInstance() : nullptr;
     const auto snapshot = VideoStreamResolver::snapshot(settings);
-    std::optional<VideoReceiver::Config> config;
-    if (_uri.isEmpty()) {
-        // COP never falls back to the standard receiver's manually configured endpoint.
-        if (VideoStreamResolver::isAutoStream(stream)) {
-            config = VideoStreamResolver::resolve(snapshot, stream, VideoStreamResolver::Role::Primary);
-        }
-    } else {
-        config = VideoReceiver::Config{
-            .uri = _uri,
-            .timeout = std::chrono::seconds(
-                _uri.startsWith(QLatin1StringView("rtsp"), Qt::CaseInsensitive) ? snapshot.rtspTimeoutSec : 3),
-            .lowLatency = snapshot.lowLatency,
-            .rtpJitterLatencyMs = snapshot.rtpJitterLatencyMs,
-            .autoReconnect = snapshot.autoReconnect,
-        };
-    }
+    // COP never falls back to the standard receiver's manually configured endpoint.
+    const auto config = (!_uri.isEmpty() || VideoStreamResolver::isAutoStream(stream))
+                            ? VideoStreamResolver::resolve(snapshot, stream, VideoStreamResolver::Role::Primary, _uri)
+                            : std::nullopt;
     if (!config) {
         _stop();
         _setStatus(tr("No stream advertised by this vehicle"));
