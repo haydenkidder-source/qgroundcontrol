@@ -9,7 +9,7 @@ CustomPlanStyle::CustomPlanStyle(QObject* parent)
 QColor CustomPlanStyle::keepOutFillColor() const
 {
     QColor fill(QStringLiteral("#E53935"));
-    fill.setAlphaF(0.35);
+    fill.setAlphaF(0.35f);
     return fill;
 }
 
