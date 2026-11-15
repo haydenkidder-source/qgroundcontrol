@@ -116,11 +116,16 @@ The record does not state whether one or both radios were changed; note each rad
 when you do this. The same large-packet ping returned 100 of 100 replies (0% loss), typically about 3 ms and averaging
 8.3 ms, with occasional spikes to about 45 ms and about 110 ms on the first packet.
 The TCP test `iperf3 -c <GCS Pi IP> -t 5` then gave about **10.3 Mbit/s**, with **4 retransmits**.
-Picture quality after the radio power fix has not been confirmed.
+After the radio power fix, picture quality was judged reasonable on the bench, with occasional
+frames that are half grey; see [relay status](VIDEO_RELAY_SETUP.md#status) for the likely cause
+(not measured) and possible later mitigations. Tuning was deliberately not done for this test.
 
 On the bench, keep radios a few metres apart and lower TX power. **10 dBm is a bench setting
 only; do not copy it to field use.** The operator must choose a separately tested, higher power
 for the actual field distance during field testing; no field-distance power was verified here.
+Distance testing is planned at maximum TX power; when running at maximum power, start with the
+radios well apart and move them to the test distance before judging link quality, because radios
+close together at high power overloaded each other's receivers in the bench test.
 When diagnosing, read each radio's signal strength and noise on its web page. Menu locations
 are model-specific; do not assume a menu name.
 

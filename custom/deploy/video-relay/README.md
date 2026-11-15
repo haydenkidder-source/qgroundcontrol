@@ -3,9 +3,11 @@
 On **2026-11-14**, both installers ran on Raspberry Pi 5 computers with Raspberry Pi OS 64-bit.
 The installer fetched MediaMTX v1.21.3, latest at the time. Both boot services started unattended
 after reboot, and RTSP over TCP worked locally on the GCS Pi and from a Windows laptop.
-RTSP-in-QGC remains **untested**. Picture quality after the radio fix, field-distance power
-and multiple-vehicle behavior remain unverified. See [Status](../../VIDEO_RELAY_SETUP.md#status)
-for the full scope of verification.
+RTSP-in-QGC remains **untested** on hardware. After the radio fix, bench picture quality was
+judged reasonable, with occasional half-grey frames; field-distance power and multiple-vehicle
+behavior remain unverified. See [Status](../../VIDEO_RELAY_SETUP.md#status) for the full scope
+of verification.
+QGC setup: see [Pointing QGC at the relay](../../VIDEO_RELAY_SETUP.md#pointing-qgc-at-the-relay).
 
 See [Video relay setup](../../VIDEO_RELAY_SETUP.md) for configuration and pipeline listings,
 [Network addressing](../../NETWORK_ADDRESSING.md) for the IP and port scheme, and

@@ -4,8 +4,9 @@
 
 The following results were verified on the bench on **2026-11-14**, using one GCS Pi and
 one vehicle Pi, both Raspberry Pi 5 running Raspberry Pi OS 64-bit. Here, verified covers
-installation, unattended service startup, relay availability and external RTSP playback;
-it does not establish field performance or RTSP playback inside QGroundControl (QGC).
+installation, unattended service startup, relay availability, external RTSP playback and bench
+picture quality; it does not establish field performance or RTSP playback inside
+QGroundControl (QGC).
 
 **Verified:**
 
@@ -20,17 +21,25 @@ it does not establish field performance or RTSP playback inside QGroundControl (
   and from a Windows laptop.
   Laptop playback worked with at least two different players; the exact players were not
   recorded. GCS Pi CPU use stayed under about 15%.
+- After the radio power fix, picture quality was judged reasonable on the bench, with
+  occasional frames that are half grey. Tuning was deliberately not done for this test.
 
 **Not verified:**
 
-- RTSP as a video source inside the custom QGC build; confirm support in the application.
-- Picture quality after the radio power fix has not been confirmed.
+- Hardware RTSP playback inside the custom QGC build remains untested; code review indicates
+  RTSP URLs are supported (see [Pointing QGC at the relay](#pointing-qgc-at-the-relay)).
 - Field-distance transmit power and behavior with more than one vehicle.
 - Browser playback over HLS or WebRTC; listening ports alone do not verify playback.
 - The new `TimeoutStopSec=10` directive in the GCS unit; it has not yet been exercised on hardware.
 
 Heavy video artifacts on the bench led to the
 [radio power investigation](FIELD_RADIO_SETUP.md#bench-versus-field-transmit-power).
+The likely cause of the remaining half-grey frames (not measured) is a lost packet mid-frame,
+leaving the rest of the frame grey until the next keyframe, which arrives within 0.5 s at the
+documented settings. The configured video link has no forward error correction (FEC).
+Ideas for later mitigation, not tested here, are reducing loss through correct radio power
+for the distance, a shorter keyframe interval, or x264 intra-refresh.
+
 The old direct-to-receiver pipeline used Real-time Transport Protocol (RTP), with
 `rtph264pay`. The relay pipeline below uses MPEG transport stream (MPEG-TS), not RTP.
 
@@ -298,8 +307,9 @@ ffplay -rtsp_transport tcp rtsp://10.0.1.2:8554/vehicleA
 ```
 
 RTSP over TCP worked on the bench; see [Status](#status) for the scope of verification.
-Confirm whether this custom QGC build offers and accepts an RTSP source in the application
-before trying to use the URL there. RTSP-in-QGC remains untested.
+Code review indicates RTSP URLs are supported (see
+[Pointing QGC at the relay](#pointing-qgc-at-the-relay)); hardware playback in QGC is still
+untested.
 
 To repeat the start-on-boot check after setup changes, reboot each Pi, inspect both services
 with the status and log commands above, then test playback again. Both services already
@@ -340,6 +350,53 @@ sudo ufw allow 8554/tcp
 sudo ufw allow 8888/tcp
 sudo ufw allow 8889/tcp
 ```
+
+## Pointing QGC at the relay
+
+This section comes from reading this fork's source code. It has not been tested on hardware.
+
+**Standard fly view / application-wide setting.** Open Application Settings > Video, choose
+the source **RTSP Video Stream**, and enter the full **RTSP URL**, for example
+`rtsp://10.0.1.2:8554/vehicleA`. This setting is application-wide, not per vehicle. If the
+active connected vehicle advertises its own camera stream over MAVLink, that stream takes
+priority over the manual setting. The manual source controls are disabled and the manual
+connection fields are hidden while an advertised stream is available.
+
+**COP overview (custom build): per-vehicle tiles.** Each connected vehicle's tile in the Common
+Operating Picture (COP) overview has a **Video URI** field. Enter the full RTSP URL there to
+give that vehicle its own stream; leave it empty to use the stream that vehicle advertises.
+There is no fallback to the application-wide manual URL. The value is saved per vehicle
+(by MAVLink system ID) and restored on the next launch. Duplicate full RTSP URLs and duplicate
+UDP ports across active tiles are rejected.
+
+**Scope caveat.** The saved COP URIs apply to the COP overview only: tile sessions are enabled
+only while the overview is selected. The fly view uses the active vehicle's advertised stream
+or the application-wide manual setting. No code was found that applies the saved COP URIs to
+the fly view. QGC does not automatically map `5600 + N` ports to vehicles for RTSP; the full
+URL, including the path name such as `vehicleA`, must be entered or advertised.
+
+**Transport.** The GStreamer RTSP receiver allows unicast UDP and TCP. The code's own comment
+says it tries UDP first and retries over TCP when no UDP data arrives within the timeout
+(about 5 seconds). A laptop that cannot receive UDP, for example because a firewall blocks it,
+may therefore show a delay before video starts. The
+[video settings guide](../docs/en/qgc-user-guide/settings_view/video.md#connection) documents
+`rtspt://` to request TCP from the start, for example `rtspt://10.0.1.2:8554/vehicleA`.
+The repository passes that scheme through and leaves TCP enforcement to GStreamer; confirm
+on hardware that it negotiates TCP.
+
+**Defaults worth knowing.** The GStreamer jitter-buffer latency defaults to **80 ms** and is
+adjustable as **RTP jitter latency** in the video settings; Low Latency Mode bypasses it.
+The RTSP stream-stall timeout defaults to **8 s**, with **Auto-reconnect on stream loss** on
+by default. The receiver waits for the stream's H.264 parameter sets (SPS/PPS); the documented
+sender settings repeat them at every keyframe with `h264parse config-interval=-1`.
+
+**To verify on hardware:**
+
+- [ ] The packaged Windows build plays the full RTSP URL.
+- [ ] Check negotiated transport (UDP versus TCP), including whether `rtspt://` forces TCP.
+- [ ] Check startup and reconnect after the vehicle or relay restarts.
+- [ ] Check behavior when switching between the COP overview and the fly view.
+- [ ] Check playback with more than one vehicle.
 
 ## Bandwidth and troubleshooting
 
@@ -458,7 +515,8 @@ This probe inspects media packets; it is not a count of video UDP datagrams.
 - **Heavy artifacts or burst loss:** follow [Checking the link](#checking-the-link) and
   [Bench versus field transmit power](FIELD_RADIO_SETUP.md#bench-versus-field-transmit-power).
   Close radios at high power can overload each other's receivers; do not diagnose the link
-  from tiny pings alone. Picture quality after the radio power fix has not been confirmed.
+  from tiny pings alone. After the power fix, bench picture quality was judged reasonable,
+  with occasional half-grey frames; see [Status](#status) for the likely cause and untested ideas.
 - **Windows laptop cannot view:** check the adapter mask and empty gateway, then follow
   [Windows laptop viewers](#windows-laptop-viewers) to use RTSP over TCP. Windows Firewall
   may block inbound UDP for WebRTC or direct UDP; this possibility was not verified.
