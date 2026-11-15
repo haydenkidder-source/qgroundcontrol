@@ -18,6 +18,9 @@ DEST_HOST=10.0.1.2
 DEST_PORT=5602
 # Camera. Use a stable path from:  ls -l /dev/v4l/by-id/
 CAM_DEVICE=/dev/video0
+# Space-separated name=value controls; prevent low-light frame-rate reduction by default.
+# Set CAM_CTRLS="" to disable. Unknown control names make v4l2-ctl fail (stream continues).
+CAM_CTRLS="exposure_dynamic_framerate=0"
 # mjpeg or yuyv (see: v4l2-ctl -d /dev/video0 --list-formats-ext)
 CAM_FORMAT=mjpeg
 WIDTH=1280
@@ -45,6 +48,16 @@ case "${CAM_FORMAT:-mjpeg}" in
     ;;
   *) echo "CAM_FORMAT must be mjpeg or yuyv" >&2; exit 1 ;;
 esac
+read -r -a CONTROLS <<< "${CAM_CTRLS-exposure_dynamic_framerate=0}"
+if (( ${#CONTROLS[@]} )); then
+  CONTROL_ARGS=()
+  for CONTROL in "${CONTROLS[@]}"; do
+    CONTROL_ARGS+=(-c "$CONTROL")
+  done
+  if ! v4l2-ctl -d "$CAM_DEVICE" "${CONTROL_ARGS[@]}"; then
+    echo "Warning: could not apply CAM_CTRLS to $CAM_DEVICE; continuing stream" >&2
+  fi
+fi
 exec gst-launch-1.0 -e "${SRC[@]}" \
   ! x264enc tune=zerolatency speed-preset=ultrafast bitrate="$BITRATE" key-int-max="$KEYINT" \
   ! "video/x-h264,profile=baseline" \

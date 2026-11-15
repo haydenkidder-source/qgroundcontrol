@@ -120,6 +120,16 @@ After the radio power fix, picture quality was judged reasonable on the bench, w
 frames that are half grey; see [relay status](VIDEO_RELAY_SETUP.md#status) for the likely cause
 (not measured) and possible later mitigations. Tuning was deliberately not done for this test.
 
+At the radios' minimum power setting, the vehicle's send rate and the GCS Pi's receive rate
+differed by about **7-10%**, measured with per-interface byte counters. At **10 dBm**, the
+large-packet ping had been clean. There is a working range between too strong (receiver
+overload) and too weak (low margin), and the best setting depends on distance. With video
+stopped, measure at several power settings
+using the same tests each time: `iperf3 -c <GCS Pi IP> -u -b 1M -t 20` (with an `iperf3 -s`
+server on the GCS Pi), plus the large-packet ping above. Record a table of TX power in dBm
+versus loss, jitter and round-trip time. A ping while video is running measures delay under
+load; it is a different measurement from an idle ping.
+
 On the bench, keep radios a few metres apart and lower TX power. **10 dBm is a bench setting
 only; do not copy it to field use.** The operator must choose a separately tested, higher power
 for the actual field distance during field testing; no field-distance power was verified here.

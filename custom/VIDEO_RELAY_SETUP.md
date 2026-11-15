@@ -23,13 +23,20 @@ QGroundControl (QGC).
   recorded. GCS Pi CPU use stayed under about 15%.
 - After the radio power fix, picture quality was judged reasonable on the bench, with
   occasional frames that are half grey. Tuning was deliberately not done for this test.
+- Browser playback via the relay was **reported, endpoint not recorded**: delay was near zero,
+  too small to measure with a stopwatch. It was described as a UDP stream, consistent with
+  WebRTC, but the endpoint was not recorded. HLS was not tested.
+- QGC was the viewer for the [latency tests](#tuning-latency), with Low Latency Mode already on.
+  The VIDEO SOURCE TYPE (RTSP URL, direct MPEG-TS, etc.) was not recorded; these tests do not
+  verify RTSP playback in QGC. Record the source type next time.
 
 **Not verified:**
 
 - Hardware RTSP playback inside the custom QGC build remains untested; code review indicates
   RTSP URLs are supported (see [Pointing QGC at the relay](#pointing-qgc-at-the-relay)).
 - Field-distance transmit power and behavior with more than one vehicle.
-- Browser playback over HLS or WebRTC; listening ports alone do not verify playback.
+- HLS playback; browser playback was reported with its endpoint not recorded, so neither the
+  WebRTC nor HLS endpoint is independently verified. Listening ports alone do not verify playback.
 - The new `TimeoutStopSec=10` directive in the GCS unit; it has not yet been exercised on hardware.
 
 Heavy video artifacts on the bench led to the
@@ -38,7 +45,8 @@ The likely cause of the remaining half-grey frames (not measured) is a lost pack
 leaving the rest of the frame grey until the next keyframe, which arrives within 0.5 s at the
 documented settings. The configured video link has no forward error correction (FEC).
 Ideas for later mitigation, not tested here, are reducing loss through correct radio power
-for the distance, a shorter keyframe interval, or x264 intra-refresh.
+for the distance, a shorter keyframe interval, or x264 intra-refresh (see the
+[keyframe caveat](#untested-ideas)).
 
 The old direct-to-receiver pipeline used Real-time Transport Protocol (RTP), with
 `rtph264pay`. The relay pipeline below uses MPEG transport stream (MPEG-TS), not RTP.
@@ -190,7 +198,8 @@ The installer writes the wrapper `/usr/local/bin/vehicle-stream.sh`, the environ
 `/etc/vehicle-stream.env` (if absent), and the unit `vehicle-stream.service`. It enables and
 starts the service immediately, using the default destination port 5602 unless an existing
 environment file specifies another port. Set the vehicle's own port before using its stream;
-never leave two vehicles sending to the same port.
+never leave two vehicles sending to the same port. At every service start, the wrapper applies
+camera controls before starting GStreamer; a control failure warns and streaming continues.
 
 ### Vehicle environment file
 
@@ -203,6 +212,9 @@ DEST_HOST=10.0.1.2
 DEST_PORT=5602
 # Camera. Use a stable path from:  ls -l /dev/v4l/by-id/
 CAM_DEVICE=/dev/video0
+# Space-separated name=value controls; prevent low-light frame-rate reduction by default.
+# Set CAM_CTRLS="" to disable. Unknown control names make v4l2-ctl fail (stream continues).
+CAM_CTRLS="exposure_dynamic_framerate=0"
 # mjpeg or yuyv (see: v4l2-ctl -d /dev/video0 --list-formats-ext)
 CAM_FORMAT=mjpeg
 WIDTH=1280
@@ -216,6 +228,10 @@ KEYINT=5
 
 - `DEST_HOST` is the GCS Pi; `DEST_PORT` must be `5600 + N` for this vehicle.
 - `CAM_DEVICE` is the camera device. Prefer a stable path from `/dev/v4l/by-id/` when available.
+- `CAM_CTRLS` is a space-separated list of `name=value` V4L2 controls applied at every start.
+  Unset uses `exposure_dynamic_framerate=0`; an explicitly empty string applies nothing.
+  Unknown names make `v4l2-ctl` fail; the wrapper warns and continues. See
+  [Camera controls](#camera-controls) for commands and existing-install behavior.
 - `CAM_FORMAT` is `mjpeg` or `yuyv`, matching a format the camera supports. MJPEG is compressed
   camera video; YUYV is raw camera video, selected as `YUY2` in the pipeline.
 - `WIDTH`, `HEIGHT` and `FPS` set resolution and frames per second.
@@ -234,7 +250,9 @@ v4l2-ctl -d /dev/video0 --list-formats-ext
 ### Vehicle pipeline
 
 The script installs this wrapper at `/usr/local/bin/vehicle-stream.sh` and makes it executable.
-The service supplies its variables from `/etc/vehicle-stream.env`.
+The service supplies its variables from `/etc/vehicle-stream.env`. The wrapper splits
+`CAM_CTRLS` into an array and passes each control as a separate `-c` argument to `v4l2-ctl`,
+using `CAM_DEVICE`. Failure prints a warning to stderr and does not stop the stream.
 
 ```bash
 #!/usr/bin/env bash
@@ -252,6 +270,16 @@ case "${CAM_FORMAT:-mjpeg}" in
     ;;
   *) echo "CAM_FORMAT must be mjpeg or yuyv" >&2; exit 1 ;;
 esac
+read -r -a CONTROLS <<< "${CAM_CTRLS-exposure_dynamic_framerate=0}"
+if (( ${#CONTROLS[@]} )); then
+  CONTROL_ARGS=()
+  for CONTROL in "${CONTROLS[@]}"; do
+    CONTROL_ARGS+=(-c "$CONTROL")
+  done
+  if ! v4l2-ctl -d "$CAM_DEVICE" "${CONTROL_ARGS[@]}"; then
+    echo "Warning: could not apply CAM_CTRLS to $CAM_DEVICE; continuing stream" >&2
+  fi
+fi
 exec gst-launch-1.0 -e "${SRC[@]}" \
   ! x264enc tune=zerolatency speed-preset=ultrafast bitrate="$BITRATE" key-int-max="$KEYINT" \
   ! "video/x-h264,profile=baseline" \
@@ -287,6 +315,9 @@ RestartSec=3
 [Install]
 WantedBy=multi-user.target
 ```
+
+Every service start reapplies `CAM_CTRLS` before GStreamer opens the camera. A control failure
+alone does not exit the wrapper or trigger a service restart.
 
 `RestartSec=3` restarts the pipeline three seconds after it exits, including when the camera is
 not ready at boot. The installer already enables and starts the service. After checking or
@@ -335,7 +366,8 @@ the following are viewing instructions, not a record of which players were used.
 
 - **Browser pages:** use `http://<GCS Pi>:8888/<path>/` for HLS or
   `http://<GCS Pi>:8889/<path>/` for WebRTC. Replace `<GCS Pi>` with its IP address and `<path>`
-  with the configured name, for example `vehicleA`. Browser playback was not verified.
+  with the configured name, for example `vehicleA`. Browser playback was reported near zero delay,
+  but its endpoint was not recorded; HLS was not tested.
 
 Windows Firewall may block inbound UDP, affecting WebRTC or a direct-UDP receiver on the
 laptop. This was not verified on the bench. See [Troubleshooting](#troubleshooting) for other checks.
@@ -397,6 +429,138 @@ sender settings repeat them at every keyframe with `h264parse config-interval=-1
 - [ ] Check startup and reconnect after the vehicle or relay restarts.
 - [ ] Check behavior when switching between the COP overview and the fly view.
 - [ ] Check playback with more than one vehicle.
+
+## Tuning latency
+
+Bench record, **2026-11-14**. QGC was the viewer, with Low Latency Mode already on; its
+VIDEO SOURCE TYPE was not recorded. Record that setting next time before comparing results.
+The installer defaults remain `FPS=10`, `BITRATE=1000`, `KEYINT=5`; the 30 fps settings below
+are tuning observations only.
+
+| Change | Result |
+| --- | --- |
+| 10 fps, 1000 kbit/s, keyframe every 5 frames, MJPEG 720p; QGC with Low Latency Mode on (video source type not recorded) | About 1.5 s delay (stopwatch). |
+| Added x264enc `vbv-buf-capacity=150` (default 600 ms) | Reported as worse; reverted. |
+| 30 fps, 2000 kbit/s, keyframe every 15 frames | Just under 0.75 s (stopwatch). Measured while the camera was exposure-limited: the real frame rate during that run was not recorded; a frame rate of about 7 fps was then reported, apparently from QGC's statistics panel (the source was not confirmed). |
+| Camera `exposure_dynamic_framerate=0` | Camera alone measured 30 fps (`current` 30.0, 0 dropped), versus 15.0 before. |
+
+A latency of **0 ms** was reported alongside the 7 fps figure, apparently from QGC's statistics
+panel (the source was not confirmed). With Low Latency Mode on, QGC disables its jitter buffer,
+which is the likely reason for the reading (an inference from the source code). Either way,
+this is not glass-to-glass delay; use a clock-based measurement instead.
+Delay at 30 fps with the camera fix, as seen in QGC, **had not been measured** when this was
+written.
+
+At 10 fps each frame takes 100 ms, so a couple of frames of buffering anywhere costs hundreds
+of milliseconds. This is the likely reason a higher frame rate helped, but the mechanism was
+not isolated. The reported near-zero delay of a browser stream via the relay (endpoint not
+recorded) is evidence that the relay is not the main source of delay, but this was not a
+controlled comparison and the QGC source type is not known, so the relay is not ruled out.
+
+### Camera findings
+
+The USB camera on the bench offered MJPEG and YUYV only, with no H.264 capture. At 1280x720,
+YUYV topped out at 10 fps and MJPEG reached 30 fps. Use MJPEG capture when frame rate matters
+for this camera.
+
+In low light its control list showed `exposure_dynamic_framerate=1`, `exposure_time_absolute`
+about 1083 (units of 0.1 ms, about 108 ms), and `gain=255` (maximum; default 0). Even in
+daylight (reported as ample light) it held an exposure value of 666 (about 66.6 ms) and 15 fps until dynamic
+frame rate was turned off: 1 / 0.0666 s is about 15 fps. Setting
+`exposure_dynamic_framerate=0` let the camera deliver 30 fps. A darker or noisier picture is
+the trade-off for short exposure; more light is the real fix.
+
+An **untested alternative** is `auto_exposure=1` with `exposure_time_absolute` set manually.
+Its units are 0.1 ms; keep the value at or below 333 for 30 fps.
+
+### Camera controls
+
+On the vehicle Pi, list the available controls and apply the bench fix manually with:
+
+```bash
+v4l2-ctl -d /dev/video0 --list-ctrls
+v4l2-ctl -d /dev/video0 -c exposure_dynamic_framerate=0
+```
+
+Controls may reset on reboot or unplug. The wrapper therefore applies `CAM_CTRLS` at every
+service start, before starting GStreamer. Set it in `/etc/vehicle-stream.env` as a
+space-separated list of `name=value` controls, for example:
+
+```bash
+CAM_CTRLS="exposure_dynamic_framerate=0"
+```
+
+Multiple entries become separate `-c name=value` arguments in one `v4l2-ctl` invocation.
+Unknown control names make `v4l2-ctl` fail; a missing control or a camera that is not ready
+produces a warning to stderr and streaming continues. Set `CAM_CTRLS=""` to apply nothing.
+
+For existing installations, rerun `vehicle-setup.sh` to update the wrapper. The installer
+preserves `/etc/vehicle-stream.env`; if `CAM_CTRLS` is unset there, the updated wrapper still
+uses `exposure_dynamic_framerate=0`. An explicitly empty value disables it. Restart the
+service after updating so an already running stream picks up the wrapper:
+
+```bash
+sudo systemctl restart vehicle-stream.service
+```
+
+The manual camera fix was measured on the bench; automatic application by the updated
+wrapper has not yet been exercised on hardware.
+
+### Measuring latency and frame rate
+
+**Millisecond clock.** Save this as `clock.html` and open it in a browser:
+
+```html
+<!doctype html><meta charset=utf-8><body style="font:700 20vw monospace;margin:0;background:#000;color:#0f0"><div id=t></div><script>setInterval(()=>{t.textContent=(performance.now()/1000).toFixed(3)},5)</script>
+```
+
+Aim the vehicle camera at the screen, put the QGC video window beside the live clock, and
+photograph both. Subtract the clock seen in the video from the live clock to get the delay,
+accurate to about one frame. Record the QGC video source type and Low Latency Mode setting.
+
+**Camera-only frame rate.** On the vehicle Pi, stop the stream first and wait for it to stop:
+
+```bash
+sudo systemctl stop vehicle-stream.service
+```
+
+Then run the capture and inspect the last readings:
+
+```bash
+timeout -s INT 12 gst-launch-1.0 -v v4l2src device=/dev/video0 \
+  ! image/jpeg,width=1280,height=720,framerate=30/1 \
+  ! fpsdisplaysink video-sink=fakesink text-overlay=false > ~/fps.txt 2>&1
+grep -E "current" ~/fps.txt | tail -3
+```
+
+The `average` rises during the first seconds. Restart the stream afterwards:
+
+```bash
+sudo systemctl start vehicle-stream.service
+```
+
+**With encoding added (not yet run).** Repeat the camera-only test, stopping the stream
+first, but insert `jpegdec ! videoconvert ! x264enc tune=zerolatency speed-preset=ultrafast
+bitrate=2000 key-int-max=15 ! video/x-h264,profile=baseline` before `fpsdisplaysink`. This
+would check whether the Pi keeps up when encoding. Restart the stream afterwards.
+
+**QGC stats panel.** Open the toolbar video-stream indicator (camera icon with fps and
+bitrate). It appears only for the standard receiver, not while the COP overview is selected
+in this build, where `startStandardVideoReceivers` is false. Jitter and packet-loss lines
+appear only for RTP streams (RTSP), not MPEG-TS. The latency readout with Low Latency Mode
+on does not measure glass-to-glass delay.
+
+### Untested ideas
+
+These have not been tested on hardware in this investigation:
+
+- Try QGC RTSP transport with `rtspt://` to request TCP from the start; see
+  [Transport](#pointing-qgc-at-the-relay) for the source-review caveat.
+- Try QGC's **Force software decoder** setting.
+- Send RTP straight to QGC's UDP h.264 source on port 5600 as a bisect to help locate delay.
+  This would use the old RTP output rather than the relay's MPEG-TS input.
+- x264 intra-refresh is risky with QGC: its keyframe handling may not start without a normal
+  keyframe. This interaction is untested.
 
 ## Bandwidth and troubleshooting
 
