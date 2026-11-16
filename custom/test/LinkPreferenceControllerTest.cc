@@ -99,6 +99,28 @@ bool LinkPreferenceControllerTest::_waitUntilIdle(Vehicle* vehicle)
         TestTimeout::longMs(), QStringLiteral("transfers idle"));
 }
 
+bool LinkPreferenceControllerTest::_waitForPreferredReady(Vehicle* vehicle)
+{
+    LinkPreferencePolicy::Input input;
+    LinkPreferencePolicy::TransferFlags flags;
+    const bool ready = waitForCondition(
+        [this, vehicle, &input, &flags]() {
+            input = _preference->_input(vehicle, &flags);
+            return LinkPreferencePolicy::preferredHealthy(input) && input.initialConnectDone && !input.transferActive;
+        },
+        TestTimeout::longMs(), QStringLiteral("preferred link ready"));
+    if (!ready) {
+        const QString message =
+            QStringLiteral("Preferred link: health=%1, initial connect=%2, transfer active=%3, signing pending=%4")
+                .arg(LinkPreferencePolicy::preferredHealthy(input))
+                .arg(input.initialConnectDone)
+                .arg(input.transferActive)
+                .arg(flags.signingPending);
+        QTest::qFail(qPrintable(message), __FILE__, __LINE__);
+    }
+    return ready;
+}
+
 Vehicle* LinkPreferenceControllerTest::_startPair(quint32 sysid, bool productionClock)
 {
     if (!productionClock) {
@@ -125,6 +147,9 @@ Vehicle* LinkPreferenceControllerTest::_startPair(quint32 sysid, bool production
     _roles->addLink(0, QStringLiteral("RFD"), QStringLiteral("RFD"));
     _roles->addLink(0, QStringLiteral("UDP"), QStringLiteral("UDP"));
     _roles->setLinkPreferred(0, 1, true);
+    if (!_waitForPreferredReady(vehicle)) {
+        return nullptr;
+    }
     return vehicle;
 }
 
@@ -182,6 +207,7 @@ void LinkPreferenceControllerTest::_armedConnectionCanReturn()
     _roles->addLink(0, QStringLiteral("RFD"), QStringLiteral("RFD"));
     _roles->addLink(0, QStringLiteral("UDP"), QStringLiteral("UDP"));
     _roles->setLinkPreferred(0, 1, true);
+    QVERIFY(_waitForPreferredReady(vehicle));
     _preference->evaluateForTesting(3);
     QCOMPARE(links->primaryLinkName(), QStringLiteral("UDP"));
 
@@ -545,6 +571,7 @@ void LinkPreferenceControllerTest::_reusedSysidStartsWithFreshHistory()
     auto* links = vehicle->vehicleLinkManager();
     QTRY_COMPARE_WITH_TIMEOUT(links->linkNames().size(), 2, TestTimeout::longMs());
     QVERIFY(_waitUntilIdle(vehicle));
+    QVERIFY(_waitForPreferredReady(vehicle));
     _preference->evaluateForTesting(1002);
     QCOMPARE(links->primaryLinkName(), QStringLiteral("RFD"));
     QCOMPARE(notifications.count(), 0);
