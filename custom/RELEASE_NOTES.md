@@ -1,5 +1,124 @@
 # Release notes
 
+## v1.15.0
+
+**Test build.** Checks so far include the automated Unit and Integration suites with
+simulated (MockLink) vehicles, offscreen UI tests and mutation checks of the tests.
+The changes have not been checked on real vehicles, radios or a real display. The owner
+reports that RTSP video in the packaged Windows build and the COP-to-vehicle preview
+work on the test kit; no test record is attached. Treat v1.15.0 as a test build until
+the owner has accepted it on the bench.
+
+Based on v1.14.0 plus the changes below, with no upstream merge.
+
+### Fixes in the fork
+
+- **UDP disconnect**: a write queued behind a disconnect is now dropped quietly,
+  with a debug log, instead of showing "Could Not Send Data - Link is Disconnected!".
+  Real write failures still warn.
+- **Vehicle video installer**: a new installation requires the unit number before
+  installing packages or writing files, and uses video port `5600 + N` for unit N.
+  It no longer starts the stream on an example port before the unit is set.
+
+### New in the fork
+
+- **Serial diagnostics**: debug logs explain why a serial port or saved link is not
+  auto-connecting, including disabled classes, bootloaders, occupied ports, retry
+  gates and suspended automatic connection. Port reservations identify the MAVLink
+  link or GNSS receiver that owns the port. Enable `Comms.Serial.SerialAutoConnect`
+  and `Comms.LinkManager` to read the diagnostics.
+- **Serial notices**: the COP footer shows why a serial link was lost or could not
+  connect, with the remedy and buttons to open Application Settings > Comm Links
+  or GNSS Receiver when applicable. A verified GNSS owner's button comes first.
+  The footer expands for a new blocker and stays open while action is needed.
+  Each actionable transition requests one spoken alert; retry ticks do not.
+- **Complex plan patterns**: surveys, corridor scans, structure scans and plain
+  polylines now follow the vehicle's COP plan style. Area boundaries use a 3 px
+  long dash and tinted fill; transects, turnarounds, partial legs and plain lines
+  use a solid 4 px stroke. The structure flight polygon has a transparent fill.
+  Entry and exit labels use the vehicle's colour, with white borders, black text
+  and the waypoint selection halo. Direction arrows stay white, terrain-collision
+  areas stay red, and editing handles remain unchanged.
+- **Landing and perimeter patterns**: fixed-wing and VTOL landing patterns and the
+  perimeter scan now follow the same COP plan style: vehicle colour, solid 4 px
+  route geometry and 3 px long-dash extents and footprints. Fills keep their existing
+  opacity, and the glide slope's terrain-collision red is kept.
+- **Vehicle video preview**: the saved COP video address now also feeds that
+  vehicle's own Fly page preview. It takes priority over an advertised stream,
+  then the manual Video settings, without writing those settings. Switching
+  vehicles or editing the assignment updates the preview. Leaving the COP overview
+  releases the tile endpoints before the standard receivers start.
+- **Network and video guides**: `custom/NETWORK_ADDRESSING.md`,
+  `custom/FIELD_RADIO_SETUP.md` and `custom/VIDEO_RELAY_SETUP.md` cover addressing,
+  per-vehicle radio forwarding, Preferred links and the ground and vehicle Pi video
+  relay setup. The follow-up corrects preview priority and receiver handoff, and
+  adds prerequisite and firewall guidance. Documented bench results are kept
+  separate from untested field behaviour.
+
+### Checking it on the bench
+
+1. Enable `Comms.Serial.SerialAutoConnect` and `Comms.LinkManager` in Application
+   Settings > App Log Viewer > Categories. With a serial device attached, turn off
+   its auto-connect class and check the logged reason. Restore the setting.
+2. With the COP footer visible, disconnect a connected serial device physically.
+   Check the notice's explanation and offered settings buttons. Open the relevant
+   settings page and confirm the notice stays pending. If automatic retry is
+   eligible and the link stays unavailable, check the one-time escalation after
+   15 seconds. Dismiss the notice and confirm that dismissal does not stop retries.
+3. Connect two vehicles with different COP colours. In the Plan editor, add survey,
+   corridor, structure, landing and perimeter patterns as supported by each vehicle.
+   Check solid routes, dashed extents and tinted fills. Drag an editing handle and
+   confirm that the outline follows it. Switch the active vehicle with unsent edits
+   and choose Keep; confirm the plan keeps its owner's colour.
+4. Give the two vehicles different playable COP video addresses. Open each Fly page
+   and confirm its preview uses that vehicle's assignment. Edit one assignment and
+   check the preview updates. Switch between the overview and vehicle pages and
+   check that the stream plays in each view.
+5. Connect and disconnect a UDP link. Confirm a normal disconnect does not show
+   "Could Not Send Data - Link is Disconnected!" from a write queued after it.
+
+### Changes to know about
+
+- **Plan coverage**: survey, corridor, structure, polyline and perimeter items no
+  longer keep stock colours when a plan style is enabled. Landing patterns now use
+  the full line and fill styles above. With no plan style, or a disabled one, these
+  items draw as before.
+- **GeoMap preview engines**: the optional 2D/3D engines for Plan and Fly keep the
+  stock look, with no vehicle colours, line styles or dash patterns. Both "Use
+  GeoMap engine (preview)" settings default to off and require a restart.
+- **Serial notices**: Dismiss hides the current transition; it does not fix the link
+  or stop retries. A different blocker or the one-time escalation can show the
+  incident again. Resolution, explicit disconnect or removing the configuration
+  clears the notice. Discovery notices also clear when the device detaches.
+  Connection order, retry timing and recovery policy are unchanged.
+- **Serial vehicle loss**: when the serial port is still open, the message says
+  "The serial port is open; check vehicle power and the radio link." Physical
+  serial disconnection adds the last-known-position and mode history entry silently;
+  the serial notice carries the alert and remedies.
+- **Video selection**: manual Video fields that would be ignored are hidden while
+  a COP assignment is in use. The assignment survives telemetry loss; removing the
+  vehicle clears its override. The thermal stream is unchanged.
+- **Installer use**: `custom/deploy/video-relay/vehicle-setup.sh` is a deploy script,
+  separate from the application build. Supply `--unit N`, `UNIT=N`, or answer the
+  terminal prompt with a plain decimal unit number from 2 to 254. With neither a
+  unit nor a terminal, a new installation exits with status 2 before changing anything.
+  An existing `/etc/vehicle-stream.env` is never modified. With a unit supplied,
+  its `DEST_PORT` must equal `5600 + N`; a different, missing, duplicate or unreadable
+  value is refused with status 2 and no service state changes. A re-run without a
+  unit is allowed only when the file exists and the service is already enabled or
+  active; it refreshes the wrapper and unit file, prints the existing port and
+  leaves the service state alone.
+- **Internal plan style change**: PlanStyle getters are marked `[[nodiscard]]` so
+  ignoring their return values warns at compile time; there is no behaviour change.
+- **Tests**: preferred-link tests wait for healthy, idle links before early checks
+  and after every re-attach; parameter retry tests allow timer margin; video tests
+  allow timer jitter and bind mock output before activation. These changes remove
+  test timing assumptions; they do not establish the cause of the intermittent CI
+  failures.
+- **Unverified hardware paths**: serial unplug recovery on Windows and real-radio
+  failover remain untested. The installer harness used stubbed commands and does not
+  prove real package installation, service, camera or sudo environment handling.
+
 ## v1.14.0
 
 **Test build.** The changes pass the automated Unit and Integration suites with
