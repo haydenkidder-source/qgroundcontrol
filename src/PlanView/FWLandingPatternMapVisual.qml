@@ -13,6 +13,7 @@ Item {
     id: _root
 
     property var planStyle: null
+    readonly property bool _styled: planStyle && planStyle.enabled
     property var map        ///< Map control to place item in
     property var vehicle    ///< Vehicle associated with this item
     property bool interactive: true
@@ -63,7 +64,10 @@ Item {
             var rgComponents = [ flightPathComponent, loiterRadiusComponent, landingAreaComponent, landingAreaLabelComponent,
                                 glideSlopeComponent, glideSlopeLabelComponent, transitionHeightComponent, midGlideSlopeHeightComponent,
                                 approachHeightComponent ]
-            objMgr.createObjects(rgComponents, map, true /* parentObjectIsMap */)
+            for (const visualComponent of rgComponents) {
+                const addMapItem = visualComponent !== landingAreaComponent && visualComponent !== glideSlopeComponent
+                objMgr.createObject(visualComponent, map, addMapItem)
+            }
         }
     }
 
@@ -246,11 +250,12 @@ Item {
 
         MapPolyline {
             objectName: "planPatternLine"
+            opacity: _root._styled ? _root.opacity : 1
             readonly property real vehicleId: _root.planStyle ? _root.planStyle.vehicleId : 0
             z:          QGroundControl.zOrderMapItems - 1   // Under item indicators
             line.color: _root.planStyle && _root.planStyle.enabled ? _root.planStyle.lineColor :
                         QGroundControl.globalPalette.mapMissionTrajectory
-            line.width: 2
+            line.width: _root._styled ? _root.planStyle.missionLineWidth : 2
             path:       _flightPath
         }
     }
@@ -261,6 +266,7 @@ Item {
 
         MapQuickItem {
             objectName: "planWaypoint"
+            opacity: _root._styled ? _root.opacity : 1
             readonly property real vehicleId: _root.planStyle ? _root.planStyle.vehicleId : 0
             readonly property int sequenceNumber: sourceItem.index > 0 ? sourceItem.index : _missionItem.sequenceNumber
             readonly property bool current: _missionItem.isCurrentItem
@@ -296,6 +302,7 @@ Item {
 
         MapQuickItem {
             objectName: "planWaypoint"
+            opacity: _root._styled ? _root.opacity : 1
             readonly property real vehicleId: _root.planStyle ? _root.planStyle.vehicleId : 0
             readonly property int sequenceNumber: sourceItem.index > 0 ? sourceItem.index : _missionItem.sequenceNumber
             readonly property bool current: _missionItem.isCurrentItem
@@ -329,11 +336,12 @@ Item {
 
         MapCircle {
             objectName: "planLoiterRing"
+            opacity: _root._styled ? _root.opacity : 1
             readonly property real vehicleId: _root.planStyle ? _root.planStyle.vehicleId : 0
             z:              QGroundControl.zOrderMapItems
             center:         _missionItem.finalApproachCoordinate
             radius:         _missionItem.loiterRadius.rawValue
-            border.width:   2
+            border.width:   _root._styled ? _root.planStyle.missionLineWidth : 2
             border.color:   _root.planStyle && _root.planStyle.enabled ? _root.planStyle.lineColor : "green"
             color:          "transparent"
             visible:        _useLoiterToAlt
@@ -432,24 +440,41 @@ Item {
     Component {
         id: landingAreaComponent
 
-        MapPolygon {
-            objectName: "planLandingArea"
-            z:              QGroundControl.zOrderMapItems
-            border.width:   1
-            border.color:   "black"
-            color:          "green"
-            opacity:        0.5
+        QGCMapPolygonVisuals {
+            id: landingAreaVisual
+            fillObjectName: "planLandingArea"
+            mapControl: _root.map
+            planStyle: _root.planStyle
+            patternOutline: true
+            interactive: false
+            fillZ: QGroundControl.zOrderMapItems - (_root._styled ? 2 : 0)
+            outlineZ: QGroundControl.zOrderMapItems - 1
+            borderWidth: 1
+            borderColor: "black"
+            interiorColor: _root._styled ? _root.planStyle.lineColor : "green"
+            altColor: "red"
+            interiorOpacity: 0.5 * (_root._styled ? _root.opacity : 1)
+            boundaryOpacity: _root.opacity
+            property var path: []
+            // Read-only geographic footprint; the shared editor only observes its path and fill state.
+            mapPolygon: QtObject {
+                property var path: landingAreaVisual.path
+                property bool vertexDrag: false
+                property bool traceMode: false
+                property bool showAltColor: false
+            }
 
             readonly property real angleRadians:    Math.atan((_landingWidthMeters / 2) / (_landingLengthMeters / 2))
             readonly property real angleDegrees:    (angleRadians * (180 / Math.PI))
             readonly property real hypotenuse:      (_landingWidthMeters / 2) / Math.sin(angleRadians)
 
             function recalc() {
-                path = [ ]
-                addCoordinate(_missionItem.landingCoordinate.atDistanceAndAzimuth(hypotenuse, _landingAreaBearing - angleDegrees))
-                addCoordinate(_missionItem.landingCoordinate.atDistanceAndAzimuth(hypotenuse, _landingAreaBearing + angleDegrees))
-                addCoordinate(_missionItem.landingCoordinate.atDistanceAndAzimuth(hypotenuse, _landingAreaBearing + (180 - angleDegrees)))
-                addCoordinate(_missionItem.landingCoordinate.atDistanceAndAzimuth(hypotenuse, _landingAreaBearing - (180 - angleDegrees)))
+                const vertices = []
+                vertices.push(_missionItem.landingCoordinate.atDistanceAndAzimuth(hypotenuse, _landingAreaBearing - angleDegrees))
+                vertices.push(_missionItem.landingCoordinate.atDistanceAndAzimuth(hypotenuse, _landingAreaBearing + angleDegrees))
+                vertices.push(_missionItem.landingCoordinate.atDistanceAndAzimuth(hypotenuse, _landingAreaBearing + (180 - angleDegrees)))
+                vertices.push(_missionItem.landingCoordinate.atDistanceAndAzimuth(hypotenuse, _landingAreaBearing - (180 - angleDegrees)))
+                path = vertices
             }
 
             Component.onCompleted: recalc()
@@ -466,23 +491,40 @@ Item {
     Component {
         id: glideSlopeComponent
 
-        MapPolygon {
-            objectName: "planGlideSlope"
-            z:              QGroundControl.zOrderMapItems
-            border.width:   1
-            border.color:   "black"
-            color:          _missionItem.terrainCollision ? "red" : "orange"
-            opacity:        0.5
+        QGCMapPolygonVisuals {
+            id: glideSlopeVisual
+            fillObjectName: "planGlideSlope"
+            mapControl: _root.map
+            planStyle: _root.planStyle
+            patternOutline: true
+            interactive: false
+            fillZ: QGroundControl.zOrderMapItems - (_root._styled ? 2 : 0)
+            outlineZ: QGroundControl.zOrderMapItems - 1
+            borderWidth: 1
+            borderColor: "black"
+            interiorColor: _root._styled ? _root.planStyle.lineColor : "orange"
+            altColor: "red"
+            interiorOpacity: 0.5 * (_root._styled ? _root.opacity : 1)
+            boundaryOpacity: _root.opacity
+            property var path: []
+            // Read-only geographic footprint; the shared editor only observes its path and fill state.
+            mapPolygon: QtObject {
+                property var path: glideSlopeVisual.path
+                property bool vertexDrag: false
+                property bool traceMode: false
+                property bool showAltColor: _missionItem.terrainCollision
+            }
 
             readonly property real angleRadians:    Math.atan((_landingWidthMeters / 2) / (_landingLengthMeters / 2))
             readonly property real angleDegrees:    (angleRadians * (180 / Math.PI))
             readonly property real hypotenuse:      (_landingWidthMeters / 2) / Math.sin(angleRadians)
 
             function recalc() {
-                path = [ ]
-                addCoordinate(_missionItem.landingCoordinate.atDistanceAndAzimuth(hypotenuse, _landingAreaBearing - angleDegrees))
-                addCoordinate(_missionItem.landingCoordinate.atDistanceAndAzimuth(hypotenuse, _landingAreaBearing + angleDegrees))
-                addCoordinate(_useLoiterToAlt ? _missionItem.slopeStartCoordinate : _missionItem.finalApproachCoordinate)
+                const vertices = []
+                vertices.push(_missionItem.landingCoordinate.atDistanceAndAzimuth(hypotenuse, _landingAreaBearing - angleDegrees))
+                vertices.push(_missionItem.landingCoordinate.atDistanceAndAzimuth(hypotenuse, _landingAreaBearing + angleDegrees))
+                vertices.push(_useLoiterToAlt ? _missionItem.slopeStartCoordinate : _missionItem.finalApproachCoordinate)
+                path = vertices
             }
 
             Component.onCompleted: recalc()
