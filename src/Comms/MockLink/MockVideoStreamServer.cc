@@ -1,3 +1,5 @@
+#include <atomic>
+
 #include <gst/gst.h>
 
 #ifdef QGC_GST_RTSP_SERVER

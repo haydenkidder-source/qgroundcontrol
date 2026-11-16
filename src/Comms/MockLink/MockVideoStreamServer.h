@@ -58,9 +58,9 @@ public:
 
     /// Diagnostic count of encoded H.265 frames entering the RTP payloader, not proof of UDP delivery.
     /// Other stream types are not counted. Reset on start(); lastFrameAgoMs() is -1 before the first frame.
-    quint64 framesSent() const { return _framesSent.load(std::memory_order_relaxed); }
+    [[nodiscard]] quint64 framesSent() const { return _framesSent.load(std::memory_order_relaxed); }
 
-    qint64 lastFrameAgoMs() const
+    [[nodiscard]] qint64 lastFrameAgoMs() const
     {
         const qint64 lastFrameMs = _lastFrameMs.load(std::memory_order_relaxed);
         return (lastFrameMs < 0) ? -1 : _senderTimer.elapsed() - lastFrameMs;
