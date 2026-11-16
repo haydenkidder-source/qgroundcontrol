@@ -114,6 +114,9 @@ void GstVideoReceiverPipelineTest::_testDecodesMockLinkStreams()
     }
 
     Receiver stream(uri);
+    // Bind the output before activation so decoder setup does not depend on late display attachment.
+    stream.window.show();
+    stream.receiver->setVideoOutput(stream.output);
     stream.receiver->setActive(true);
     if (receiverListens) {
         // Connecting lasts until the server sends. A server that already does can take the receiver on to
