@@ -9,6 +9,7 @@
 #include "AppSettings.h"
 #include "COPController.h"
 #include "COPReferencePoint.h"
+#include "COPTestHelpers.h"
 #include "Checksums.h"
 #include "GPSCorrectionManager.h"
 #include "GPSCorrectionSettings.h"
@@ -384,21 +385,8 @@ void COPVehicleLifecycleTest::_disconnectAndReconnect()
     VehicleRoleController roles;
     COPController controller;
     controller.initialize(&roles);
-    const auto reconnect = [this, requestedSysid]() {
-        auto* mockConfig = new MockConfiguration(QStringLiteral("COP reconnect"));
-        mockConfig->setFirmwareType(MAV_AUTOPILOT_PX4);
-        mockConfig->setVehicleType(MAV_TYPE_QUADROTOR);
-        mockConfig->setIncrementVehicleId(false);
-        mockConfig->setSystemId(requestedSysid);
-        mockConfig->setDynamic(true);
-        auto config = LinkManager::instance()->addConfiguration(mockConfig);
-        if (!LinkManager::instance()->createConnectedLink(config)) {
-            return false;
-        }
-        _mockLink = qobject_cast<MockLink*>(config->link());
-        return _mockLink != nullptr;
-    };
-    QVERIFY(reconnect());
+    _mockLink = COPTestHelpers::connectMockLink(requestedSysid);
+    QVERIFY(_mockLink);
     QTRY_VERIFY_WITH_TIMEOUT(MultiVehicleManager::instance()->activeVehicle(), TestTimeout::longMs());
     _vehicle = MultiVehicleManager::instance()->activeVehicle();
     QVERIFY(vehicle());
@@ -435,7 +423,8 @@ void COPVehicleLifecycleTest::_disconnectAndReconnect()
     QCOMPARE(controller.vehicles()->count(), count);
     controller.assumeControl();
     QCOMPARE(controller.pendingSysid(), sysid);
-    QVERIFY(reconnect());
+    _mockLink = COPTestHelpers::connectMockLink(requestedSysid);
+    QVERIFY(_mockLink);
     QTRY_VERIFY_WITH_TIMEOUT(MultiVehicleManager::instance()->activeVehicle(), TestTimeout::longMs());
     _vehicle = MultiVehicleManager::instance()->activeVehicle();
     QVERIFY(vehicle());

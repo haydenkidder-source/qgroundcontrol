@@ -39,10 +39,10 @@ struct Settings
 
 Settings snapshot(VideoSettings* videoSettings);
 
-/// The stream for @p role: the one @p streamInfo advertises, or else, for the primary role only, the manually
-/// configured source. nullopt when there is none. Reads only its arguments: a camera's stream never changes the user's
-/// settings.
-std::optional<VideoReceiver::Config> resolve(const Settings& settings, const QGCVideoStreamInfo* streamInfo, Role role);
+/// Primary priority: trimmed full URI override, advertised stream, manual source. Thermal ignores the override and
+/// manual source. nullopt when there is none. Reads only its arguments; never changes the user's settings.
+std::optional<VideoReceiver::Config> resolve(const Settings& settings, const QGCVideoStreamInfo* streamInfo, Role role,
+                                             const QString& uriOverride = {});
 
 /// The display sink settings: GPU zero-copy unless the CPU path or a software decoder is forced.
 VideoReceiver::DisplayConfig displayConfig(const Settings& settings);

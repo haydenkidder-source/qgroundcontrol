@@ -7,6 +7,7 @@
 #include <QtCore/QTimer>
 
 #include "AudioOutput.h"
+#include "COPVideoSession.h"
 #include "Fact.h"
 #include "GeoFenceManager.h"
 #include "MissionItem.h"
@@ -21,6 +22,11 @@
 #include "VideoManager.h"
 
 namespace {
+[[nodiscard]] QString copVideoSettingsKey(quint32 sysid)
+{
+    return QStringLiteral("COP/Video/%1").arg(sysid);
+}
+
 // QSettings may restore old integer variants or decimal strings from an INI file.
 quint32 savedSystemId(const QVariant& value)
 {
@@ -94,8 +100,13 @@ COPVehicle::COPVehicle(quint32 sysid, VehicleRoleController* roles, QObject* par
     : QObject(parent)
     , _sysid(sysid)
     , _roles(roles)
-    , _videoUri(QSettings().value(QStringLiteral("COP/Video/%1").arg(sysid)).toString())
+    , _videoUri(savedVideoUri(sysid))
 {}
+
+QString COPVehicle::savedVideoUri(quint32 sysid)
+{
+    return QSettings().value(copVideoSettingsKey(sysid)).toString().trimmed();
+}
 
 void COPVehicle::setVideoUri(const QString& uri)
 {
@@ -104,8 +115,10 @@ void COPVehicle::setVideoUri(const QString& uri)
         return;
     }
     _videoUri = value;
-    QSettings().setValue(QStringLiteral("COP/Video/%1").arg(_sysid), value);
+    QSettings().setValue(copVideoSettingsKey(_sysid), value);
     emit videoUriChanged();
+    auto* plugin = QGCCorePlugin::instance();
+    emit plugin->primaryVideoUriOverrideChanged();
 }
 
 QString COPVehicle::label() const
@@ -410,6 +423,8 @@ void COPController::_vehicleRemoved(Vehicle* vehicle)
     }
     if (auto* entry = _find(vehicle->id()); entry && entry->vehicle() == vehicle) {
         entry->setVehicle(nullptr);
+        auto* plugin = QGCCorePlugin::instance();
+        emit plugin->primaryVideoUriOverrideChanged();
         disconnect(vehicle, nullptr, this, nullptr);
         disconnect(vehicle->vehicleLinkManager(), nullptr, this, nullptr);
         notify(tr("%1 disconnected. The screen shows its last known position and mode, not live data.")
@@ -431,6 +446,9 @@ void COPController::selectVehicle(quint32 sysid)
     _requestedVehicle.clear();
     _activeBeforeRemoval.clear();
     _pendingSysid = 0;
+    if (_selectedSysid == 0 && sysid != 0) {
+        COPVideoSession::disableAll();
+    }
     _selectedSysid = sysid;
     if (sysid == 0) {
         VideoManager::instance()->stopVideo();

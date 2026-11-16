@@ -42,6 +42,8 @@ public:
 
     QString videoUri() const { return _videoUri; }
 
+    [[nodiscard]] static QString savedVideoUri(quint32 sysid);
+
     void setVideoUri(const QString& uri);
 
     Vehicle* vehicle() const { return _vehicle; }

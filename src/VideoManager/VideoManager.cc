@@ -113,6 +113,8 @@ VideoManager::VideoManager(QObject* parent)
                    &VideoManager::telemetryOverlayTextChanged);
 
     _connectSettings();
+    (void) connect(QGCCorePlugin::instance(), &QGCCorePlugin::primaryVideoUriOverrideChanged, this,
+                   &VideoManager::_updateState);
     _updateState();
 }
 
@@ -467,10 +469,13 @@ void VideoManager::_updateState()
     }
 
     const QString videoSource = _videoSettings->videoSource()->rawValue().toString();
+    const QString uriOverride = QGCCorePlugin::instance()->primaryVideoUriOverride(_activeVehicle).trimmed();
+    _primaryStream->setUriOverride(uriOverride);
     const bool standardReceivers = QGCCorePlugin::instance()->startStandardVideoReceivers();
     const bool streamWanted =
         standardReceivers && _videoSettings->streamEnabled()->rawValue().toBool() && !_disabledWhileDisarmed;
-    const bool autoStreamConfigured = VideoStreamResolver::isAutoStream(_primaryStream->streamInfo());
+    const bool autoStreamConfigured =
+        !uriOverride.isEmpty() || VideoStreamResolver::isAutoStream(_primaryStream->streamInfo());
     const bool isStreamSource = VideoStreamResolver::isNetworkSource(videoSource) || autoStreamConfigured;
     const bool cameraSource = streamWanted && !isStreamSource;
     if (cameraSource) {

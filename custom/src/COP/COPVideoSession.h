@@ -45,6 +45,8 @@ public:
     void setEnabled(bool enabled);
     /// Permanently stops this session while application event delivery is still available.
     void shutdown();
+    /// Releases tile endpoints synchronously before standard receivers can start.
+    static void disableAll();
 
 private:
     friend class COPVideoSessionTest;
