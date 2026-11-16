@@ -26,7 +26,17 @@ void APMStreamRateTest::_testBackoffAndRecovery()
     TestFixtures::MavCommandAckTimeoutFixture shortAckTimeout(50);
     ignoreLogMessage("Vehicle.MavCommandQueue", QtWarningMsg,
                      QRegularExpression("Giving up sending command after max retries: MAV_CMD_SET_MESSAGE_INTERVAL"));
-    _mockLink->setCommLost(true);
+    // Deliver traffic already queued by the worker so no late heartbeat starts discovery after this snapshot.
+    simulateCommLoss(true);
+    const bool gimbalRequestPending = _vehicle->isMavCommandPending(MAV_COMP_ID_AUTOPILOT1, MAV_CMD_REQUEST_MESSAGE);
+    if (gimbalRequestPending) {
+        // Discovery starts on a heartbeat after initialConnectComplete. Cutting off its reply deliberately
+        // exhausts retries; entries sent before shortAckTimeout retain their original ACK timeout.
+        expectLogMessage(
+            "Vehicle.MavCommandQueue", QtWarningMsg,
+            QRegularExpression(QStringLiteral("^\"Giving up sending command after max retries: "
+                                              "MAV_CMD_REQUEST_MESSAGE message: GIMBAL_MANAGER_INFORMATION\"$")));
+    }
 
     QElapsedTimer elapsed;
     elapsed.start();
@@ -53,6 +63,12 @@ void APMStreamRateTest::_testBackoffAndRecovery()
             }
         }
     });
+
+    if (gimbalRequestPending) {
+        QTRY_VERIFY_WITH_TIMEOUT(!_vehicle->isMavCommandPending(MAV_COMP_ID_AUTOPILOT1, MAV_CMD_REQUEST_MESSAGE),
+                                 TestTimeout::mediumMs());
+        verifyExpectedLogMessage();
+    }
 
     // No incoming messages are needed to drive retries. Test-mode intervals are one tenth of production.
     QTRY_VERIFY_WITH_TIMEOUT(attempts.size() >= 5, TestTimeout::longMs());
