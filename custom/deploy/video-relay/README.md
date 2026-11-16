@@ -62,22 +62,28 @@ On each vehicle Pi, from the repository root, run through `sudo` as the intended
 
 ```bash
 cd custom/deploy/video-relay/
-sudo ./vehicle-setup.sh
+sudo bash vehicle-setup.sh --unit 3
+# Equivalent environment-variable form:
+sudo UNIT=3 bash vehicle-setup.sh
 ```
 
 This installs GStreamer and camera tools, adds the invoking account to the `video` group, writes
-`/usr/local/bin/vehicle-stream.sh` and enables and starts `vehicle-stream.service`. The account
-comes from `SUDO_USER`, falling back to `root` if unset or empty. An existing
-`/etc/vehicle-stream.env` is preserved. Check that file's camera settings and set `DEST_PORT`
-to `5600 + N` for this vehicle's unit before using its stream; the default is 5602.
+`/usr/local/bin/vehicle-stream.sh` and enables and starts `vehicle-stream.service` after validating
+the unit and port. The account comes from `SUDO_USER`, falling back to `root` if unset or empty.
+Use this vehicle's unit `N` (2-254, plain decimal digits without leading zeros; unit 1 is the GCS).
+The `--unit N` flag takes precedence over `UNIT=N`. A new `/etc/vehicle-stream.env` gets
+`DEST_PORT` set to `5600 + N` (5603 for unit 3); other defaults are unchanged. Check camera settings.
 Never leave two vehicles sending to the same port.
 
-> **Known limitation (change planned):** With a new environment file, the installer starts the
-> stream immediately using the example `DEST_PORT=5602` until `DEST_PORT` is set for this unit;
-> on any vehicle other than unit 2, this briefly sends video to unit 2's port. The project owner
-> decided on 2026-11-16 that the installer will be changed to require the unit number before
-> starting the stream, before the next field test. Until then, set `DEST_PORT` to `5600 + N`
-> right after the installer finishes, as instructed above.
+> **Unit required before streaming:** Without a flag or variable, terminal input prompts once.
+> Invalid input exits with status 2 before package installation or file writes. Without terminal
+> input or a unit, setup also exits with status 2 and usage text before changes, except when an
+> environment file exists and the service is already enabled or active: that re-run updates the
+> wrapper and unit, prints the existing `DEST_PORT`, and preserves the enabled/active state without
+> enabling or starting anything. An existing environment file is always preserved. With a unit,
+> its `DEST_PORT` must match `5600 + N`; a mismatch exits with status 2 before changes, reports both
+> ports and the file path, and leaves service state unchanged. Edit the file or remove it and
+> re-run with `--unit N`. A matching re-run enables and starts the service as usual.
 
 The wrapper applies `CAM_CTRLS` before starting GStreamer at every service start. It is a
 space-separated list of `name=value` V4L2 controls; if unset, it defaults to
