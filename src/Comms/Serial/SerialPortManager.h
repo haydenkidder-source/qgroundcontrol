@@ -3,6 +3,7 @@
 #include <chrono>
 #include <functional>
 #include <memory>
+#include <optional>
 
 #include <QtCore/QElapsedTimer>
 #include <QtCore/QHash>
@@ -36,11 +37,30 @@ public:
         QString physicalDeviceId = {};
         QString description = {};
         QString displayName = {};
+        std::optional<quint16> vendorIdentifier = {};
+        std::optional<quint16> productIdentifier = {};
     };
+
+    enum class OwnerKind
+    {
+        Unknown,
+        MAVLink,
+        GPSReceiver
+    };
+
+    struct Owner
+    {
+        OwnerKind kind = OwnerKind::Unknown;
+        QString label;
+        bool operator==(const Owner&) const = default;
+    };
+
+    static const char* ownerToken(OwnerKind kind);
 
     struct Reservation
     {
         QString systemLocation;
+        Owner owner;
     };
 
     using ReservationPtr = std::shared_ptr<const Reservation>;
@@ -69,13 +89,18 @@ public:
     QStringList serialPorts() const { return _serialPorts; }
 
     static QStringList supportedBaudRates();
-    ReservationPtr reservePort(const QString& systemLocation);
+    ReservationPtr reservePort(const QString& systemLocation, OwnerKind owner = OwnerKind::Unknown,
+                               const QString& label = {});
+    /// Value copies never extend a claim or exclusion lifetime.
+    std::optional<Owner> reservationInfo(const QString& systemLocation) const;
+    std::optional<Owner> exclusionInfo(const QString& systemLocation) const;
     bool canReservePort(const QString& systemLocation) const;
     bool isPortReserved(const QString& systemLocation) const;
     bool anyPortReserved() const;
 
     /// Routing exclusions survive reconnects without marking the hardware occupied.
-    ReservationPtr excludeFromAutoConnect(const QString& systemLocation);
+    ReservationPtr excludeFromAutoConnect(const QString& systemLocation, OwnerKind owner = OwnerKind::Unknown,
+                                          const QString& label = {});
     bool canAutoConnectPort(const QString& systemLocation) const;
     bool isAutoConnectExcluded(const QString& systemLocation) const;
 

@@ -43,6 +43,12 @@ QList<SerialPortManager::Port> SerialPortManager::_enumeratePorts()
                                         .arg(info.productIdentifier())
                                         .arg(info.serialNumber());
         }
+        if (info.hasVendorIdentifier()) {
+            port.vendorIdentifier = info.vendorIdentifier();
+        }
+        if (info.hasProductIdentifier()) {
+            port.productIdentifier = info.productIdentifier();
+        }
         port.description = info.description();
         port.systemLocation = info.systemLocation().trimmed();
         port.portName = info.portName().trimmed();
@@ -103,7 +109,8 @@ QString SerialPortManager::displayName(const QString& systemLocation)
     return {};
 }
 
-SerialPortManager::ReservationPtr SerialPortManager::reservePort(const QString& systemLocation)
+SerialPortManager::ReservationPtr SerialPortManager::reservePort(const QString& systemLocation, OwnerKind owner,
+                                                                 const QString& label)
 {
     const QString port = systemLocation.trimmed();
     if (!canReservePort(port)) {
@@ -112,7 +119,7 @@ SerialPortManager::ReservationPtr SerialPortManager::reservePort(const QString& 
     for (auto it = _reservations.begin(); it != _reservations.end();) {
         it = it.value().expired() ? _reservations.erase(it) : std::next(it);
     }
-    auto reservation = std::make_shared<const Reservation>(Reservation{port});
+    auto reservation = std::make_shared<const Reservation>(Reservation{port, {owner, label}});
     _reservations.insert(port, reservation);
     return reservation;
 }
@@ -138,7 +145,8 @@ bool SerialPortManager::canReservePort(const QString& systemLocation) const
            !(_singlePortOnly && anyPortReserved());
 }
 
-SerialPortManager::ReservationPtr SerialPortManager::excludeFromAutoConnect(const QString& systemLocation)
+SerialPortManager::ReservationPtr SerialPortManager::excludeFromAutoConnect(const QString& systemLocation,
+                                                                            OwnerKind owner, const QString& label)
 {
     const QString port = systemLocation.trimmed();
     if (port.isEmpty()) {
@@ -150,7 +158,7 @@ SerialPortManager::ReservationPtr SerialPortManager::excludeFromAutoConnect(cons
     if (auto existing = _autoConnectExclusions.value(port).lock()) {
         return existing;
     }
-    auto exclusion = std::make_shared<const Reservation>(Reservation{port});
+    auto exclusion = std::make_shared<const Reservation>(Reservation{port, {owner, label}});
     _autoConnectExclusions.insert(port, exclusion);
     return exclusion;
 }
@@ -218,4 +226,33 @@ QStringList SerialPortManager::supportedBaudRates()
 bool SerialPortManager::isAutoConnectExcluded(const QString& systemLocation) const
 {
     return !_autoConnectExclusions.value(systemLocation.trimmed()).expired();
+}
+
+const char* SerialPortManager::ownerToken(OwnerKind kind)
+{
+    switch (kind) {
+        case OwnerKind::MAVLink:
+            return "MAVLink";
+        case OwnerKind::GPSReceiver:
+            return "GPSReceiver";
+        case OwnerKind::Unknown:
+            return "unknown";
+    }
+    return "unknown";
+}
+
+std::optional<SerialPortManager::Owner> SerialPortManager::reservationInfo(const QString& systemLocation) const
+{
+    if (const auto reservation = _reservations.value(systemLocation.trimmed()).lock()) {
+        return reservation->owner;
+    }
+    return std::nullopt;
+}
+
+std::optional<SerialPortManager::Owner> SerialPortManager::exclusionInfo(const QString& systemLocation) const
+{
+    if (const auto exclusion = _autoConnectExclusions.value(systemLocation.trimmed()).lock()) {
+        return exclusion->owner;
+    }
+    return std::nullopt;
 }

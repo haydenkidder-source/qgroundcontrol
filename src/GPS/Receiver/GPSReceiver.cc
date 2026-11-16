@@ -347,7 +347,9 @@ QStringList GPSReceiver::rtkReceiverPorts() const
 
 GPSSerialClaim GPSReceiver::claimSerialPort(const QString& device)
 {
-    GPSSerialClaim claim = _serialPorts ? _serialPorts->reservePort(device) : nullptr;
+    GPSSerialClaim claim = _serialPorts ? _serialPorts->reservePort(device, SerialPortManager::OwnerKind::GPSReceiver,
+                                                                    QStringLiteral("GNSS receiver"))
+                                        : nullptr;
     if (claim) {
         _serialClaims.insert(device, claim);
     }

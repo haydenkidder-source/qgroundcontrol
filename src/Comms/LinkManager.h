@@ -5,6 +5,7 @@
 #include <memory>
 
 #include <QtCore/QList>
+#include <QtCore/QMap>
 #include <QtCore/QMutex>
 #include <QtCore/QMutexLocker>
 #include <QtCore/QStringList>
@@ -48,6 +49,21 @@ public:
 
     void init();
 
+    enum class AutoConnectReason
+    {
+        AutoConnectOff,
+        HasLink,
+        Suppressed,
+        NeverStarted,
+        RetryPending,
+        RetryEnabled,
+        ReservationFailed,
+        InvalidSerialConfiguration,
+        NoMavlinkChannel,
+        DispatchFailed
+    };
+    static const char* autoConnectReasonToken(AutoConnectReason reason);
+
     /// Create/Edit Link Configuration
     Q_INVOKABLE LinkConfiguration *createConfiguration(int type, const QString &name);
     Q_INVOKABLE LinkConfiguration *startConfigurationEditing(LinkConfiguration *config);
@@ -74,10 +90,10 @@ public:
 
     /// Sets the flag to suspend the all new connections
     ///     @param reason User visible reason to suspend connections
-    void setConnectionsSuspended(const QString &reason) { _connectionsSuspended = true; _connectionsSuspendedReason = reason; }
+    void setConnectionsSuspended(const QString& reason);
 
     /// Sets the flag to allow new connections to be made
-    void setConnectionsAllowed() { _connectionsSuspended = false; }
+    void setConnectionsAllowed();
 
     bool connectionsSuspended() const { return _connectionsSuspended; }
 
@@ -132,10 +148,23 @@ private:
     void _addUDPAutoConnectLink();
     void _addMAVLinkForwardingLink();
     void _reconnectAutoConnectLinks();
+    void _recordRetryGate(const LinkConfiguration* config, AutoConnectReason reason);
+    static void _logCreationFailure(const LinkConfiguration* config, AutoConnectReason reason);
+    static QString _diagnosticConfiguration(const LinkConfiguration* config);
     /// (Re)connects a timer-driven dynamic UDP link, reusing its config so reconnect backoff applies
     void _retryDynamicUdpLink(const QString& name, const std::function<void(UDPConfiguration&)>& configure);
     SharedLinkConfigurationPtr _findDynamicUdpConfiguration(const QString& name) const;
 
+    QMap<const LinkConfiguration*, AutoConnectReason> _retryGateStates;
+#ifndef QGC_NO_SERIAL_LINK
+    struct SerialConnectionState
+    {
+        bool connected = false;
+        bool intentionalDisconnect = false;
+    };
+
+    QMap<const LinkInterface*, SerialConnectionState> _serialConnectionStates;
+#endif
     QTimer *_portListTimer = nullptr;
     QmlObjectListModel *_qmlConfigurations = nullptr;
     AutoConnectSettings *_autoConnectSettings = nullptr;
