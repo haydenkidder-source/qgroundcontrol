@@ -407,6 +407,8 @@ if(QGC_BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/test/AppLogViewerUITest.h
             ${CMAKE_CURRENT_SOURCE_DIR}/test/COPControllerTest.cc
             ${CMAKE_CURRENT_SOURCE_DIR}/test/COPControllerTest.h
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/COPSerialNoticesUITest.cc
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/COPSerialNoticesUITest.h
             ${CMAKE_CURRENT_SOURCE_DIR}/test/PlanStyleTest.cc
             ${CMAKE_CURRENT_SOURCE_DIR}/test/PlanStyleTest.h
             ${CMAKE_CURRENT_SOURCE_DIR}/test/PlanStyleUITest.cc
@@ -492,6 +494,21 @@ if(QGC_BUILD_TESTING)
         COPControllerTest
         LABELS
         Unit
+    )
+    cmake_language(
+        DEFER
+        DIRECTORY
+        "${CMAKE_SOURCE_DIR}"
+        CALL
+        add_qgc_test
+        COPSerialNoticesUITest
+        LABELS
+        Integration
+        Comms
+        QML
+        NoSanitizer
+        SHARDS
+        3
     )
     cmake_language(
         DEFER

@@ -1,7 +1,13 @@
 #pragma once
 
+#include <functional>
+
 #include "CommsTest.h"
 #include "LinkConfiguration.h"
+#ifndef QGC_NO_SERIAL_LINK
+#include "SerialPortManager.h"
+struct SerialOpenOutcome;
+#endif
 
 class LinkManager;
 
@@ -10,6 +16,18 @@ class LinkManager;
 class LinkManagerTest : public CommsTest
 {
     Q_OBJECT
+
+public:
+#ifndef QGC_NO_SERIAL_LINK
+    // Shared observation fixtures for the custom serial-notice UI tests.
+    static SharedLinkInterfacePtr _serialNoticeLink(LinkManager& manager, SharedLinkConfigurationPtr& config,
+                                                    bool allocateChannel = false);
+    static void reportSerialConnected(LinkInterface* link);
+    static void observeSerialPorts(LinkManager& manager, const QList<SerialPortManager::Port>& ports);
+    static void reportSerialOpenFailure(LinkManager& manager, LinkConfiguration* config,
+                                        const SerialOpenOutcome& outcome);
+    static std::function<quint64()> exchangeSerialNoticeClock(LinkManager& manager, std::function<quint64()> clock);
+#endif
 
 private slots:
     void _testRetryGateDiagnostics();
@@ -68,9 +86,6 @@ private slots:
     void _testDynamicUdpLinkIgnoresSameNamedUserLink();
 
 private:
-#ifndef QGC_NO_SERIAL_LINK
-    SharedLinkInterfacePtr _serialNoticeLink(LinkManager& manager, SharedLinkConfigurationPtr& config);
-#endif
     SharedLinkConfigurationPtr _addMockConfig(const QString &name, bool dynamic, bool autoConnect);
     void _reconnect();
     void _expectUdpBindFailureLogs();

@@ -195,6 +195,23 @@ void COPVehicle::_snapshot()
     emit stateChanged();
 }
 
+bool COPVehicle::serialTransportDisconnected() const
+{
+    return _serialTransport && (!_lastPrimaryLink || !_lastPrimaryLink->isConnected());
+}
+
+void COPVehicle::_rememberPrimaryLink()
+{
+    const auto primary = _vehicle ? _vehicle->vehicleLinkManager()->primaryLink().lock() : nullptr;
+    // Removal clears the primary before vehicleRemoved; keep its transport kind for that notification.
+    if (primary) {
+        _lastPrimaryLink = primary.get();
+#ifndef QGC_NO_SERIAL_LINK
+        _serialTransport = primary->linkConfiguration()->type() == LinkConfiguration::TypeSerial;
+#endif
+    }
+}
+
 void COPVehicle::setVehicle(Vehicle* vehicle)
 {
     if (_vehicle == vehicle) {
@@ -209,6 +226,11 @@ void COPVehicle::setVehicle(Vehicle* vehicle)
     }
     _vehicle = vehicle;
     if (vehicle) {
+        _lastPrimaryLink.clear();
+        _serialTransport = false;
+        _rememberPrimaryLink();
+        connect(vehicle->vehicleLinkManager(), &VehicleLinkManager::primaryLinkChanged, this,
+                &COPVehicle::_rememberPrimaryLink);
         connect(vehicle->vehicleLinkManager(), &VehicleLinkManager::communicationLostChanged, this,
                 &COPVehicle::stateChanged);
         connect(vehicle, &QObject::destroyed, this, [this]() { emit stateChanged(); });
@@ -370,11 +392,16 @@ void COPController::_vehicleAdded(Vehicle* vehicle)
                    .arg(entry->label()));
     });
     connect(links, &VehicleLinkManager::communicationLostChanged, this, [this, entry, relayTimer](bool lost) {
-        if (lost) {
-            notify(
-                tr("Lost contact with %1. The map shows where it was last seen. It will reconnect on its own when the "
-                   "radio link returns.")
-                    .arg(entry->label()));
+        if (lost && !entry->serialTransportDisconnected()) {
+            if (entry->serialTransport()) {
+                notify(tr("Lost contact with %1. The map shows where it was last seen. The serial port is open; "
+                          "check vehicle power and the radio link.")
+                           .arg(entry->label()));
+            } else {
+                notify(tr("Lost contact with %1. The map shows where it was last seen. "
+                          "It will reconnect on its own when the radio link returns.")
+                           .arg(entry->label()));
+            }
         }
         Vehicle* current = entry->vehicle();
         if (!lost && current && _pendingSysid == entry->sysid()) {
@@ -412,8 +439,10 @@ void COPController::_vehicleRemoved(Vehicle* vehicle)
         entry->setVehicle(nullptr);
         disconnect(vehicle, nullptr, this, nullptr);
         disconnect(vehicle->vehicleLinkManager(), nullptr, this, nullptr);
-        notify(tr("%1 disconnected. The screen shows its last known position and mode, not live data.")
-                   .arg(entry->label()));
+        // Physical serial loss is alerted by the actionable S2 transition, including delayed escalation.
+        _appendMessage(tr("%1 disconnected. The screen shows its last known position and mode, not live data.")
+                           .arg(entry->label()),
+                       !entry->serialTransport());
     }
     connect(vehicle, &QObject::destroyed, this, [this]() {
         _activeBeforeRemoval.clear();
@@ -493,6 +522,11 @@ void COPController::cancelControl()
 
 void COPController::notify(const QString& message)
 {
+    _appendMessage(message, true);
+}
+
+void COPController::_appendMessage(const QString& message, bool requestAlert)
+{
     if (message.trimmed().isEmpty()) {
         return;
     }
@@ -508,6 +542,14 @@ void COPController::notify(const QString& message)
     }
     _unacknowledged = true;
     emit messagesChanged();
+    if (requestAlert) {
+        alert();
+    }
+}
+
+void COPController::alert()
+{
+    emit attentionRequested();
     AudioOutput::instance()->say(tr("New operator notification"));
 }
 

@@ -61,12 +61,45 @@ and turn the border orange. Acknowledgement clears the highlight and retains the
 200 messages as read history.
 Existing confirmation dialogs retain their original behavior.
 
+## Serial connection notices
+
+Active serial connection notices sit above the timestamped history in their own scroll area.
+Each row identifies the link/device and port and wraps the core notice's explanation and remedy.
+New actionable transitions expand the footer, turn its border orange and request the same audio
+alert as other operator notifications. Retries and resolution are silent. Notices already present
+when the footer loads appear immediately, without replaying audio.
+
+**Open Comm Links** opens Application Settings > Comm Links. A verified GNSS owner also offers
+**Open GNSS Receiver**, which opens that settings page. Both respect the main window's navigation
+validation; opening a page does not acknowledge a notice or change connection policy.
+**Dismiss** hides that transition by acknowledging it; it does not stop retries or fix the link.
+A different blocker or escalation can show the same incident again. The footer stays expanded
+while any active notice is unacknowledged, even after ordinary messages are acknowledged or
+history overflows. Buttons wrap onto another line when needed.
+
+A row disappears when dismissed, resolved by the core model (verified serial connection or
+applicable policy correction), explicitly disconnected, or its configuration is removed.
+Discovery rows also disappear when the device detaches; a saved-link loss can remain while
+the device is absent. Resolved serial incidents remain in the core's separate 32-entry history;
+the footer does not add restoration messages to the ordinary history or claim telemetry recovery.
+
+A physical serial disconnection retains the ordinary vehicle-disconnected message about last
+known state, silently: the serial notice supplies the recovery alert and actions, including the
+core's delayed escalation when automatic retry is eligible. Heartbeat loss while the serial port
+is still open instead advises checking vehicle power and the radio link, without promising
+unconditional reconnection. Non-serial vehicle loss and disconnection alerts are unchanged.
+
 ## Verification
 
 `COPControllerTest` covers role labels, persistent ordering, selection and pending control,
 notification bounds/acknowledgement, and valid/corrupt RTCM station coordinates.
 `COPVehicleLifecycleTest` covers a MockLink disconnect/reconnect with retained state and a
 pending control request. Both are compiled only in test builds and registered from `custom/`.
+
+`COPSerialNoticesUITest` covers the rendered reason/action catalogue, guarded settings navigation,
+startup notices, dismissal, transition audio requests, independent history bounds, minimisation,
+multiple devices, resolution, real Linux PTY open failures/recovery, serial vehicle loss coupling,
+and the empty stock footer hook. It is registered with Integration, Comms, QML and NoSanitizer labels.
 
 Hardware validation should include two distinct simultaneous feeds, switching between COP
 and FlyView, link loss/reconnection, and an actual NTRIP stream containing station coordinates.
