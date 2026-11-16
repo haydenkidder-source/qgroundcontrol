@@ -36,6 +36,8 @@ public:
 
     bool isConnected() const override { return _connected; }
 
+    bool allocateChannel() { return _allocateMavlinkChannel(); }
+
     void markOpenWithoutSignal() { _connected = true; }
 
     void reportConnected()
@@ -70,15 +72,43 @@ SerialPortManager::Port serialNoticeTestPort(const QString& path, QGCSerialPortI
 }
 }  // namespace
 
-SharedLinkInterfacePtr LinkManagerTest::_serialNoticeLink(LinkManager& manager, SharedLinkConfigurationPtr& config)
+SharedLinkInterfacePtr LinkManagerTest::_serialNoticeLink(LinkManager& manager, SharedLinkConfigurationPtr& config,
+                                                          bool allocateChannel)
 {
     auto link = std::make_shared<SerialNoticeTestLink>(config);
+    if (allocateChannel && !link->allocateChannel()) {
+        return nullptr;
+    }
     config->setLink(link);
     manager._rgLinks.append(link);
     manager._serialConnectionStates.insert(link.get(), {});
     (void) connect(link.get(), &LinkInterface::connected, &manager, &LinkManager::_linkConnected);
     (void) connect(link.get(), &LinkInterface::disconnected, &manager, &LinkManager::_linkDisconnected);
     return link;
+}
+
+void LinkManagerTest::reportSerialConnected(LinkInterface* link)
+{
+    static_cast<SerialNoticeTestLink*>(link)->reportConnected();
+}
+
+void LinkManagerTest::observeSerialPorts(LinkManager& manager, const QList<SerialPortManager::Port>& ports)
+{
+    manager._updateSerialNotices(ports);
+}
+
+void LinkManagerTest::reportSerialOpenFailure(LinkManager& manager, LinkConfiguration* config,
+                                              const SerialOpenOutcome& outcome)
+{
+    manager._serialOpenFailed(config, outcome);
+}
+
+std::function<quint64()> LinkManagerTest::exchangeSerialNoticeClock(LinkManager& manager,
+                                                                    std::function<quint64()> clock)
+{
+    auto previous = manager._serialNoticeClock;
+    manager._serialNoticeClock = std::move(clock);
+    return previous;
 }
 
 void LinkManagerTest::_testSerialNoticeLoss_data()

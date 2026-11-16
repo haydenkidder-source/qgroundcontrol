@@ -224,6 +224,7 @@ void LinkPreferenceControllerTest::_armedConnectionCanReturn()
                                  .value(links->linkNames().indexOf(QStringLiteral("UDP")), QStringLiteral("missing"))
                                  .isEmpty(),
                              TestTimeout::longMs());
+    QVERIFY2(_waitForPreferredReady(vehicle), "Preferred link ready after armed recovery");
     _preference->evaluateForTesting(114);
     QCOMPARE(links->primaryLinkName(), QStringLiteral("RFD"));
     _preference->evaluateForTesting(115);
@@ -269,6 +270,7 @@ void LinkPreferenceControllerTest::_returnStatusAndNotifications()
              QStringLiteral("Return paused while a parameter, mission, fence, rally or signing transfer is running."));
     QCOMPARE(links->primaryLinkName(), QStringLiteral("RFD"));
     parameters->setPendingWritesForTest(false);
+    QVERIFY2(_waitForPreferredReady(vehicle), "Preferred link ready after status-test parameter write");
     QTRY_COMPARE_WITH_TIMEOUT(_roles->linkReturnStatus(sysid), QStringLiteral("Using UDP, the preferred link."),
                               TestTimeout::shortMs());
     QCOMPARE(links->primaryLinkName(), QStringLiteral("UDP"));
@@ -342,6 +344,7 @@ void LinkPreferenceControllerTest::_statusObserverCanPauseReturn()
     QCOMPARE(_roles->linkReturnStatus(vehicle->id()),
              QStringLiteral("Return paused while a parameter, mission, fence, rally or signing transfer is running."));
     parameters->setPendingWritesForTest(false);
+    QVERIFY2(_waitForPreferredReady(vehicle), "Preferred link ready after observer pause");
     QTRY_COMPARE_WITH_TIMEOUT(vehicle->vehicleLinkManager()->primaryLinkName(), QStringLiteral("UDP"),
                               TestTimeout::shortMs());
 }
@@ -386,6 +389,7 @@ void LinkPreferenceControllerTest::_settleFailoverFailbackAndSecondaryChoice()
         return index >= 0 && links->linkStatuses().value(index, QStringLiteral("missing")).isEmpty();
     };
     QTRY_VERIFY_WITH_TIMEOUT(healthy(), TestTimeout::longMs());
+    QVERIFY2(_waitForPreferredReady(vehicle), "Preferred link ready after failover recovery");
     _preference->evaluateForTesting(114);
     QCOMPARE(links->primaryLinkName(), QStringLiteral("RFD"));
     _preference->evaluateForTesting(115);
@@ -448,6 +452,7 @@ void LinkPreferenceControllerTest::_lostAndOtherVehicleLinksAreNeverSelected()
                                  .value(links->linkNames().indexOf(QStringLiteral("UDP")), QStringLiteral("missing"))
                                  .isEmpty(),
                              TestTimeout::longMs());
+    QVERIFY2(_waitForPreferredReady(vehicle), "Preferred link ready after restoring this vehicle's preference");
     _preference->evaluateForTesting(3015);
     QCOMPARE(links->primaryLinkName(), QStringLiteral("UDP"));
     QCOMPARE(other->vehicleLinkManager()->primaryLinkName(), otherPrimary);
@@ -523,6 +528,7 @@ void LinkPreferenceControllerTest::_repickCurrentPrimary()
                 .value(links->linkNames().indexOf(QStringLiteral("UDP")), QStringLiteral("missing"))
                 .isEmpty(),
             TestTimeout::longMs());
+        QVERIFY2(_waitForPreferredReady(vehicle), "Preferred link ready after repick recovery");
         _preference->evaluateForTesting(105);
         deadline = 115;
     }
@@ -594,6 +600,7 @@ void LinkPreferenceControllerTest::_physicalDisconnectWaitsForBackoff()
     _preferred = _startLink(QStringLiteral("UDP"), vehicle->id());
     QVERIFY(_preferred);
     QTRY_COMPARE_WITH_TIMEOUT(links->linkNames().size(), 2, TestTimeout::longMs());
+    QVERIFY2(_waitForPreferredReady(vehicle), "Preferred link ready after first physical re-attach");
     _preference->evaluateForTesting(114);
     QCOMPARE(links->primaryLinkName(), QStringLiteral("RFD"));
     _preference->evaluateForTesting(115);
@@ -603,6 +610,7 @@ void LinkPreferenceControllerTest::_physicalDisconnectWaitsForBackoff()
     _preferred = _startLink(QStringLiteral("UDP"), vehicle->id());
     QVERIFY(_preferred);
     QTRY_COMPARE_WITH_TIMEOUT(links->linkNames().size(), 2, TestTimeout::longMs());
+    QVERIFY2(_waitForPreferredReady(vehicle), "Preferred link ready after second physical re-attach");
     _preference->evaluateForTesting(144);
     QCOMPARE(links->primaryLinkName(), QStringLiteral("RFD"));
     _preference->evaluateForTesting(145);
@@ -641,6 +649,7 @@ void LinkPreferenceControllerTest::_transferBusyAtDeadline()
     } else {
         QTRY_VERIFY_WITH_TIMEOUT(!plans[transfer]->inProgress(), TestTimeout::longMs());
     }
+    QVERIFY2(_waitForPreferredReady(vehicle), "Preferred link ready after deadline transfer");
     _preference->evaluateForTesting(4);
     QCOMPARE(links->primaryLinkName(), QStringLiteral("UDP"));
 }
@@ -688,6 +697,7 @@ void LinkPreferenceControllerTest::_signingPendingAtDeadline()
     QVERIFY(!facade->signingStatus().pending());
     QVERIFY(!statusChanges.isEmpty());
     QVERIFY(signing->clearSigning());
+    QVERIFY2(_waitForPreferredReady(vehicle), "Preferred link ready after signing cancellation");
     // Completion must trigger a queued reevaluation at the same deadline, without advancing the test clock.
     QTRY_COMPARE_WITH_TIMEOUT(links->primaryLinkName(), QStringLiteral("UDP"), TestTimeout::shortMs());
 }

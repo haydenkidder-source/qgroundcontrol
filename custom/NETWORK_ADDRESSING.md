@@ -31,8 +31,9 @@ Use the same role numbers on every unit. Assign a unique IP address to every dev
 | `.3` to `.9` | Reserved for other network gear |
 | `.100` and up | Operator laptops and test devices |
 
-The GCS unmanaged switch is planned as `.5` (`10.0.1.5`); this is a reserved assignment, not a
-claim that it is configured. Apply the same netmask to any switch management address.
+The GCS switch is described as unmanaged, so it needs no management IP address. Reserve `.5`
+(`10.0.1.5`) for switch management if a managed switch is used; this address is not configured.
+Apply the same netmask to any switch management address.
 
 Generic examples:
 

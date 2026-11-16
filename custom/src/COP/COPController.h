@@ -12,6 +12,8 @@
 #include "Vehicle.h"
 #include "VehicleRoleController.h"
 
+class LinkInterface;
+
 class COPVehicle : public QObject
 {
     Q_OBJECT
@@ -83,6 +85,10 @@ public:
 
     void setVehicle(Vehicle* vehicle);
 
+    bool serialTransport() const { return _serialTransport; }
+
+    bool serialTransportDisconnected() const;
+
     /// Set by COPController when this entry is first remembered; not user-editable.
     void setColorIndex(int index);
 
@@ -96,6 +102,7 @@ signals:
 
 private:
     void _snapshot();
+    void _rememberPrimaryLink();
     /// Re-reads mission/geofence/rally data from the vehicle's managers into the cached lists
     /// below and emits planDataChanged(). Called once per actual reload rather than on every
     /// property read, since geofence circles in particular are only readable by copying each
@@ -104,6 +111,8 @@ private:
     quint32 _sysid;
     QPointer<VehicleRoleController> _roles;
     QPointer<Vehicle> _vehicle;
+    QPointer<LinkInterface> _lastPrimaryLink;
+    bool _serialTransport = false;
     QGeoCoordinate _coordinate;
     QString _flightMode;
     QString _videoUri;
@@ -155,13 +164,17 @@ public:
     Q_INVOKABLE void cancelControl();
     Q_INVOKABLE void notify(const QString& message);
     Q_INVOKABLE void acknowledge();
+    /// Use the operator-notification audio path without appending a history message.
+    Q_INVOKABLE void alert();
 
 signals:
     void entriesChanged();
     void selectionChanged();
     void messagesChanged();
+    void attentionRequested();
 
 private:
+    void _appendMessage(const QString& message, bool requestAlert);
     COPVehicle* _find(quint32 sysid) const;
     COPVehicle* _remember(quint32 sysid);
     void _vehicleAdded(Vehicle* vehicle);

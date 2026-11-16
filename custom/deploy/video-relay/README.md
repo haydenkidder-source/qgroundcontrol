@@ -72,6 +72,13 @@ comes from `SUDO_USER`, falling back to `root` if unset or empty. An existing
 to `5600 + N` for this vehicle's unit before using its stream; the default is 5602.
 Never leave two vehicles sending to the same port.
 
+> **Known limitation (change planned):** With a new environment file, the installer starts the
+> stream immediately using the example `DEST_PORT=5602` until `DEST_PORT` is set for this unit;
+> on any vehicle other than unit 2, this briefly sends video to unit 2's port. The project owner
+> decided on 2026-11-16 that the installer will be changed to require the unit number before
+> starting the stream, before the next field test. Until then, set `DEST_PORT` to `5600 + N`
+> right after the installer finishes, as instructed above.
+
 The wrapper applies `CAM_CTRLS` before starting GStreamer at every service start. It is a
 space-separated list of `name=value` V4L2 controls; if unset, it defaults to
 `exposure_dynamic_framerate=0` to prevent low-light frame-rate reduction. Set `CAM_CTRLS=""`
