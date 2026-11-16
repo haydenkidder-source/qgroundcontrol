@@ -472,6 +472,10 @@ if(QGC_BUILD_TESTING)
         Integration
         Vehicle
         NoSanitizer
+        TIMEOUT
+        180
+        SHARDS
+        3
     )
     cmake_language(
         DEFER

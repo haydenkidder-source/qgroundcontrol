@@ -610,6 +610,7 @@ bool planStyleEditorProjected(QQuickItem* map)
 
 void PlanStyleUITest::init()
 {
+    initQuickStyle();
     _savedMapPosition = QGroundControlQmlGlobal::flightMapPosition();
     _savedMapZoom = QGroundControlQmlGlobal::flightMapZoom();
     _savedAdvancedUI = QGCCorePlugin::instance()->showAdvancedUI();

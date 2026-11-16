@@ -156,17 +156,19 @@ QQuickItem* QmlUITestBase::findVisibleItem(QQuickItem* root, const QString& obje
     }
 }
 
-void QmlUITestBase::startUI()
+void QmlUITestBase::initQuickStyle()
 {
-    // Initialise subsystems needed for the full QML UI
-    // setStyle() must only be called once per process; subsequent calls after
-    // any QML engine has loaded produce an "must be called before loading QML"
-    // warning that would trip the strict-mode log check.
     static bool s_styleSet = false;
     if (!s_styleSet) {
         QQuickStyle::setStyle("Basic");
         s_styleSet = true;
     }
+}
+
+void QmlUITestBase::startUI()
+{
+    // Initialise subsystems needed for the full QML UI
+    initQuickStyle();
     QGCCorePlugin::instance()->init();
     MAVLinkProtocol::instance()->init();
     MultiVehicleManager::instance()->init();
