@@ -1,5 +1,10 @@
 #include "QmlUITestBase.h"
 
+#include <cstdio>
+#include <execinfo.h>
+#include <mutex>
+#include <unistd.h>
+
 #include <QtCore/QCoreApplication>
 #include <QtCore/QDeadlineTimer>
 #include <QtCore/QElapsedTimer>
@@ -38,6 +43,37 @@
 static constexpr int kSettleDrainMs = 100;
 
 namespace {
+
+std::mutex qmlUiAmpHandlerMutex;
+QtMessageHandler qmlUiAmpPreviousHandler = nullptr;
+
+void qmlUiAmpMessageHandler(QtMsgType type, const QMessageLogContext& context, const QString& message)
+{
+    QtMessageHandler original;
+    {
+        const std::lock_guard lock(qmlUiAmpHandlerMutex);
+        original = qmlUiAmpPreviousHandler;
+    }
+    const bool invalidFunctionContext =
+        message.contains(QStringLiteral("invalid context"), Qt::CaseInsensitive);
+    const bool invalidCallLater =
+        message.contains(QStringLiteral("Qt.callLater: first argument not a function or signal")) ||
+        (message.contains(QStringLiteral("Qt.callLater")) &&
+         (message.contains(QStringLiteral("invalid context"), Qt::CaseInsensitive) ||
+          message.contains(QStringLiteral("invalid QML context"), Qt::CaseInsensitive)));
+    if (invalidFunctionContext || invalidCallLater) {
+        std::fprintf(stderr, "\n[amp-trap] %s\n", message.toLocal8Bit().constData());
+        std::fflush(stderr);
+        void* frames[128];
+        const int frameCount = ::backtrace(frames, 128);
+        ::backtrace_symbols_fd(frames, frameCount, STDERR_FILENO);
+    }
+
+    // UnitTest::initTestCase installs the capture handler before this wrapper is installed.
+    if (original) {
+        original(type, context, message);
+    }
+}
 
 class QmlFileOverrideInterceptor : public QQmlAbstractUrlInterceptor
 {
@@ -155,6 +191,23 @@ QQuickItem* QmlUITestBase::findVisibleItem(QQuickItem* root, const QString& obje
         }
         QTest::qWait(static_cast<int>(qMin(pollIntervalMs, deadline.remainingTime())));
     }
+}
+
+void QmlUITestBase::initTestCase()
+{
+    UnitTest::initTestCase();
+    // Publish the previous handler before another thread can enter the newly installed wrapper.
+    const std::lock_guard lock(qmlUiAmpHandlerMutex);
+    qmlUiAmpPreviousHandler = qInstallMessageHandler(qmlUiAmpMessageHandler);
+}
+
+void QmlUITestBase::cleanupTestCase()
+{
+    {
+        const std::lock_guard lock(qmlUiAmpHandlerMutex);
+        (void) qInstallMessageHandler(qmlUiAmpPreviousHandler);
+    }
+    UnitTest::cleanupTestCase();
 }
 
 void QmlUITestBase::initQuickStyle()

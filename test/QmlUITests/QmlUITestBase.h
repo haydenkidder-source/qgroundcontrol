@@ -46,6 +46,9 @@ public:
 
 protected slots:
 
+    void initTestCase() override;
+    void cleanupTestCase() override;
+
     void cleanup() override
     {
         _verifyFileDialogTestHookConsumed();
