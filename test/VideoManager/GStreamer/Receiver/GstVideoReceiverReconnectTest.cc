@@ -13,6 +13,7 @@ using GstReceiverTest::FileFormat;
 using GstReceiverTest::kFirstReconnectDelayMs;
 using GstReceiverTest::kNoReconnectWindowMs;
 using GstReceiverTest::kShortWatchdogTimeout;
+using GstReceiverTest::kTimerToleranceMs;
 using GstReceiverTest::loopbackUri;
 using GstReceiverTest::Receiver;
 using GstReceiverTest::State;
@@ -54,8 +55,7 @@ void GstVideoReceiverReconnectTest::_testReconnectBacksOffAfterFailedStart()
                      QRegularExpression(QStringLiteral("^GStreamer error from ")));
     expectLogMessage("Video.GStreamer.GstVideoReceiver", QtWarningMsg,
                      QRegularExpression(QStringLiteral("^Failed to start")));
-    // Timed from the start, which fails at once: the retry comes at least the first reconnect delay later however
-    // late this thread sees the state changes.
+    // Timed before the failed start, so startup and signal delivery can only lengthen the measured retry delay.
     QElapsedTimer clock;
     clock.start();
     stream.receiver->setActive(true);
@@ -66,7 +66,8 @@ void GstVideoReceiverReconnectTest::_testReconnectBacksOffAfterFailedStart()
     portBlocker.close();
     QVERIFY(stream.waitForState(State::Connecting));
     const qint64 retry = clock.elapsed();
-    QVERIFY2(retry >= kFirstReconnectDelayMs, qPrintable(QStringLiteral("retried after %1 ms").arg(retry)));
+    QVERIFY2(retry >= (kFirstReconnectDelayMs - kTimerToleranceMs),
+             qPrintable(QStringLiteral("retried after %1 ms").arg(retry)));
     QVERIFY(stream.errorSpy.isEmpty());
 }
 

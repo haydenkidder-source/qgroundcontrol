@@ -64,6 +64,8 @@ inline constexpr std::chrono::seconds kWatchdogTimeout{5};
 inline constexpr std::chrono::seconds kShortWatchdogTimeout{1};
 // The first reconnect follows a failure after 1 s.
 inline constexpr qint64 kFirstReconnectDelayMs = 1000;
+// Windows timer granularity can make a precise timer's delay measure a few milliseconds short.
+inline constexpr qint64 kTimerToleranceMs = 50;
 // GUI-thread delivery of the worker's reports lags by up to an event-loop pass, more so on a loaded host.
 inline constexpr qint64 kSignalLatencySlackMs = 200;
 // A window that shows a reconnect would have started: the first one follows a failure after kFirstReconnectDelayMs.
