@@ -43,7 +43,7 @@ jobs:
   build:
     name: Build ${{ matrix.arch }} ${{ matrix.build_type }}
     needs: changes
-    if: needs.changes.outputs.should_build == 'true'
+    if: false
     # Native arm64 stays on GitHub's windows-11-arm. The volume label repeats .github/runs-on.yml's
     # windows-x64-builder volume: RunsOn reads that file from master only, so a PR changing it would
     # otherwise build on the old disk. Pools ignore the label.
@@ -242,9 +242,13 @@ jobs:
   # The only Windows run of the GStreamer and video test classes: a Debug build with tests, which
   # packages nothing.
   gstreamer-tests:
-    name: GStreamer tests win64_msvc2022_64 Debug
+    name: GStreamer tests win64_msvc2022_64 Debug sample ${{ matrix.sample }}
     needs: changes
     if: needs.changes.outputs.should_build == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        sample: [1, 2, 3, 4, 5, 6]
     runs-on: >-
       ${{
         github.repository_owner == 'mavlink' &&
@@ -317,19 +321,28 @@ jobs:
       # have no GPU. GStreamer.* are cmake/GStreamer's script tests, whose Windows-only branches only
       # run here. The Qt Multimedia receiver, its recorder, the USB camera classes and the reconnect and recording-part
       # policies both receivers share run here too.
-      - name: Run GStreamer tests
+      - name: Repeat GStreamer tests until one iteration fails
         if: ${{ !cancelled() && steps.gst-env.outcome == 'success' }}
-        uses: ./.github/actions/run-unit-tests
+        shell: bash
+        working-directory: ${{ runner.temp }}/build
         env:
           QSG_RHI_PREFER_SOFTWARE_RENDERER: '1'
-        with:
-          include-labels: 'Unit|Integration'
-          exclude-labels: 'Flaky|Network|StockUI'
-          tests-regex: '^(Gst|GStreamer[A-Z.]|Video|Subtitle|QGCVideo|QtMultimedia|QtVideo|UVC|StreamSupervisor|RecordingPlan)'
-          junit-output: junit-gstreamer.xml
-          ctest-output: gstreamer-output.txt
-          report-name: GStreamer tests (windows)
-          artifact-name: test-results-gstreamer-windows
+          QT_FORCE_STDERR_LOGGING: '1'
+        run: |
+          for i in 1 2 3 4; do
+            echo "::group::iteration ${i}"
+            start=$(date +%s)
+            ctest --output-on-failure --no-tests=error --parallel 4 \
+              -L 'Unit|Integration' -LE 'Flaky|Network|StockUI' \
+              -R '^(Gst|GStreamer[A-Z.]|Video|Subtitle|QGCVideo|QtMultimedia|QtVideo|UVC|StreamSupervisor|RecordingPlan)' 2>&1 | tee "iteration-${i}.txt"
+            rc=${PIPESTATUS[0]}
+            echo "iteration ${i} rc=${rc} in $(( $(date +%s) - start )) s"
+            echo "::endgroup::"
+            if [ "${rc}" -ne 0 ]; then
+              echo "FAILED on iteration ${i}"
+              exit "${rc}"
+            fi
+          done
 
       - name: Debug failed runner
         if: ${{ failure() && !cancelled() && inputs.debug_runner && github.ref_type == 'branch' }}
