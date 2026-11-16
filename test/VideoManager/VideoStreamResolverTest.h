@@ -9,6 +9,9 @@ class VideoStreamResolverTest : public UnitTest
 private slots:
     void _testResolve_data();
     void _testResolve();
+    void _testUriOverride_data();
+    void _testUriOverride();
+    void _testStockPluginDefault();
     void _testStreamSettingsPassThrough();
     void _testDisplayConfig_data();
     void _testDisplayConfig();

@@ -45,6 +45,26 @@ public:
         _release();
     }
 
+    bool holdWorker(QThread* workerThread)
+    {
+        if (!workerThread || _released) {
+            return false;
+        }
+        const auto state = std::make_shared<State>();
+        state->helper = new QObject;
+        state->helper->moveToThread(workerThread);
+        (void) connect(workerThread, &QThread::finished, state->helper.data(), &QObject::deleteLater);
+        state->queued = QMetaObject::invokeMethod(
+            state->helper.data(),
+            [state] {
+                state->entered.release();
+                state->resume.acquire();
+            },
+            Qt::QueuedConnection);
+        _states.append(state);
+        return state->queued;
+    }
+
     bool entered() const
     {
         return !_states.isEmpty() && std::ranges::all_of(_states, [](const auto& state) {
@@ -56,8 +76,8 @@ public:
     {
         bool queued = !_states.isEmpty();
         for (const auto& state : _states) {
-            // This worker marker follows connectLink and any requested cancellation. Its main-thread
-            // marker also follows the queued connected/disconnected deliveries to UDPLink.
+            // This worker marker follows all previously queued operations. Its main-thread marker
+            // also follows their queued signal deliveries to UDPLink.
             queued =
                 state->helper &&
                 QMetaObject::invokeMethod(
@@ -90,18 +110,7 @@ protected:
                 if (!workerThread) {
                     return;
                 }
-                const auto state = std::make_shared<State>();
-                state->helper = new QObject;
-                state->helper->moveToThread(workerThread);
-                (void) connect(workerThread, &QThread::finished, state->helper.data(), &QObject::deleteLater);
-                state->queued = QMetaObject::invokeMethod(
-                    state->helper.data(),
-                    [state] {
-                        state->entered.release();
-                        state->resume.acquire();
-                    },
-                    Qt::QueuedConnection);
-                _states.append(state);
+                (void) holdWorker(workerThread);
             });
         }
         return QObject::eventFilter(watched, event);
@@ -541,6 +550,61 @@ void LinkManagerTest::_testCreateConnectedLinkTwiceCreatesOneLink()
     QCOMPARE(registeredCount, qsizetype{1});
     QVERIFY(disconnected);
     QVERIFY(portFree);
+}
+
+void LinkManagerTest::_testUdpWriteQueuedAfterDisconnectIsSilent()
+{
+    Fact* const sendHeartbeat = SettingsManager::instance()->mavlinkSettings()->sendGCSHeartbeat();
+    const QVariant oldSendHeartbeat = sendHeartbeat->rawValue();
+    const auto restoreHeartbeat =
+        qScopeGuard([sendHeartbeat, oldSendHeartbeat] { sendHeartbeat->setRawValue(oldSendHeartbeat); });
+    sendHeartbeat->setRawValue(false);
+
+    QUdpSocket peer;
+    QVERIFY(peer.bind(QHostAddress::LocalHost, 0, QAbstractSocket::DontShareAddress));
+    const quint16 port = _unusedUdpPort();
+    QVERIFY(port);
+    SharedLinkConfigurationPtr config = _addUdpConfig(QStringLiteral("QueuedWriteDisconnectUdp"), port);
+    const auto cleanupConfig = qScopeGuard([this, config] { _cleanupUdpConfig(config); });
+    auto* const udpConfig = qobject_cast<UDPConfiguration*>(config.get());
+    QVERIFY(udpConfig);
+    udpConfig->addHost(QStringLiteral("127.0.0.1"), peer.localPort());
+    QVERIFY(linkManager()->createConnectedLink(config));
+    QTRY_VERIFY_WITH_TIMEOUT(config->link() && config->link()->isConnected(), TestTimeout::mediumMs());
+    const SharedLinkInterfacePtr link = linkManager()->sharedLinkInterfacePointerForLink(config->link());
+    QVERIFY(link);
+    QSignalSpy errorSpy(link.get(), &LinkInterface::communicationError);
+    QSignalSpy sentSpy(link.get(), &LinkInterface::bytesSent);
+    QVERIFY(errorSpy.isValid());
+    QVERIFY(sentSpy.isValid());
+
+    const QByteArray payload("udp-queued-write");
+    link->writeBytesThreadSafe(payload.constData(), static_cast<int>(payload.size()));
+    QTRY_VERIFY_WITH_TIMEOUT(peer.hasPendingDatagrams(), TestTimeout::mediumMs());
+    QCOMPARE(peer.receiveDatagram().data(), payload);
+    QTRY_COMPARE_WITH_TIMEOUT(sentSpy.count(), 1, TestTimeout::mediumMs());
+
+    auto* const workerThread = link->findChild<QThread*>();
+    QVERIFY(workerThread);
+    LinkManagerUdpStartupGate workerGate(false);
+    QVERIFY(workerGate.holdWorker(workerThread));
+    QTRY_VERIFY_WITH_TIMEOUT(workerGate.entered(), TestTimeout::mediumMs());
+
+    // Keep the connected state visible to the producer until D and W are both queued.
+    linkManager()->disconnectLinkConfiguration(config.get());
+    QVERIFY(link->isConnected());
+    link->writeBytesThreadSafe(payload.constData(), static_cast<int>(payload.size()));
+    QVERIFY(workerGate.releaseAndDrain());
+    QTRY_VERIFY_WITH_TIMEOUT(workerGate.drained(), TestTimeout::mediumMs());
+
+    QCOMPARE(errorSpy.count(), 0);
+    QCOMPARE(sentSpy.count(), 1);
+    QVERIFY(!link->isConnected());
+    QTRY_VERIFY_WITH_TIMEOUT(_udpLinksForConfig(config).isEmpty() && !config->link() && !config->linkActive(),
+                             TestTimeout::mediumMs());
+    linkManager()->removeConfiguration(config.get());
+    QVERIFY(!linkManager()->containsConfiguration(config->name()));
+    QVERIFY(_udpPortIsFree(port));
 }
 
 void LinkManagerTest::_testUdpDisconnectWithTrafficAndLearnedTarget()

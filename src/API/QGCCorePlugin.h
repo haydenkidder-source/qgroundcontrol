@@ -122,7 +122,7 @@ public:
     virtual bool showAllVehiclePlans() const { return true; }
 
     /// Optional plan presentation policy; a null result means stock styling.
-    virtual QGCPlanStyle* planStyle() const { return nullptr; }
+    [[nodiscard]] virtual QGCPlanStyle* planStyle() const { return nullptr; }
 
     /// @return An instance of an alternate position source (or NULL if not available)
     virtual QGeoPositionInfoSource *createPositionSource(QObject *parent) { Q_UNUSED(parent); return nullptr; }
@@ -149,6 +149,10 @@ public:
 
     /// False while a custom view owns the network video endpoints.
     virtual bool startStandardVideoReceivers() const { return true; }
+
+    /// Optional full URI for the active vehicle's primary preview, ahead of advertised and manual sources.
+    /// Empty means stock resolution. Emit primaryVideoUriOverrideChanged when the assignment changes.
+    [[nodiscard]] virtual QString primaryVideoUriOverride(Vehicle* /*vehicle*/) const { return {}; }
 
     /// Allows the plugin to see all mavlink traffic to a vehicle
     /// @return true: Allow vehicle to continue processing, false: Vehicle should not process message
@@ -265,6 +269,7 @@ public:
     static constexpr int kFirstRunPromptIdsFirstCustomId = 10000;
 
 signals:
+    void primaryVideoUriOverrideChanged();
     void operatorNotification(const QString& message);
     void showTouchAreasChanged(bool showTouchAreas);
     void showAdvancedUIChanged(bool showAdvancedUI);

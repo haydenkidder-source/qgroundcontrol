@@ -14,25 +14,25 @@ class CustomPlanStyle : public QGCPlanStyle
 public:
     explicit CustomPlanStyle(QObject* parent = nullptr);
 
-    qreal missionLineWidth() const final { return 4; }
+    [[nodiscard]] qreal missionLineWidth() const final { return 4; }
 
-    qreal boundaryLineWidth() const final { return 3; }
+    [[nodiscard]] qreal boundaryLineWidth() const final { return 3; }
 
-    QVariantList keepInDashPattern() const final { return {6.0, 3.0}; }
+    [[nodiscard]] QVariantList keepInDashPattern() const final { return {6.0, 3.0}; }
 
-    QVariantList keepOutDashPattern() const final { return {2.0, 2.0}; }
+    [[nodiscard]] QVariantList keepOutDashPattern() const final { return {2.0, 2.0}; }
 
-    QColor keepOutFillColor() const final;
+    [[nodiscard]] QColor keepOutFillColor() const final;
 
-    QString rallyShape() const final { return QStringLiteral("diamond"); }
+    [[nodiscard]] QString rallyShape() const final { return QStringLiteral("diamond"); }
 
-    QColor markerBorderColor() const final { return QColor(Qt::white); }
+    [[nodiscard]] QColor markerBorderColor() const final { return QColor(Qt::white); }
 
-    qreal markerBorderWidth() const final { return 2; }
+    [[nodiscard]] qreal markerBorderWidth() const final { return 2; }
 
-    QColor markerTextColor() const final { return QColor(Qt::black); }
+    [[nodiscard]] QColor markerTextColor() const final { return QColor(Qt::black); }
 
-    QColor vehicleColor(quint32 sysid) const final;
+    [[nodiscard]] QColor vehicleColor(quint32 sysid) const final;
 
     /// Attach the engine's existing registry; null detaches without changing its entries.
     void attachRegistry(COPController* controller);

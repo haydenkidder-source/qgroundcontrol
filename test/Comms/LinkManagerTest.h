@@ -78,6 +78,7 @@ private slots:
     void _testUdpRemoveConfigurationWhilePendingDoesNotOrphan();
     void _testCreateConnectedLinkTwiceCreatesOneLink_data();
     void _testCreateConnectedLinkTwiceCreatesOneLink();
+    void _testUdpWriteQueuedAfterDisconnectIsSilent();
     void _testUdpDisconnectWithTrafficAndLearnedTarget();
     void _testUdpAutoConnectStartedLinkDisconnectSuppresses();
     void _testUdpAutoConnectBindFailureReusesConfig();

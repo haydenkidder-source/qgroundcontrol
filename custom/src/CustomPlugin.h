@@ -92,11 +92,12 @@ public:
     /// Adds the Exclusion Zones review/approve/push page and the App Log Viewer to the Analyze view.
     const QVariantList& analyzePages() final;
     bool startStandardVideoReceivers() const final;
+    [[nodiscard]] QString primaryVideoUriOverride(Vehicle* vehicle) const final;
 
     /// A vehicle's page shows only that vehicle's plan; COP overlays are the place to compare plans.
     bool showAllVehiclePlans() const final { return false; }
 
-    QGCPlanStyle* planStyle() const final;
+    [[nodiscard]] QGCPlanStyle* planStyle() const final;
     QUrl navigationHeader() const final;
     QUrl flyViewOverlay() const final;
     QUrl notificationFooter() const final;

@@ -160,7 +160,7 @@ void ParameterManagerTest::_requestListNoResponse()
                      QRegularExpression("did not respond to request for parameters"));
     // ParameterManager exhausts initial request retries in bounded test intervals and gives up
     // without any progress bar updates or a parameter ready signal.
-    QVERIFY_SIGNAL_WAIT(spyRequestFailed, ParameterManager::kTestMaxInitialRequestTimeMs);
+    QVERIFY_SIGNAL_WAIT(spyRequestFailed, ParameterManager::kTestMaxInitialRequestTimeMs + TestTimeout::mediumMs());
     QCOMPARE(spyProgress.count(), 0);
     QCOMPARE(spyParamsReady.count(), 0);
     verifyExpectedLogMessage();

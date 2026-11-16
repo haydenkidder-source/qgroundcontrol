@@ -39,6 +39,7 @@ private:
     Vehicle* _startPair(quint32 sysid = 4294967295U, bool productionClock = false);
     /// The vehicle keeps loading parameters after its initial connect; the controller waits for that, so must a test.
     bool _waitUntilIdle(Vehicle* vehicle);
+    bool _waitForPreferredReady(Vehicle* vehicle);
 
     QTemporaryDir _directory;
     QVariant _savePath;

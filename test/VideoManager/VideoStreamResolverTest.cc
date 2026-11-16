@@ -1,5 +1,7 @@
 #include "VideoStreamResolverTest.h"
 
+#include "QGCCorePlugin.h"
+#include "Vehicle.h"
 #include "VideoDecoderOptions.h"
 #include "VideoSettings.h"
 #include "VideoStreamResolver.h"
@@ -111,6 +113,79 @@ void VideoStreamResolverTest::_testResolve()
     QVERIFY(config.has_value());
     QCOMPARE(config->uri, expectedUri);
     QCOMPARE(config->timeout.count(), expectedTimeoutSec);
+}
+
+void VideoStreamResolverTest::_testUriOverride_data()
+{
+    QTest::addColumn<QString>("uriOverride");
+    QTest::addColumn<bool>("advertised");
+    QTest::addColumn<bool>("thermal");
+    QTest::addColumn<QString>("expectedUri");
+    QTest::addColumn<int>("timeoutSec");
+
+    for (const QString& uri : {QStringLiteral("rtsp://camera/assigned"), QStringLiteral("rtspt://camera/assigned"),
+                               QStringLiteral("udp://0.0.0.0:5602"), QStringLiteral("udp265://0.0.0.0:5602"),
+                               QStringLiteral("mpegts://0.0.0.0:5602"), QStringLiteral("tcp://camera:5602")}) {
+        QTest::newRow(qPrintable(uri)) << (QStringLiteral("  ") + uri + QStringLiteral(" \n")) << true << false << uri
+                                       << (uri.startsWith(QLatin1StringView("rtsp")) ? 12 : 3);
+    }
+    QTest::newRow("override without advertisement")
+        << QStringLiteral("rtsp://camera/assigned") << false << false << QStringLiteral("rtsp://camera/assigned") << 12;
+    QTest::newRow("empty uses advertisement")
+        << QString() << true << false << QStringLiteral("rtsp://camera/advertised") << 12;
+    QTest::newRow("blank uses advertisement")
+        << QStringLiteral(" \n\t ") << true << false << QStringLiteral("rtsp://camera/advertised") << 12;
+    QTest::newRow("empty uses manual") << QString() << false << false
+                                       << QStringLiteral("rtsp://user:pass@cam.local:554/manual") << 12;
+    QTest::newRow("blank uses manual") << QStringLiteral(" \n\t ") << false << false
+                                       << QStringLiteral("rtsp://user:pass@cam.local:554/manual") << 12;
+    QTest::newRow("thermal keeps advertisement")
+        << QStringLiteral("udp://0.0.0.0:5602") << true << true << QStringLiteral("rtsp://camera/advertised") << 12;
+    QTest::newRow("thermal stays unconfigured")
+        << QStringLiteral("rtsp://camera/assigned") << false << true << QString() << 0;
+}
+
+void VideoStreamResolverTest::_testUriOverride()
+{
+    QFETCH(QString, uriOverride);
+    QFETCH(bool, advertised);
+    QFETCH(bool, thermal);
+    QFETCH(QString, expectedUri);
+    QFETCH(int, timeoutSec);
+
+    auto settings = manualSettings(VideoSettings::videoSourceRTSP);
+    settings.lowLatency = true;
+    settings.rtpJitterLatencyMs = 150;
+    settings.autoReconnect = false;
+    const auto info = VideoTestHelpers::makeStreamInfo(VIDEO_STREAM_TYPE_RTSP, "rtsp://camera/advertised");
+    const auto config = VideoStreamResolver::resolve(settings, advertised ? info.get() : nullptr,
+                                                     thermal ? Role::Thermal : Role::Primary, uriOverride);
+    QCOMPARE(config.has_value(), !expectedUri.isEmpty());
+    if (config) {
+        QCOMPARE(config->uri, expectedUri);
+        QCOMPARE(config->timeout, std::chrono::seconds(timeoutSec));
+        QVERIFY(config->lowLatency);
+        QCOMPARE(config->rtpJitterLatencyMs, 150);
+        QVERIFY(!config->autoReconnect);
+    }
+}
+
+void VideoStreamResolverTest::_testStockPluginDefault()
+{
+    QGCCorePlugin plugin;
+    Vehicle vehicle(MAV_AUTOPILOT_PX4, MAV_TYPE_QUADROTOR);
+    QVERIFY(plugin.primaryVideoUriOverride(nullptr).isEmpty());
+    QVERIFY(plugin.primaryVideoUriOverride(&vehicle).isEmpty());
+    const auto settings = manualSettings(VideoSettings::videoSourceRTSP);
+    const auto info = VideoTestHelpers::makeStreamInfo(VIDEO_STREAM_TYPE_RTPUDP, "5601");
+    const auto advertised =
+        VideoStreamResolver::resolve(settings, info.get(), Role::Primary, plugin.primaryVideoUriOverride(&vehicle));
+    QVERIFY(advertised);
+    QCOMPARE(advertised->uri, QStringLiteral("udp://0.0.0.0:5601"));
+    const auto manual =
+        VideoStreamResolver::resolve(settings, nullptr, Role::Primary, plugin.primaryVideoUriOverride(nullptr));
+    QVERIFY(manual);
+    QCOMPARE(manual->uri, settings.rtspUrl);
 }
 
 void VideoStreamResolverTest::_testStreamSettingsPassThrough()

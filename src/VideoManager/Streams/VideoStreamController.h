@@ -59,6 +59,8 @@ public:
     /// The stream the camera advertises for this role, which takes precedence over the manual settings.
     void setStreamInfo(QGCVideoStreamInfo* streamInfo);
 
+    void setUriOverride(const QString& uri);
+
     /// The stream plays while it is enabled and configured().
     void setEnabled(bool enabled);
 
@@ -139,6 +141,7 @@ private:
     QPointer<QQuickItem> _videoOutput;
     /// The URI the receiver was last configured with.
     QString _uri;
+    QString _uriOverride;
     bool _enabled = false;
     bool _applyPending = false;
     bool _decoded = false;
