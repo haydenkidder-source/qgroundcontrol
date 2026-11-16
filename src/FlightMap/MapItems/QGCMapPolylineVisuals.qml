@@ -13,6 +13,9 @@ import QGroundControl.PlanView
 Item {
     id: _root
 
+    property var    planStyle: null
+    readonly property bool _styled: planStyle && planStyle.enabled
+
     property var    mapControl                  ///< Map control to place item in
     property var    mapPolyline                 ///< QGCMapPolyline object
     property bool   interactive:    mapPolyline.interactive
@@ -164,8 +167,9 @@ Item {
         id: polylineComponent
 
         MapPolyline {
-            line.width: mapPolyline.vertexDrag ? 3 : lineWidth
-            line.color: mapPolyline.vertexDrag ? "orange" : lineColor
+            objectName: "planPolyline"
+            line.width: _root._styled ? _root.planStyle.missionLineWidth : (mapPolyline.vertexDrag ? 3 : lineWidth)
+            line.color: _root._styled ? _root.planStyle.lineColor : (mapPolyline.vertexDrag ? "orange" : lineColor)
             path:       mapPolyline.vertexDrag ? mapPolyline.dragPath : mapPolyline.path
             visible:    _root.visible
             opacity:    _root.opacity
@@ -176,7 +180,7 @@ Item {
         id: splitHandleComponent
 
         MapQuickItem {
-            id:             mapQuickItem
+            id:             splitMapItem
             anchorPoint.x:  sourceItem.width / 2
             anchorPoint.y:  sourceItem.height / 2
             z:              _zorderSplitHandle
@@ -186,7 +190,7 @@ Item {
             property int vertexIndex
 
             sourceItem: SplitIndicator {
-                onClicked:  mapPolyline.splitSegment(mapQuickItem.vertexIndex)
+                onClicked:  mapPolyline.splitSegment(splitMapItem.vertexIndex)
             }
         }
     }
@@ -329,7 +333,7 @@ Item {
         id: dragHandleComponent
 
         MapQuickItem {
-            id:             mapQuickItem
+            id:             vertexMapItem
             anchorPoint.x:  dragHandle.width / 2
             anchorPoint.y:  dragHandle.height / 2
             z:              _zorderDragHandle

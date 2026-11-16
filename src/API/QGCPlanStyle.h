@@ -36,28 +36,28 @@ class QGCPlanStyle : public QObject
 public:
     explicit QGCPlanStyle(QObject* parent = nullptr);
 
-    int revision() const { return _revision; }
+    [[nodiscard]] int revision() const { return _revision; }
 
-    virtual qreal missionLineWidth() const { return 0; }
+    [[nodiscard]] virtual qreal missionLineWidth() const { return 0; }
 
-    virtual qreal boundaryLineWidth() const { return 0; }
+    [[nodiscard]] virtual qreal boundaryLineWidth() const { return 0; }
 
-    virtual QVariantList keepInDashPattern() const { return {}; }
+    [[nodiscard]] virtual QVariantList keepInDashPattern() const { return {}; }
 
-    virtual QVariantList keepOutDashPattern() const { return {}; }
+    [[nodiscard]] virtual QVariantList keepOutDashPattern() const { return {}; }
 
-    virtual QColor keepOutFillColor() const { return {}; }
+    [[nodiscard]] virtual QColor keepOutFillColor() const { return {}; }
 
-    virtual QString rallyShape() const { return {}; }
+    [[nodiscard]] virtual QString rallyShape() const { return {}; }
 
-    virtual QColor markerBorderColor() const { return {}; }
+    [[nodiscard]] virtual QColor markerBorderColor() const { return {}; }
 
-    virtual qreal markerBorderWidth() const { return 0; }
+    [[nodiscard]] virtual qreal markerBorderWidth() const { return 0; }
 
-    virtual QColor markerTextColor() const { return {}; }
+    [[nodiscard]] virtual QColor markerTextColor() const { return {}; }
 
     /// Invalid when the vehicle is unknown or there is no color registry; lookup never creates an entry.
-    Q_INVOKABLE virtual QColor vehicleColor(quint32 sysid) const;
+    [[nodiscard]] Q_INVOKABLE virtual QColor vehicleColor(quint32 sysid) const;
 
 signals:
     void revisionChanged();

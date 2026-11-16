@@ -404,7 +404,7 @@ void UDPWorker::writeData(const QByteArray &data)
 {
     ++_counters.writeCalls;
     if (!isConnected()) {
-        emit errorOccurred(tr("Could Not Send Data - Link is Disconnected!"));
+        qCDebug(UDPLinkLog) << "Write arrived after link disconnected; dropped";
         return;
     }
 
