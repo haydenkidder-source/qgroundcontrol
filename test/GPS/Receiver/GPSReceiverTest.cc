@@ -647,6 +647,12 @@ void GPSReceiverTest::_udpPositionOnlyReceiver()
     QTRY_VERIFY_WITH_TIMEOUT(sender.writeDatagram(stream, QHostAddress::LocalHost, port) == stream.size() &&
                                  receiver.acceptedPositionObservation(GPSObservation::PositionUse::GroundStation),
                              TestTimeout::mediumMs());
+    // GST can publish a usable position before GGA supplies altitude and satellite count.
+    const auto ggaReceived = [&receiver] {
+        const auto observation = receiver.acceptedPositionObservation(GPSObservation::PositionUse::Gga);
+        return observation && observation->satellitesUsed == 8;
+    };
+    QTRY_VERIFY_WITH_TIMEOUT(ggaReceived(), TestTimeout::mediumMs());
     const auto observation = receiver.acceptedPositionObservation(GPSObservation::PositionUse::Gga);
     QVERIFY(observation);
     QCOMPARE(observation->altitudeDatum, GPSAltitudeDatum::MeanSeaLevel);
