@@ -96,7 +96,7 @@ public:
     /// A vehicle's page shows only that vehicle's plan; COP overlays are the place to compare plans.
     bool showAllVehiclePlans() const final { return false; }
 
-    QGCPlanStyle* planStyle() const final;
+    [[nodiscard]] QGCPlanStyle* planStyle() const final;
     QUrl navigationHeader() const final;
     QUrl flyViewOverlay() const final;
     QUrl notificationFooter() const final;
