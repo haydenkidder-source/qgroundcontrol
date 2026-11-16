@@ -201,22 +201,29 @@ On each vehicle Pi, run the installer from the repository root:
 
 ```bash
 cd custom/deploy/video-relay/
-sudo ./vehicle-setup.sh
+sudo bash vehicle-setup.sh --unit 3
+# Equivalent environment-variable form:
+sudo UNIT=3 bash vehicle-setup.sh
 ```
 
-The installer writes the wrapper `/usr/local/bin/vehicle-stream.sh`, the environment file
-`/etc/vehicle-stream.env` (if absent), and the unit `vehicle-stream.service`. It enables and
-starts the service immediately, using the default destination port 5602 unless an existing
-environment file specifies another port. Set the vehicle's own port before using its stream;
-never leave two vehicles sending to the same port. At every service start, the wrapper applies
-camera controls before starting GStreamer; a control failure warns and streaming continues.
+Use this vehicle's unit `N` (2-254, plain decimal digits without leading zeros; unit 1 is the GCS).
+The `--unit N` flag takes precedence over `UNIT=N`. The installer writes the wrapper
+`/usr/local/bin/vehicle-stream.sh`, the environment file `/etc/vehicle-stream.env` (if absent),
+and the unit `vehicle-stream.service`. A new environment file gets `DEST_PORT` set to `5600 + N`
+(5603 for unit 3), then setup enables and starts the service. Never share a port between vehicles.
+At every service start, the wrapper applies camera controls before starting GStreamer;
+a control failure warns and streaming continues.
 
-> **Known limitation (change planned):** With a new environment file, the installer starts the
-> stream immediately on example port 5602 until `DEST_PORT` is changed, briefly sending video
-> from any vehicle other than unit 2 to unit 2's port. The project owner decided on 2026-11-16
-> that the installer will require the unit number before starting the stream, before the next
-> field test; until then, set `DEST_PORT` to `5600 + N` right after the installer finishes (see
-> the [installer note](deploy/video-relay/README.md#usage)).
+> **Unit required before streaming:** Without a flag or variable, terminal input prompts once.
+> Invalid input exits with status 2 before package installation or file writes. Without terminal
+> input or a unit, setup also exits with status 2 and usage text before changes, except when an
+> environment file exists and the service is already enabled or active: that re-run updates the
+> wrapper and unit, prints the existing `DEST_PORT`, and preserves the enabled/active state without
+> enabling or starting anything. An existing environment file is always preserved. With a unit,
+> its `DEST_PORT` must match `5600 + N`; a mismatch exits with status 2 before changes, reports both
+> ports and the file path, and leaves service state unchanged. Edit the file or remove it and
+> re-run with `--unit N`. A matching re-run enables and starts the service as usual; see the
+> [installer note](deploy/video-relay/README.md#usage).
 
 ### Vehicle environment file
 
@@ -224,7 +231,7 @@ Edit `/etc/vehicle-stream.env` for the vehicle. The installer preserves this fil
 exists, so check its contents even after rerunning setup. This example is for Vehicle A (unit 2):
 
 ```bash
-# Where to send (the GCS Pi) and which port. Port = 5600 + third octet of this vehicle's IP.
+# Where to send (the GCS Pi) and which port. Unit 2: port = 5600 + 2.
 DEST_HOST=10.0.1.2
 DEST_PORT=5602
 # Camera. Use a stable path from:  ls -l /dev/v4l/by-id/
@@ -337,8 +344,8 @@ Every service start reapplies `CAM_CTRLS` before GStreamer opens the camera. A c
 alone does not exit the wrapper or trigger a service restart.
 
 `RestartSec=3` restarts the pipeline three seconds after it exits, including when the camera is
-not ready at boot. The installer already enables and starts the service. After checking or
-changing the environment file, restart it and inspect its status and log:
+not ready at boot. Setup with a matching unit enables and starts the service. After checking
+or changing the environment file, restart it and inspect its status and log:
 
 ```bash
 sudo systemctl restart vehicle-stream.service
