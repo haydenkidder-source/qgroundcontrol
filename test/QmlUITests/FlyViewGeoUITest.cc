@@ -1034,6 +1034,8 @@ void FlyViewGeoUITest::_testZoomToMissionFromVehicle()
                 QTRY_VERIFY_WITH_TIMEOUT(adapter->property("pipMode").toBool(), kSettleTimeoutMs);
             }
 
+            // The initial download's delegates must finish before the reload retires their creation contexts.
+            QVERIFY2(waitForQmlIdle(), "Initial mission visuals are still incubating before reload");
             QSignalSpy newItemsSpy(planController->missionController(), &MissionController::newItemsFromVehicle);
             vehicle->missionManager()->loadFromVehicle();
             QVERIFY(newItemsSpy.wait(kItemAppearTimeoutMs));

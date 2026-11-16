@@ -67,6 +67,9 @@ protected:
     /// on return to propagate failures to the calling test slot.
     void startUI();
 
+    /// Finish pending incubation while creation contexts are still alive, cancelling deferred-deleted Loaders first.
+    bool waitForQmlIdle();
+
     /// Whether startUI() leaves the plugin's fly view overlay loaded. Overlays such as a plugin's
     /// retained-state page can cover the stock Fly View and absorb the clicks these tests send it,
     /// so the default is to run without one. Tests that exercise the overlay itself return true.

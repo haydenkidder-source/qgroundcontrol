@@ -3,6 +3,7 @@
 #include <QtCore/QCoreApplication>
 #include <QtCore/QDeadlineTimer>
 #include <QtCore/QElapsedTimer>
+#include <QtCore/QEvent>
 #include <QtCore/QEventLoop>
 #include <QtCore/QRegularExpression>
 #include <QtCore/QScopeGuard>
@@ -245,6 +246,24 @@ void QmlUITestBase::startUI()
     }
 }
 
+bool QmlUITestBase::waitForQmlIdle()
+{
+    return waitForCondition(
+        [this] {
+            // Loader removal invalidates its context before deleteLater destroys its children. Cancel those
+            // child incubators before manually resuming creation in a context which is already invalid.
+            QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+            QQmlIncubationController* const controller = _engine ? _engine->incubationController() : nullptr;
+            if (!controller) {
+                return true;
+            }
+            // Offscreen windows do not reliably drive the render-loop incubation controller themselves.
+            controller->incubateFor(50);
+            return controller->incubatingObjectCount() == 0;
+        },
+        TestTimeout::shortMs(), QStringLiteral("QML incubation complete"));
+}
+
 void QmlUITestBase::closeUIWindow()
 {
     if (_window) {
@@ -267,17 +286,9 @@ void QmlUITestBase::closeUIWindow()
 void QmlUITestBase::destroyUIEngine()
 {
     if (_engine) {
-        // Async incubation rides QQuickWindow's render-loop controller, which never
-        // pumps in offscreen mode, so pending incubators stall mid-creation and the
-        // engine warns "items still being created at engine destruction". Pump the
-        // controller directly until it drains so teardown is clean.
-        if (QQmlIncubationController* controller = _engine->incubationController()) {
-            QElapsedTimer drainTimer;
-            drainTimer.start();
-            while ((controller->incubatingObjectCount() > 0) && (drainTimer.elapsed() < 2000)) {
-                controller->incubateFor(50);
-                QCoreApplication::processEvents();
-            }
+        if (!waitForQmlIdle()) {
+            // Continue destroying the engine even if the drain failed.
+            QTest::qFail("QML incubation did not finish before engine teardown", __FILE__, __LINE__);
         }
 
         // Give asynchronous QML item creation/destruction a brief drain window
@@ -754,6 +765,10 @@ void QmlUITestBase::runWithMockLink(const std::function<MockLink*()>& factory,
         return;
 
     const auto cleanup = qScopeGuard([&] {
+        // Disconnect replaces mission models and unloads their delegates; finish creation before that boundary.
+        if (!waitForQmlIdle()) {
+            QTest::qFail("QML incubation did not finish before vehicle disconnect", __FILE__, __LINE__);
+        }
         disconnectMockLink(mockLink);
         closeUIWindow();
         destroyUIEngine();
