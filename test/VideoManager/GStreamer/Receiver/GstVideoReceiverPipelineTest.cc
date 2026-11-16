@@ -117,11 +117,13 @@ void GstVideoReceiverPipelineTest::_testDecodesMockLinkStreams()
     const GstDebugColorMode previousColor = gst_debug_get_color_mode();
     const QByteArray previousDebug = qgetenv("GST_DEBUG");
     const bool useQtLogger = !GStreamer::nativeDebugLogRequested();
+    GPrintFunc previousPrintErr = nullptr;
     std::vector<std::pair<GstDebugCategory*, GstDebugLevel>> previousThresholds;
     const auto restoreNativeLogging = qScopeGuard([&]() {
         if (!diagnoseH265) {
             return;
         }
+        g_set_printerr_handler(previousPrintErr);
         // QGC installs only a default threshold; preserve ambient GST_DEBUG rules and category overrides too.
         gst_debug_set_threshold_from_string(previousDebug.constData(), TRUE);
         gst_debug_set_default_threshold(previousDefault);
@@ -145,6 +147,9 @@ void GstVideoReceiverPipelineTest::_testDecodesMockLinkStreams()
             previousThresholds.emplace_back(category, gst_debug_category_get_threshold(category));
         }
         g_slist_free(categories);
+        // GStreamer's default log function prints through g_printerr(), which QGC redirects to a Qt warning that
+        // strict logging fails the row for; a null handler restores GLib's plain stderr output.
+        previousPrintErr = g_set_printerr_handler(nullptr);
         if (useQtLogger) {
             gst_debug_remove_log_function(GStreamer::qtGstLog);
             gst_debug_add_log_function(gst_debug_log_default, nullptr, nullptr);
