@@ -268,7 +268,7 @@ void GstVideoReceiverPipelineTest::_testDecodesMockLinkStreams()
         // Connecting lasts until the server sends. A server that already does can take the receiver on to
         // Streaming before this thread sees Connecting.
         QVERIFY(stream.waitForState(State::Connecting));
-        receiverUdpPort = stream.udpPort();
+        receiverUdpPort = stream.waitForUdpPort();
         QVERIFY(server.start(type, QStringLiteral("127.0.0.1"), receiverUdpPort));
         senderStartedMs = elapsed.elapsed();
     }

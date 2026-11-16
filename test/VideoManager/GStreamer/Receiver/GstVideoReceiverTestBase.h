@@ -156,17 +156,28 @@ struct Receiver
         return static_cast<quint16>(port);
     }
 
+    [[nodiscard]] quint16 waitForUdpPort() const
+    {
+        quint16 port = 0;
+        // A concurrent bin change can make the source lookup miss even after Connecting was reported.
+        if (!UnitTest::waitForCondition([this, &port] { return (port = udpPort()) != 0; },
+                                        TestTimeout::mediumDuration(), u"receiver UDP port")) {
+            return 0;
+        }
+        return port;
+    }
+
     /// Activates the receiver and, once its pipeline listens, starts sending to it.
     [[nodiscard]] bool startStreaming()
     {
         receiver->setActive(true);
-        return waitForState(State::Connecting) && sender.start(udpPort()) && waitForState(State::Streaming);
+        return resumeSending();
     }
 
     /// Sends to the port of the receiver's current pipeline, once it listens again.
     [[nodiscard]] bool resumeSending()
     {
-        return waitForState(State::Connecting) && sender.start(udpPort()) && waitForState(State::Streaming);
+        return waitForState(State::Connecting) && sender.start(waitForUdpPort()) && waitForState(State::Streaming);
     }
 
     /// Displays the stream in the visible window's VideoOutput.
