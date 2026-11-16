@@ -11,6 +11,7 @@ target_sources(
         LinkConfigurationTest.h
         LinkManagerTest.cc
         LinkManagerTest.h
+        LinkManagerSerialNoticesTest.cc
         LogReplayLinkControllerTest.cc
         LogReplayLinkControllerTest.h
         LogReplayLinkTest.cc

@@ -133,7 +133,13 @@ void SerialPortManagerTest::_displayMetadataUsesCachedInventory()
         return QList<SerialPortManager::Port>{port};
     });
     QSignalSpy enumerated(&ports, &SerialPortManager::portsEnumerated);
+    QVERIFY(ports.portSnapshot().isEmpty());
+    QCOMPARE(scans, 0);
     QCOMPARE(ports.displayName(port.systemLocation), port.displayName);
+    QCOMPARE(ports.portSnapshot().size(), 1);
+    QCOMPARE(ports.portSnapshot().first().displayName, port.displayName);
+    QCOMPARE(scans, 1);
+    QCOMPARE(enumerated.size(), 1);
     QCOMPARE(ports.displayName(port.portName), port.displayName);
     QVERIFY(ports.displayName(QStringLiteral("/test/missing")).isEmpty());
     QCOMPARE(scans, 1);

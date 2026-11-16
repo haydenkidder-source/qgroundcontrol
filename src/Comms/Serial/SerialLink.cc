@@ -137,6 +137,7 @@ SerialWorker::SerialWorker(SerialConnectionSettings settings, SerialPortManager:
     qCDebug(SerialLinkLog) << this;
 
     (void) qRegisterMetaType<QSerialPort::SerialPortError>("QSerialPort::SerialPortError");
+    (void) qRegisterMetaType<SerialOpenOutcome>();
 }
 
 SerialWorker::~SerialWorker()
@@ -180,7 +181,9 @@ void SerialWorker::connectToPort()
 
     _port->setPortName(_settings.portName);
 
+    _openOutcomeEmitted = false;
     if (_settings.bootloader) {
+        _reportOpenFailure(SerialOpenOutcome::Stage::Bootloader);
         qCWarning(SerialLinkLog) << "Not connecting to bootloader" << _port->portName();
         emit errorOccurred(tr("Not connecting to a bootloader"));
         _onPortDisconnected();
@@ -190,7 +193,11 @@ void SerialWorker::connectToPort()
     _errorEmitted = false;
 
     qCDebug(SerialLinkLog) << "Attempting to open port" << _port->portName();
-    if (!_port->open(QIODevice::ReadWrite)) {
+    _opening = true;
+    const bool opened = _port->open(QIODevice::ReadWrite);
+    _opening = false;
+    if (!opened) {
+        _reportOpenFailure(SerialOpenOutcome::Stage::Open);
         const bool busyAutoConnect = _settings.autoConnect && (_port->error() == QSerialPort::PermissionError ||
                                                                _port->error() == QSerialPort::DeviceNotFoundError);
         if (busyAutoConnect) {
@@ -211,6 +218,7 @@ void SerialWorker::connectToPort()
     }
 
     if (!_configurePort()) {
+        _reportOpenFailure(SerialOpenOutcome::Stage::Configuration);
         const QString error = _port->errorString();
         emit errorOccurred(tr("Could not configure port: %1").arg(error));
         _port->close();
@@ -298,6 +306,10 @@ void SerialWorker::_onPortBytesWritten(qint64 bytes) const
 
 void SerialWorker::_onPortErrorOccurred(QSerialPort::SerialPortError portError)
 {
+    // ResourceError closes synchronously below; queue its outcome before the disconnected delivery.
+    if (_opening && portError == QSerialPort::ResourceError) {
+        _reportOpenFailure(SerialOpenOutcome::Stage::Open);
+    }
     switch (portError) {
     case QSerialPort::NoError:
         qCDebug(SerialLinkLog) << "About to open port" << _port->portName();
@@ -330,6 +342,14 @@ void SerialWorker::checkPortAvailability(const QStringList& availablePorts)
 {
     if (isConnected() && !availablePorts.contains(_settings.portName)) {
         _port->close();
+    }
+}
+
+void SerialWorker::_reportOpenFailure(SerialOpenOutcome::Stage stage)
+{
+    if (!_openOutcomeEmitted) {
+        _openOutcomeEmitted = true;
+        emit openFailed({stage, _port->error(), _port->errorString(), _settings.autoConnect});
     }
 }
 
@@ -387,6 +407,7 @@ SerialLink::SerialLink(SharedLinkConfigurationPtr& config, SerialPortManager::Re
     (void) connect(_worker, &SerialWorker::dataReceived, this, &SerialLink::_onDataReceived, Qt::QueuedConnection);
     (void) connect(_worker, &SerialWorker::dataSent, this, &SerialLink::_onDataSent, Qt::QueuedConnection);
     (void) connect(_worker, &SerialWorker::errorOccurred, this, &SerialLink::_onErrorOccurred, Qt::QueuedConnection);
+    (void) connect(_worker, &SerialWorker::openFailed, this, &SerialLink::openFailed, Qt::QueuedConnection);
 
     (void) connect(SerialPortManager::instance(), &SerialPortManager::portsEnumerated, _worker,
                    &SerialWorker::checkPortAvailability, Qt::QueuedConnection);

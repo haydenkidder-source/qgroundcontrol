@@ -8,11 +8,17 @@
 #include <QtCore/QMap>
 #include <QtCore/QMutex>
 #include <QtCore/QMutexLocker>
+#include <QtCore/QPointer>
 #include <QtCore/QStringList>
 #include <QtQmlIntegration/QtQmlIntegration>
 
 #include "LinkConfiguration.h"
 #include "LinkInterface.h"
+#include "SerialConnectionNotice.h"
+#ifndef QGC_NO_SERIAL_LINK
+#include "SerialPortManager.h"
+struct SerialOpenOutcome;
+#endif
 
 class AutoConnectSettings;
 class LogReplayLink;
@@ -36,6 +42,8 @@ class LinkManager : public QObject
     Q_MOC_INCLUDE("LogReplayLink.h")
     Q_PROPERTY(bool isBluetoothAvailable READ isBluetoothAvailable NOTIFY isBluetoothAvailableChanged)
     Q_PROPERTY(QmlObjectListModel *linkConfigurations READ _qmlLinkConfigurations CONSTANT)
+    Q_PROPERTY(QmlObjectListModel* serialNotices READ serialNotices CONSTANT)
+    Q_PROPERTY(QmlObjectListModel* serialNoticeHistory READ serialNoticeHistory CONSTANT)
     Q_PROPERTY(QStringList linkTypeStrings READ linkTypeStrings CONSTANT)
     Q_PROPERTY(bool mavlinkSupportForwardingEnabled READ mavlinkSupportForwardingEnabled NOTIFY mavlinkSupportForwardingEnabledChanged)
 
@@ -48,6 +56,14 @@ public:
     static LinkManager *instance();
 
     void init();
+
+    QmlObjectListModel* serialNotices() const { return _serialNotices; }
+
+    QmlObjectListModel* serialNoticeHistory() const { return _serialNoticeHistory; }
+
+    Q_INVOKABLE void dismissSerialNotice(const QString& id);
+    static constexpr int SERIAL_NOTICE_HISTORY_CAP = 32;
+    static constexpr quint64 SERIAL_UNAVAILABLE_DELAY_US = 15'000'000;
 
     enum class AutoConnectReason
     {
@@ -131,6 +147,9 @@ public:
     static constexpr uint8_t invalidMavlinkChannel() { return std::numeric_limits<uint8_t>::max(); }
 
 signals:
+    /// Alerts fire once per actionable transition, including a different blocker after dismissal.
+    void serialNoticeRaised(const QString& id);
+    void serialNoticesChanged();
     void mavlinkSupportForwardingEnabledChanged();
     void isBluetoothAvailableChanged();
 
@@ -149,7 +168,7 @@ private:
     void _addMAVLinkForwardingLink();
     void _reconnectAutoConnectLinks();
     void _recordRetryGate(const LinkConfiguration* config, AutoConnectReason reason);
-    static void _logCreationFailure(const LinkConfiguration* config, AutoConnectReason reason);
+    void _logCreationFailure(LinkConfiguration* config, AutoConnectReason reason);
     static QString _diagnosticConfiguration(const LinkConfiguration* config);
     /// (Re)connects a timer-driven dynamic UDP link, reusing its config so reconnect backoff applies
     void _retryDynamicUdpLink(const QString& name, const std::function<void(UDPConfiguration&)>& configure);
@@ -163,11 +182,65 @@ private:
         bool intentionalDisconnect = false;
     };
 
+    struct SerialNoticeIncident
+    {
+        QPointer<LinkConfiguration> config;
+        const LinkConfiguration* configurationIdentity = nullptr;
+        QPointer<SerialConnectionNotice> notice;
+        QString id;
+        QString port;
+        QString name;
+        QString description;
+        quint64 generation = 0;
+        quint64 deadlineUs = 0;
+        bool lost = false;
+        bool escalated = false;
+        QString issue;
+        QString detail;
+        QString ownerKey;
+    };
+
+    struct SerialAttachment
+    {
+        SerialPortManager::Port port;
+        quint64 generation = 0;
+    };
+
+    SerialNoticeIncident& _serialIncident(LinkConfiguration* config);
+    void _updateSerialNotices(const QList<SerialPortManager::Port>& ports);
+    void _refreshSerialIncident(SerialNoticeIncident& incident);
+    void _serialOpenFailed(LinkConfiguration* config, const SerialOpenOutcome& outcome);
+    void _serialReservationFailed(LinkConfiguration* config);
+    void _serialLost(LinkConfiguration* config, AutoConnectReason recovery);
+    void _raiseSerialNotice(SerialNoticeIncident& incident, const QString& reason, const QString& detail = {},
+                            const QString& ownerKey = {});
+    void _resolveSerialNotice(SerialNoticeIncident& incident, const QString& text);
+    void _forgetSerialNotice(const QString& key);
+    void _forgetSerialConfiguration(const LinkConfiguration* config);
+    void _serialConnected(LinkConfiguration* config);
+    bool _serialRecoveryEligible(const LinkConfiguration* config) const;
+    bool _currentSerialAttachment(const LinkConfiguration* config) const;
+    bool _verifiedSerialConnection(const LinkConfiguration* config) const;
+    bool _serialNoticeSuppressed(const QString& port) const;
+    QString _serialNoticeText(const SerialNoticeIncident& incident, const QString& reason) const;
+    void _trimSerialNoticeHistory();
+
     QMap<const LinkInterface*, SerialConnectionState> _serialConnectionStates;
+    QMap<QString, SerialNoticeIncident> _serialNoticeIncidents;
+    QMap<const LinkConfiguration*, QString> _serialConfigurationKeys;
+    QMap<const LinkConfiguration*, quint64> _serialConfigurationGenerations;
+    QMap<QString, SerialAttachment> _serialAttachments;
+    QSet<QString> _serialSecondaryPorts;
+    QSet<QString> _serialNoticeStoppedPorts;
+    QSet<const LinkConfiguration*> _serialNoticeWatchedConfigs;
+    std::function<quint64()> _serialNoticeClock;
+    quint64 _serialNoticeGeneration = 0;
 #endif
     QTimer *_portListTimer = nullptr;
     QmlObjectListModel *_qmlConfigurations = nullptr;
     AutoConnectSettings *_autoConnectSettings = nullptr;
+    QmlObjectListModel* _serialNotices = nullptr;
+    QmlObjectListModel* _serialNoticeHistory = nullptr;
 
     bool _configUpdateSuspended = false;            ///< true: stop updating configuration list
     bool _configurationsLoaded = false;             ///< true: Link configurations have been loaded

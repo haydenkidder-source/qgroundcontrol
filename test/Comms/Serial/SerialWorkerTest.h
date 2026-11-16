@@ -6,6 +6,9 @@ class SerialWorkerTest : public UnitTest
 {
     Q_OBJECT
 private slots:
+    void _bootloaderOutcome();
+    void _queuedOpenOutcome_data();
+    void _queuedOpenOutcome();
     void _settingsSnapshotAndAvailability();
     void _configurationFailure_data();
     void _configurationFailure();

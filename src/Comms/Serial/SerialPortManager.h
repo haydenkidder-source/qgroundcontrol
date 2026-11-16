@@ -82,6 +82,9 @@ public:
     static bool isPrimaryInterface(const Port& port, QSet<QString>& seenDevices);
 
     QList<Port> availablePorts();
+
+    /// Last inventory only; inspecting diagnostics must never trigger an enumeration.
+    QList<Port> portSnapshot() const { return _ports; }
     /// As availablePorts(), without reusing a scan made less than a second ago.
     void rescan();
     QString displayName(const QString& systemLocation);
