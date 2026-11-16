@@ -2,14 +2,23 @@
 
 #ifdef QGC_GST_STREAMING
 
+#include <memory>
+#include <utility>
+#include <vector>
+
+#include <QtCore/QDebug>
+#include <QtCore/QElapsedTimer>
 #include <QtCore/QRegularExpression>
+#include <QtCore/QScopeGuard>
 #include <QtCore/QTemporaryDir>
 #include <QtGui/QImage>
 #include <QtMultimedia/QVideoSink>
 #include <QtNetwork/QHostAddress>
 #include <QtNetwork/QUdpSocket>
 
+#include "Fixtures/RAIIFixtures.h"
 #include "GStreamerDecoderRanks.h"
+#include "GStreamerLogging.h"
 #include "GstScoped.h"
 #include "MockVideoStreamServer.h"
 
@@ -24,6 +33,15 @@ using GstReceiverTest::State;
 using GstReceiverTest::udpListenUri;
 
 }  // namespace
+
+QString GstVideoReceiverPipelineTest::failureContextSummary() const
+{
+    QString summary = GstVideoReceiverTestBase::failureContextSummary();
+    if (_mockStreamFailureContext) {
+        summary += '\n' + _mockStreamFailureContext();
+    }
+    return summary;
+}
 
 void GstVideoReceiverPipelineTest::_testStreamingStatesAndDisplay()
 {
@@ -93,6 +111,64 @@ void GstVideoReceiverPipelineTest::_testDecodesMockLinkStreams()
         QSKIP("This GStreamer install lacks the stream type's encoder or muxer");
     }
 
+    const bool diagnoseH265 = (type == StreamType::RtpUdpH265);
+    const GstDebugLevel previousDefault = gst_debug_get_default_threshold();
+    const gboolean previousActive = gst_debug_is_active();
+    const GstDebugColorMode previousColor = gst_debug_get_color_mode();
+    const QByteArray previousDebug = qgetenv("GST_DEBUG");
+    const bool useQtLogger = !GStreamer::nativeDebugLogRequested();
+    std::vector<std::pair<GstDebugCategory*, GstDebugLevel>> previousThresholds;
+    const auto restoreNativeLogging = qScopeGuard([&]() {
+        if (!diagnoseH265) {
+            return;
+        }
+        // QGC installs only a default threshold; preserve ambient GST_DEBUG rules and category overrides too.
+        gst_debug_set_threshold_from_string(previousDebug.constData(), TRUE);
+        gst_debug_set_default_threshold(previousDefault);
+        for (const auto& [category, threshold] : previousThresholds) {
+            gst_debug_category_set_threshold(category, threshold);
+        }
+        gst_debug_set_active(previousActive);
+        gst_debug_set_color_mode(previousColor);
+        if (useQtLogger) {
+            gst_debug_remove_log_function(gst_debug_log_default);
+            gst_debug_add_log_function(GStreamer::qtGstLog, nullptr, nullptr);
+        }
+    });
+
+    // QGC's filter overrides QT_LOGGING_RULES; strict capture includes debug and info too.
+    std::vector<std::unique_ptr<TestFixtures::LoggingCategoryFixture>> diagnosticLogging;
+    if (diagnoseH265) {
+        GSList* const categories = gst_debug_get_all_categories();
+        for (const GSList* entry = categories; entry; entry = entry->next) {
+            auto* const category = static_cast<GstDebugCategory*>(entry->data);
+            previousThresholds.emplace_back(category, gst_debug_category_get_threshold(category));
+        }
+        g_slist_free(categories);
+        if (useQtLogger) {
+            gst_debug_remove_log_function(GStreamer::qtGstLog);
+            gst_debug_add_log_function(gst_debug_log_default, nullptr, nullptr);
+        }
+        gst_debug_set_color_mode(GST_DEBUG_COLOR_MODE_OFF);
+        gst_debug_set_threshold_from_string(
+            "0,GST_STATES:4,decodebin3:4,h265parse:4,rtph265depay:4,udpsrc:4,x265enc:4,rtph265pay:4,"
+            "rtpjitterbuffer:4,avdec*:4,libav:4,d3d11*:4,mf*:4,qgc:4",
+            TRUE);
+        for (const char* category :
+             {"Video.GStreamer.GstVideoReceiver", "Video.GStreamer.GstSourceFactory", "Video.GStreamer.DecoderRanks",
+              "Video.GStreamer.QGCQVideoSinkController", "VideoManager.MockVideoStreamServer"}) {
+            const QRegularExpression anyMessage(QStringLiteral(".*"), QRegularExpression::DotMatchesEverythingOption);
+            ignoreLogMessage(category, QtDebugMsg, anyMessage);
+            ignoreLogMessage(category, QtInfoMsg, anyMessage);
+            diagnosticLogging.emplace_back(
+                std::make_unique<TestFixtures::LoggingCategoryFixture>(QString::fromLatin1(category)));
+        }
+    }
+
+    QElapsedTimer elapsed;
+    elapsed.start();
+    qint64 senderStartedMs = -1;
+
     // The rows cover the stream paths, not decoder choice. CI's macOS VMs can't hardware-decode H.265, and
     // decodebin3 doesn't fall back from a hardware decoder that fails to start. Outlives the receiver.
     const GstTest::DecoderRankSnapshot decoderRanks;
@@ -110,21 +186,87 @@ void GstVideoReceiverPipelineTest::_testDecodesMockLinkStreams()
         uri = loopbackUri(scheme, 0);
     } else {
         QVERIFY(server.start(type, QStringLiteral("127.0.0.1"), 0));
+        senderStartedMs = elapsed.elapsed();
         uri = server.servedUri();
     }
 
     Receiver stream(uri);
+    quint16 receiverUdpPort = 0;
+    qint64 activatedMs = -1;
+    qint64 streamingMs = -1;
+    qint64 displayStartedMs = -1;
+    _mockStreamFailureContext = [&]() {
+        QString context;
+        {
+            QDebug out(&context);
+            out.noquote().nospace();
+            const auto& config = stream.receiver->config();
+            const auto& display = stream.receiver->displayConfig();
+            out << "Mock stream: type=" << streamType << " uri=" << config.uri << '\n'
+                << "Elapsed ms: now=" << elapsed.elapsed() << " activated=" << activatedMs
+                << " senderStarted=" << senderStartedMs << " streaming=" << streamingMs
+                << " displayStarted=" << displayStartedMs << '\n'
+                << "Receiver: state=" << stream.receiver->state() << " streaming=" << stream.receiver->streaming()
+                << " decoding=" << stream.receiver->decoding() << " videoSize=" << stream.receiver->videoSize()
+                << " active=" << stream.receiver->active() << '\n'
+                << "Decoder: requested=ForceVideoDecoderSoftware reported=" << stream.receiver->decoderName()
+                << " GST_PLUGIN_FEATURE_RANK=" << qgetenv("GST_PLUGIN_FEATURE_RANK") << '\n'
+                << "Config: timeoutSec=" << config.timeout.count() << " lowLatency=" << config.lowLatency
+                << " rtpJitterLatencyMs=" << config.rtpJitterLatencyMs << " autoReconnect=" << config.autoReconnect
+                << '\n'
+                << "Display: conversionElement=" << display.conversionElement
+                << " disablePixelAspectRatio=" << display.disablePixelAspectRatio
+                << " gpuZeroCopy=" << display.gpuZeroCopy
+                << " outputBound=" << (stream.receiver->videoOutput() != nullptr)
+                << " windowVisible=" << stream.window.isVisible() << " QT_QPA_PLATFORM=" << qgetenv("QT_QPA_PLATFORM")
+                << " QT_QUICK_BACKEND=" << qgetenv("QT_QUICK_BACKEND") << '\n'
+                << "MockVideoStreamServer: running=" << server.isRunning() << " servedUri=" << server.servedUri()
+                << " receiverUdpPort=" << receiverUdpPort << " frames=" << server.framesSent()
+                << " lastFrameAgoMs=" << server.lastFrameAgoMs() << " counter=rtp-h265-payloader-input" << '\n'
+                << "FixtureRtpSender (unused in this row): frames=" << stream.sender.frames() << " UDP port=not started"
+                << '\n';
+            const auto appendSpy = [&out](const char* name, const QSignalSpy& spy) {
+                out << name << ": count=" << spy.count() << " last=";
+                if (spy.isEmpty()) {
+                    out << "<none>";
+                } else {
+                    out << spy.constLast();
+                }
+                out << '\n';
+            };
+            appendSpy("stateSpy", stream.stateSpy);
+            appendSpy("streamingSpy", stream.streamingSpy);
+            appendSpy("decodingSpy", stream.decodingSpy);
+            appendSpy("sizeSpy", stream.sizeSpy);
+            appendSpy("errorSpy", stream.errorSpy);
+            for (const auto& error : stream.errorSpy) {
+                out << "errorOccurred: " << error.constFirst().toString() << '\n';
+            }
+        }
+        return context;
+    };
+    // Dump while the locals exist, before teardown can wait on a stuck worker. Never query its pipeline here.
+    const auto dumpBeforeTeardown = qScopeGuard([this]() {
+        dumpFailureContextIfTestFailed(u"mock stream before teardown");
+        _mockStreamFailureContext = {};
+    });
+
     // Bind the output before activation so decoder setup does not depend on late display attachment.
     stream.window.show();
     stream.receiver->setVideoOutput(stream.output);
+    activatedMs = elapsed.elapsed();
     stream.receiver->setActive(true);
     if (receiverListens) {
         // Connecting lasts until the server sends. A server that already does can take the receiver on to
         // Streaming before this thread sees Connecting.
         QVERIFY(stream.waitForState(State::Connecting));
-        QVERIFY(server.start(type, QStringLiteral("127.0.0.1"), stream.udpPort()));
+        receiverUdpPort = stream.udpPort();
+        QVERIFY(server.start(type, QStringLiteral("127.0.0.1"), receiverUdpPort));
+        senderStartedMs = elapsed.elapsed();
     }
     QVERIFY(stream.waitForState(State::Streaming));
+    streamingMs = elapsed.elapsed();
+    displayStartedMs = elapsed.elapsed();
     QVERIFY(stream.display());
 #endif
 }

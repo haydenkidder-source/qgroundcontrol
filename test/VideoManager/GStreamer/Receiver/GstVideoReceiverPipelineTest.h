@@ -22,4 +22,12 @@ private slots:
     void _testDecodesH265Stream();
     void _testResolutionChangeUpdatesVideoSize();
 #endif
+
+#ifdef QGC_GST_STREAMING
+protected:
+    QString failureContextSummary() const override;
+
+private:
+    std::function<QString()> _mockStreamFailureContext;
+#endif
 };
