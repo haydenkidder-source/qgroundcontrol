@@ -10,8 +10,14 @@ class LinkManagerTest : public CommsTest
     Q_OBJECT
 
 private slots:
+    void _testRetryGateDiagnostics();
+    void _testSuspensionDiagnostics();
+    void _testCreationDiagnostics();
     void _testUdpAutoConnectDefaults();
 #ifndef QGC_NO_SERIAL_LINK
+    void _testSavedSerialOwnerClearsDiscoverySkip();
+    void _testSerialLossDiagnostics_data();
+    void _testSerialLossDiagnostics();
     void _testOccupiedSerialAutoConnectRecovers();
     void _testReservedSerialPortNotOpened();
     void _testSerialReservationFollowsLink();
@@ -31,6 +37,7 @@ private slots:
     void _testUdpRemoveConfigurationWhilePendingDoesNotOrphan();
     void _testCreateConnectedLinkTwiceCreatesOneLink_data();
     void _testCreateConnectedLinkTwiceCreatesOneLink();
+    void _testUdpWriteQueuedAfterDisconnectIsSilent();
     void _testUdpDisconnectWithTrafficAndLearnedTarget();
     void _testUdpAutoConnectStartedLinkDisconnectSuppresses();
     void _testUdpAutoConnectBindFailureReusesConfig();

@@ -1,17 +1,19 @@
 #include "LinkManager.h"
-#include "LogReplayLink.h"
-#include "QGCNetworkHelper.h"
-#include "MAVLinkProtocol.h"
-#include "MultiVehicleManager.h"
+
 #include "AppMessages.h"
+#include "AutoConnectSettings.h"
+#include "BluetoothLink.h"
+#include "ConnectionDiagnostics.h"
+#include "LogReplayLink.h"
+#include "MAVLinkProtocol.h"
+#include "MavlinkSettings.h"
+#include "MultiVehicleManager.h"
 #include "QGCLoggingCategory.h"
+#include "QGCNetworkHelper.h"
 #include "QmlObjectListModel.h"
 #include "SettingsManager.h"
-#include "MavlinkSettings.h"
-#include "AutoConnectSettings.h"
 #include "TCPLink.h"
 #include "UDPLink.h"
-#include "BluetoothLink.h"
 
 #ifndef QGC_NO_SERIAL_LINK
 #include "SerialAutoConnect.h"
@@ -77,8 +79,16 @@ void LinkManager::init()
 #endif
     if (!_serialAutoConnect) {
         _serialAutoConnect = std::make_unique<SerialAutoConnect>(
-            *SerialPortManager::instance(),
-            [this](SharedLinkConfigurationPtr& config) { createConnectedLink(config); });
+            *SerialPortManager::instance(), [this](SharedLinkConfigurationPtr& config) { createConnectedLink(config); },
+            [this](const QString& location) {
+                const auto liveLinks = links();
+                return std::ranges::any_of(liveLinks, [&location](const auto& liveLink) {
+                    const auto config = liveLink->linkConfiguration();
+                    const auto* serial = qobject_cast<const SerialConfiguration*>(config.get());
+                    return serial && serial->portName() == location && config->link() == liveLink.get() &&
+                           liveLink->isConnected();
+                });
+            });
     }
 #endif
 
@@ -121,6 +131,11 @@ void LinkManager::disconnectLink(LinkInterface *link)
         config->setSuppressAutoReconnect(true);
     }
 
+#ifndef QGC_NO_SERIAL_LINK
+    if (_serialConnectionStates.contains(link)) {
+        _serialConnectionStates[link].intentionalDisconnect = true;
+    }
+#endif
     link->disconnect();
 }
 
@@ -133,6 +148,11 @@ void LinkManager::disconnectLinkConfiguration(LinkConfiguration *config)
     config->setSuppressAutoReconnect(true);
 
     if (LinkInterface *const link = config->link()) {
+#ifndef QGC_NO_SERIAL_LINK
+        if (_serialConnectionStates.contains(link)) {
+            _serialConnectionStates[link].intentionalDisconnect = true;
+        }
+#endif
         link->disconnect();
     }
 }
@@ -142,6 +162,7 @@ bool LinkManager::createConnectedLink(SharedLinkConfigurationPtr &config)
     config->setSuppressAutoReconnect(false);
 
     if (config->link() != nullptr) {
+        _logCreationFailure(config.get(), AutoConnectReason::HasLink);
         return true;
     }
 
@@ -152,11 +173,13 @@ bool LinkManager::createConnectedLink(SharedLinkConfigurationPtr &config)
         case LinkConfiguration::TypeSerial: {
             const auto* serialConfig = qobject_cast<const SerialConfiguration*>(config.get());
             if (!serialConfig) {
+                _logCreationFailure(config.get(), AutoConnectReason::InvalidSerialConfiguration);
                 return false;
             }
-            auto reservation = SerialPortManager::instance()->reservePort(serialConfig->portName());
+            auto reservation = SerialPortManager::instance()->reservePort(
+                serialConfig->portName(), SerialPortManager::OwnerKind::MAVLink, config->name());
             if (!reservation) {
-                qCDebug(LinkManagerLog) << "Serial port is already reserved:" << serialConfig->portName();
+                _logCreationFailure(config.get(), AutoConnectReason::ReservationFailed);
                 return false;
             }
             link = std::make_shared<SerialLink>(config, std::move(reservation));
@@ -186,10 +209,12 @@ bool LinkManager::createConnectedLink(SharedLinkConfigurationPtr &config)
     }
 
     if (!link) {
+        _logCreationFailure(config.get(), AutoConnectReason::DispatchFailed);
         return false;
     }
 
     if (!link->_allocateMavlinkChannel()) {
+        _logCreationFailure(config.get(), AutoConnectReason::NoMavlinkChannel);
         qCWarning(LinkManagerLog) << "Link failed to setup mavlink channels";
         return false;
     }
@@ -211,10 +236,19 @@ bool LinkManager::createConnectedLink(SharedLinkConfigurationPtr &config)
     (void) connect(link.get(), &LinkInterface::connected, this, &LinkManager::_linkConnected);
     (void) connect(link.get(), &LinkInterface::disconnected, this, &LinkManager::_linkDisconnected);
 
+#ifndef QGC_NO_SERIAL_LINK
+    if (config->type() == LinkConfiguration::TypeSerial) {
+        _serialConnectionStates.insert(link.get(), {});
+        (void) connect(link.get(), &QObject::destroyed, this,
+                       [this, serialLink = link.get()] { _serialConnectionStates.remove(serialLink); });
+    }
+#endif
+
     MAVLinkProtocol::instance()->resetMetadataForLink(link.get());
 
     // Try to connect before adding to active links list
     if (!link->_connect()) {
+        _logCreationFailure(config.get(), AutoConnectReason::DispatchFailed);
         (void) disconnect(link.get(), &LinkInterface::communicationError, this, &LinkManager::_communicationError);
         (void) disconnect(link.get(), &LinkInterface::bytesReceived, MAVLinkProtocol::instance(), nullptr);
         (void) disconnect(link.get(), &LinkInterface::bytesSent, MAVLinkProtocol::instance(), &MAVLinkProtocol::logSentBytes);
@@ -239,6 +273,11 @@ void LinkManager::_linkConnected()
     const SharedLinkConfigurationPtr config = link ? link->linkConfiguration() : nullptr;
     if (config) {
         config->noteConnected();
+#ifndef QGC_NO_SERIAL_LINK
+        if (config->type() == LinkConfiguration::TypeSerial) {
+            _serialConnectionStates[link].connected = true;
+        }
+#endif
     }
 }
 
@@ -299,6 +338,11 @@ void LinkManager::disconnectAll()
     }
 
     for (const SharedLinkInterfacePtr &sharedLink: links) {
+#ifndef QGC_NO_SERIAL_LINK
+        if (_serialConnectionStates.contains(sharedLink.get())) {
+            _serialConnectionStates[sharedLink.get()].intentionalDisconnect = true;
+        }
+#endif
         sharedLink->disconnect();
     }
 }
@@ -333,6 +377,22 @@ void LinkManager::_linkDisconnected()
         return;
     }
 
+#ifndef QGC_NO_SERIAL_LINK
+    const auto intent = _serialConnectionStates.constFind(link);
+    if (intent != _serialConnectionStates.cend()) {
+        if (intent->connected && !intent->intentionalDisconnect && config) {
+            const AutoConnectReason recovery = !config->isAutoConnect()          ? AutoConnectReason::AutoConnectOff
+                                               : config->suppressAutoReconnect() ? AutoConnectReason::Suppressed
+                                               : (!config->isDynamic() && !config->autoConnectStarted())
+                                                   ? AutoConnectReason::NeverStarted
+                                                   : AutoConnectReason::RetryEnabled;
+            qCDebug(LinkManagerLog).noquote().nospace()
+                << "link_manager event=serial_loss" << _diagnosticConfiguration(config.get())
+                << " recovery=" << autoConnectReasonToken(recovery);
+        }
+        _serialConnectionStates.remove(link);
+    }
+#endif
     if (config) {
         config->noteDisconnected();
         config->setLink(nullptr);
@@ -553,22 +613,41 @@ SharedLinkConfigurationPtr LinkManager::_findDynamicUdpConfiguration(const QStri
 
 void LinkManager::_reconnectAutoConnectLinks()
 {
+    _retryGateStates.removeIf([this](const auto& entry) {
+        return std::ranges::none_of(_rgLinkConfigs, [&entry](const auto& config) {
+            return config && config.get() == entry.key() && !config->isDynamic();
+        });
+    });
     for (SharedLinkConfigurationPtr &config : _rgLinkConfigs) {
-        if (!config || config->isDynamic() || !config->isAutoConnect()) {
+        if (!config || config->isDynamic()) {
+            continue;
+        }
+        if (!config->isAutoConnect()) {
+            _recordRetryGate(config.get(), AutoConnectReason::AutoConnectOff);
             continue;
         }
 
-        // Only re-establish links started this session (boot or manual connect); a freshly
-        // added auto-connect config waits for next app start rather than connecting now.
-        if (config->link() || config->suppressAutoReconnect() || !config->autoConnectStarted()) {
+        // Preserve gate precedence for links started this session.
+        if (config->link()) {
+            _recordRetryGate(config.get(), AutoConnectReason::HasLink);
             continue;
         }
-
-        // Exponential backoff between attempts so a dead host isn't hammered every tick.
+        if (config->suppressAutoReconnect()) {
+            _recordRetryGate(config.get(), AutoConnectReason::Suppressed);
+            continue;
+        }
+        if (!config->autoConnectStarted()) {
+            _recordRetryGate(config.get(), AutoConnectReason::NeverStarted);
+            continue;
+        }
         if (!config->reconnectReady()) {
+            _recordRetryGate(config.get(), AutoConnectReason::RetryPending);
             continue;
         }
-
+        if (_retryGateStates.remove(config.get())) {
+            qCDebug(LinkManagerLog).noquote().nospace()
+                << "link_manager event=retry_clear" << _diagnosticConfiguration(config.get()) << " cause=ready";
+        }
         qCDebug(LinkManagerLog) << "Reconnecting auto-connect link" << config->name();
         config->noteReconnectAttempt();
         createConnectedLink(config);
@@ -696,6 +775,11 @@ void LinkManager::removeConfiguration(LinkConfiguration *config)
 
     LinkInterface* const link = config->link();
     if (link) {
+#ifndef QGC_NO_SERIAL_LINK
+        if (_serialConnectionStates.contains(link)) {
+            _serialConnectionStates[link].intentionalDisconnect = true;
+        }
+#endif
         link->disconnect();
     }
 
@@ -733,6 +817,7 @@ void LinkManager::createMavlinkForwardingSupportLink()
 
 void LinkManager::_removeConfiguration(const LinkConfiguration *config)
 {
+    _retryGateStates.remove(config);
     (void) _qmlConfigurations->removeOne(config);
 
     for (auto it = _rgLinkConfigs.begin(); it != _rgLinkConfigs.end(); ++it) {
@@ -902,3 +987,79 @@ QStringList LinkManager::serialBaudRates()
 }
 
 #endif // QGC_NO_SERIAL_LINK
+
+const char* LinkManager::autoConnectReasonToken(AutoConnectReason reason)
+{
+    switch (reason) {
+        case AutoConnectReason::AutoConnectOff:
+            return "auto_connect_off";
+        case AutoConnectReason::HasLink:
+            return "has_link";
+        case AutoConnectReason::Suppressed:
+            return "suppressed";
+        case AutoConnectReason::NeverStarted:
+            return "never_started";
+        case AutoConnectReason::RetryPending:
+            return "retry_pending";
+        case AutoConnectReason::RetryEnabled:
+            return "retry_enabled";
+        case AutoConnectReason::ReservationFailed:
+            return "reservation_failed";
+        case AutoConnectReason::InvalidSerialConfiguration:
+            return "invalid_serial_configuration";
+        case AutoConnectReason::NoMavlinkChannel:
+            return "no_mavlink_channel";
+        case AutoConnectReason::DispatchFailed:
+            return "dispatch_failed";
+    }
+    return "unknown";
+}
+
+QString LinkManager::_diagnosticConfiguration(const LinkConfiguration* config)
+{
+    QString port;
+#ifndef QGC_NO_SERIAL_LINK
+    if (const auto* serial = qobject_cast<const SerialConfiguration*>(config)) {
+        port = serial->portName();
+    }
+#endif
+    return QStringLiteral(" config=%1 port=%2")
+        .arg(ConnectionDiagnostics::quoted(config ? config->name() : QString()), ConnectionDiagnostics::quoted(port));
+}
+
+void LinkManager::_recordRetryGate(const LinkConfiguration* config, AutoConnectReason reason)
+{
+    const auto previous = _retryGateStates.constFind(config);
+    if (previous != _retryGateStates.cend() && previous.value() == reason) {
+        return;
+    }
+    _retryGateStates.insert(config, reason);
+    qCDebug(LinkManagerLog).noquote().nospace() << "link_manager event=retry_skip" << _diagnosticConfiguration(config)
+                                                << " reason=" << autoConnectReasonToken(reason);
+}
+
+void LinkManager::_logCreationFailure(const LinkConfiguration* config, AutoConnectReason reason)
+{
+    qCDebug(LinkManagerLog).noquote().nospace()
+        << "link_manager event=create_failed" << _diagnosticConfiguration(config)
+        << " reason=" << autoConnectReasonToken(reason);
+}
+
+void LinkManager::setConnectionsSuspended(const QString& reason)
+{
+    if (!_connectionsSuspended || _connectionsSuspendedReason != reason) {
+        qCDebug(LinkManagerLog).noquote().nospace()
+            << "link_manager event=suspended reason=" << ConnectionDiagnostics::quoted(reason);
+    }
+    _connectionsSuspended = true;
+    _connectionsSuspendedReason = reason;
+}
+
+void LinkManager::setConnectionsAllowed()
+{
+    if (_connectionsSuspended) {
+        qCDebug(LinkManagerLog).noquote().nospace()
+            << "link_manager event=resumed reason=" << ConnectionDiagnostics::quoted(_connectionsSuspendedReason);
+    }
+    _connectionsSuspended = false;
+}

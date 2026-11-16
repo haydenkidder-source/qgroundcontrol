@@ -7,6 +7,8 @@ class SerialPortManagerTest : public UnitTest
     Q_OBJECT
 
 private slots:
+    void _ownerMetadata_data();
+    void _ownerMetadata();
     void _routingExclusionsDoNotOccupyPorts();
     void _exclusiveReservations();
     void _displayMetadataUsesCachedInventory();

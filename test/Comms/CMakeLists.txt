@@ -6,6 +6,7 @@
 target_sources(
     QGCUnitTests
     PRIVATE
+        ScopedConnectionLogCapture.h
         LinkConfigurationTest.cc
         LinkConfigurationTest.h
         LinkManagerTest.cc
