@@ -1,3 +1,4 @@
+#include <atomic>
 #include <gst/gst.h>
 
 #ifdef QGC_GST_RTSP_SERVER
@@ -103,6 +104,10 @@ bool MockVideoStreamServer::start(StreamType type, const QString& host, quint16 
         stop();
     }
 
+    _framesSent.store(0, std::memory_order_relaxed);
+    _lastFrameMs.store(-1, std::memory_order_relaxed);
+    _senderTimer.start();
+
     if (!isStreamTypeAvailable(type)) {
         qCWarning(MockVideoStreamServerLog) << "Requested stream type is not available in this GStreamer install";
         return false;
@@ -134,7 +139,8 @@ bool MockVideoStreamServer::start(StreamType type, const QString& host, quint16 
             uri = QStringLiteral("udp://%1:%2").arg(host, portString);
             break;
         case StreamType::RtpUdpH265:
-            launch = QStringLiteral("%1 ! %2 ! rtph265pay config-interval=1 pt=96 ! udpsink host=%3 port=%4")
+            launch = QStringLiteral(
+                         "%1 ! %2 ! rtph265pay name=frameCounter config-interval=1 pt=96 ! udpsink host=%3 port=%4")
                          .arg(kTestSource, kH265Encoder, host, portString);
             uri = QStringLiteral("udp265://%1:%2").arg(host, portString);
             break;
@@ -183,8 +189,26 @@ bool MockVideoStreamServer::_startPipeline(const QString& launch)
         return false;
     }
 
+    // Count encoded access units, before the payloader splits each frame into several RTP packets.
+    const auto payloader = GStreamer::adoptElement(gst_bin_get_by_name(GST_BIN(pipeline), "frameCounter"));
+    if (payloader) {
+        const auto pad = GStreamer::adoptPad(gst_element_get_static_pad(payloader.get(), "sink"));
+        if (pad) {
+            gst_pad_add_probe(
+                pad.get(), GST_PAD_PROBE_TYPE_BUFFER,
+                [](GstPad*, GstPadProbeInfo*, gpointer data) -> GstPadProbeReturn {
+                    auto* const server = static_cast<MockVideoStreamServer*>(data);
+                    server->_framesSent.fetch_add(1, std::memory_order_relaxed);
+                    server->_lastFrameMs.store(server->_senderTimer.elapsed(), std::memory_order_relaxed);
+                    return GST_PAD_PROBE_OK;
+                },
+                this, nullptr);
+        }
+    }
+
     if (gst_element_set_state(pipeline, GST_STATE_PLAYING) == GST_STATE_CHANGE_FAILURE) {
         qCWarning(MockVideoStreamServerLog) << "Failed to set pipeline to PLAYING";
+        gst_element_set_state(pipeline, GST_STATE_NULL);
         gst_object_unref(pipeline);
         return false;
     }

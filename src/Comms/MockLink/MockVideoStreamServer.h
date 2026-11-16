@@ -1,5 +1,8 @@
 #pragma once
 
+#include <atomic>
+
+#include <QtCore/QElapsedTimer>
 #include <QtCore/QLoggingCategory>
 #include <QtCore/QString>
 #include <QtCore/QtGlobal>
@@ -53,6 +56,16 @@ public:
 
     QString servedUri() const { return _servedUri; }
 
+    /// Diagnostic count of encoded H.265 frames entering the RTP payloader, not proof of UDP delivery.
+    /// Other stream types are not counted. Reset on start(); lastFrameAgoMs() is -1 before the first frame.
+    [[nodiscard]] quint64 framesSent() const { return _framesSent.load(std::memory_order_relaxed); }
+
+    [[nodiscard]] qint64 lastFrameAgoMs() const
+    {
+        const qint64 lastFrameMs = _lastFrameMs.load(std::memory_order_relaxed);
+        return (lastFrameMs < 0) ? -1 : _senderTimer.elapsed() - lastFrameMs;
+    }
+
     /// True when the encoder/muxer elements required for @p type are present in the
     /// local GStreamer install (e.g. false for RtpUdpH265 when x265enc is missing,
     /// or RtspH264 when gst-rtsp-server was not built in).
@@ -74,4 +87,7 @@ private:
     GstElement* _pipeline = nullptr;
     bool _running = false;
     QString _servedUri;
+    QElapsedTimer _senderTimer;
+    std::atomic<quint64> _framesSent{0};
+    std::atomic<qint64> _lastFrameMs{-1};
 };
