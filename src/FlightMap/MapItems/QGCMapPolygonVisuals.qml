@@ -24,6 +24,9 @@ Item {
     property color  borderColor:        "black"
 
     property var    planStyle: null
+    property string fillObjectName: ""
+    property real   fillZ: 0
+    property real   outlineZ: fillZ + 1
     property bool   patternOutline: false   ///< Pattern extent only; fill remains caller-controlled
     property string boundaryKind: ""
     property bool   inclusion: true
@@ -281,8 +284,10 @@ Item {
 
         MapPolygon {
             id: fenceFill
-            objectName: _root.boundaryKind !== "" ? "planFenceFill"
+            objectName: _root.fillObjectName !== "" ? _root.fillObjectName
+                        : _root.boundaryKind !== "" ? "planFenceFill"
                         : (_root.patternOutline ? "planPatternFill" : "planPolygonFill")
+            z: _root.fillZ
             readonly property real vehicleId: _root.planStyle ? _root.planStyle.vehicleId : 0
             readonly property string boundaryKind: _root.boundaryKind
             readonly property bool inclusion: _root.inclusion
@@ -312,7 +317,7 @@ Item {
                                  : []
                     opacity: _root.boundaryOpacity
                     visible: fenceFill.visible
-                    z: fenceFill.z + 1
+                    z: _root.outlineZ
                     coalesceProjection: true
                     Component.onCompleted: _root.mapControl.addMapItem(this)
                     Component.onDestruction: {

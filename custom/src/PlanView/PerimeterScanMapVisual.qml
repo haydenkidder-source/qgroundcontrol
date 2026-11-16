@@ -20,6 +20,9 @@ import QGroundControl.PlanView
 Item {
     id: _root
 
+    property var  planStyle: null
+    readonly property bool _styled: planStyle && planStyle.enabled
+
     property var  map
     property var  vehicle
     property bool interactive: true
@@ -33,12 +36,16 @@ Item {
     // ----- polygon editing visuals (provides the Polygon Tools toolbar) -----
     QGCMapPolygonVisuals {
         id:               polygonVisuals
+        planStyle:        _root.planStyle
+        patternOutline:   true
+        boundaryOpacity:  _root.opacity
+        fillObjectName:    "planPerimeterFill"
         mapControl:       map
         mapPolygon:       _polygon
         interactive:      _currentItem && _root.interactive
         borderWidth:      2
         borderColor:      "#00cc44"
-        interiorColor:    "#00cc44"
+        interiorColor:    _root._styled ? _root.planStyle.lineColor : "#00cc44"
         interiorOpacity:  0.08 * _root.opacity
     }
 
@@ -48,8 +55,9 @@ Item {
         id: flightPathComponent
 
         MapPolyline {
-            line.color: "#00cc44"
-            line.width: 2
+            objectName: "planPerimeterTraversal"
+            line.color: _root._styled ? _root.planStyle.lineColor : "#00cc44"
+            line.width: _root._styled ? _root.planStyle.missionLineWidth : 2
             visible:    _currentItem
             opacity:    _root.opacity
 
@@ -68,6 +76,7 @@ Item {
         id: entryPointComponent
 
         MapQuickItem {
+            objectName: "planPerimeterEntry"
             anchorPoint.x: sourceItem.width  / 2
             anchorPoint.y: sourceItem.height / 2
             coordinate:    _missionItem.coordinate
@@ -76,6 +85,8 @@ Item {
             z:             QGroundControl.zOrderMapItems + 1
 
             sourceItem: MissionItemIndexLabel {
+                objectName: "planPerimeterMarker"
+                planStyle:   _root.planStyle
                 checked:     true
                 index:       _missionItem.sequenceNumber
                 label:       ""

@@ -57,6 +57,10 @@ protected slots:
     }
 
 protected:
+    /// Set Basic once per process before any Controls QML loads, including component-only rows that never call
+    /// startUI(). Later setStyle() calls warn and fail strict-mode log checks, even after the engine is destroyed.
+    static void initQuickStyle();
+
     /// Boot the full QML UI (MainWindow). Initialises subsystems, suppresses
     /// first-run prompts, registers image providers, and waits for the window
     /// to be exposed. Uses QVERIFY internally — check QTest::currentTestFailed()

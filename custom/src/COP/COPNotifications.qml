@@ -11,17 +11,60 @@ Rectangle {
     id: root
     objectName: "copNotifications"
     implicitWidth: ScreenTools.defaultFontPixelWidth * 64
-    implicitHeight: (COPController.messages.length > 0 && !_minimized)
+    implicitHeight: ((COPController.messages.length > 0 || _serialNoticeCount > 0) && !_minimized)
                     ? notificationLayout.implicitHeight + ScreenTools.defaultFontPixelWidth * 2 : 0
     width: implicitWidth
     height: implicitHeight
     clip: true
     color: QGroundControl.globalPalette.windowCard
-    border.color: COPController.unacknowledged ? QGroundControl.globalPalette.colorOrange
-                                               : QGroundControl.globalPalette.windowPanel
+    border.color: (COPController.unacknowledged || _serialNoticeCount > 0)
+                  ? QGroundControl.globalPalette.colorOrange : QGroundControl.globalPalette.windowPanel
     border.width: ScreenTools.defaultFontPixelWidth / 3
-    property var hostWindow
-    property bool _minimized: false
+    property var  hostWindow
+    property bool _minimized:         false
+    property int  _serialNoticeCount: 0
+
+    function refreshSerialNotices() {
+        let pending = 0
+        const notices = QGroundControl.linkManager.serialNotices
+        for (let i = 0; i < notices.count; ++i) {
+            const notice = notices.get(i)
+            if (notice && notice.active && !notice.acknowledged) {
+                ++pending
+            }
+        }
+        const hadPending = _serialNoticeCount > 0
+        _serialNoticeCount = pending
+        if (pending > 0) {
+            _minimized = false
+            minimizeTimer.stop()
+        } else if (hadPending && !COPController.unacknowledged && COPController.messages.length > 0) {
+            minimizeTimer.restart()
+        }
+    }
+
+    function runSerialAction(noticeId: string, action: string) {
+        if (action === "Dismiss") {
+            QGroundControl.linkManager.dismissSerialNotice(noticeId)
+        } else if (hostWindow && hostWindow.allowViewSwitch()) {
+            if (action === "OpenCommLinks") {
+                hostWindow.showSettingsTool("Comm Links")
+            } else if (action === "OpenGnssReceiver") {
+                hostWindow.showSettingsTool("GNSS Receiver")
+            }
+        }
+    }
+
+    Connections {
+        target: QGroundControl.linkManager
+        function onSerialNoticesChanged() {
+            root.refreshSerialNotices()
+        }
+        function onSerialNoticeRaised() {
+            root.refreshSerialNotices()
+            COPController.alert()
+        }
+    }
 
     Connections {
         target: COPController
@@ -35,8 +78,13 @@ Rectangle {
 
     Timer {
         id: minimizeTimer
+        objectName: "copNotificationMinimizeTimer"
         interval: 10000
-        onTriggered: root._minimized = true
+        onTriggered: {
+            if (root._serialNoticeCount === 0 && !COPController.unacknowledged) {
+                root._minimized = true
+            }
+        }
     }
 
     ColumnLayout {
@@ -48,14 +96,69 @@ Rectangle {
             QGCLabel {
                 Layout.fillWidth: true
                 elide: Text.ElideRight
-                text: qsTr("Notifications (%1)").arg(COPController.messages.length)
+                objectName: "copNotificationHeading"
+                text: qsTr("Notifications (%1)").arg(COPController.messages.length + root._serialNoticeCount)
             }
             QGCButton {
+                objectName: "copNotificationAcknowledge"
                 text: qsTr("Acknowledge")
                 enabled: COPController.unacknowledged
                 onClicked: {
                     COPController.acknowledge()
-                    minimizeTimer.restart()
+                    if (root._serialNoticeCount === 0) {
+                        minimizeTimer.restart()
+                    }
+                }
+            }
+        }
+        QGCFlickable {
+            id:                     serialNoticesView
+            objectName:             "copSerialNoticesView"
+            Layout.fillWidth:       true
+            Layout.preferredHeight: Math.min(serialColumn.implicitHeight, ScreenTools.defaultFontPixelHeight * 12)
+            visible:                root._serialNoticeCount > 0
+            contentHeight:          serialColumn.implicitHeight
+            flickableDirection:     Flickable.VerticalFlick
+            clip:                   true
+
+            Column {
+                id:      serialColumn
+                width:   serialNoticesView.width
+                spacing: ScreenTools.defaultFontPixelHeight / 2
+
+                Repeater {
+                    model: QGroundControl.linkManager.serialNotices
+                    Column {
+                        id: serialRow
+                        required property var object
+                        objectName: "copSerialNotice_" + object.id
+                        width:      serialColumn.width
+                        visible:    object.active && !object.acknowledged
+                        spacing:    ScreenTools.defaultFontPixelHeight / 4
+
+                        QGCLabel {
+                            objectName: "copSerialNoticeText_" + serialRow.object.id
+                            width:      serialRow.width
+                            wrapMode:   Text.Wrap
+                            textFormat: Text.PlainText
+                            text:       serialRow.object.text
+                        }
+                        Flow {
+                            width:   serialRow.width
+                            spacing: ScreenTools.defaultFontPixelWidth
+                            Repeater {
+                                model: serialRow.object.actions
+                                QGCButton {
+                                    required property string modelData
+                                    objectName: "copSerialAction_" + serialRow.object.id + "_" + modelData
+                                    text: modelData === "OpenCommLinks" ? qsTr("Open Comm Links")
+                                          : modelData === "OpenGnssReceiver" ? qsTr("Open GNSS Receiver")
+                                          : qsTr("Dismiss")
+                                    onClicked: root.runSerialAction(serialRow.object.id, modelData)
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -66,6 +169,7 @@ Rectangle {
             text: qsTr("%1 older notifications omitted").arg(COPController.droppedMessages)
         }
         ListView {
+            objectName: "copNotificationHistory"
             Layout.fillWidth: true
             Layout.fillHeight: true
             Layout.minimumWidth: 0
@@ -82,4 +186,6 @@ Rectangle {
             }
         }
     }
+
+    Component.onCompleted: refreshSerialNotices()
 }
