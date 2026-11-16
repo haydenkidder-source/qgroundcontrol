@@ -24,10 +24,13 @@ Item {
     property color  borderColor:        "black"
 
     property var    planStyle: null
+    property bool   patternOutline: false   ///< Pattern extent only; fill remains caller-controlled
     property string boundaryKind: ""
     property bool   inclusion: true
     property real   boundaryOpacity: opacity
     readonly property bool _styledBoundary: planStyle && planStyle.enabled && boundaryKind === "polygon"
+    readonly property bool _styledPattern: planStyle && planStyle.enabled && patternOutline && boundaryKind === ""
+    readonly property bool _styledOutline: _styledBoundary || _styledPattern
 
     property bool   _circleMode:                false
     property real   _circleRadius
@@ -278,7 +281,8 @@ Item {
 
         MapPolygon {
             id: fenceFill
-            objectName: _root.boundaryKind !== "" ? "planFenceFill" : ""
+            objectName: _root.boundaryKind !== "" ? "planFenceFill"
+                        : (_root.patternOutline ? "planPatternFill" : "planPolygonFill")
             readonly property real vehicleId: _root.planStyle ? _root.planStyle.vehicleId : 0
             readonly property string boundaryKind: _root.boundaryKind
             readonly property bool inclusion: _root.inclusion
@@ -288,21 +292,23 @@ Item {
             opacity:        _root._styledBoundary ? _root.boundaryOpacity : interiorOpacity
             visible:        _root.visible
             border.color:   mapPolygon.vertexDrag ? "orange" : borderColor
-            border.width:   _root._styledBoundary ? 0 : (mapPolygon.vertexDrag ? 3 : borderWidth)
+            border.width:   _root._styledOutline ? 0 : (mapPolygon.vertexDrag ? 3 : borderWidth)
             path:           mapPolygon.vertexDrag ? mapPolygon.dragPath : mapPolygon.path
 
             Loader {
-                active: _root._styledBoundary
+                active: _root._styledOutline
                 sourceComponent: MapBoundaryOutline {
-                    objectName: _root.inclusion ? "planKeepInOutline" : "planKeepOutOutline"
+                    objectName: _root._styledPattern ? "planPatternOutline"
+                                : (_root.inclusion ? "planKeepInOutline" : "planKeepOutOutline")
                     readonly property real vehicleId: _root.planStyle ? _root.planStyle.vehicleId : 0
                     readonly property string boundaryKind: _root.boundaryKind
                     mapControl: _root.mapControl
                     vertices: fenceFill.path
-                    lineColor: _root._styledBoundary ? _root.planStyle.lineColor : "transparent"
-                    lineWidth: _root._styledBoundary ? _root.planStyle.boundaryLineWidth : 0
-                    dashPattern: _root._styledBoundary
-                                 ? (_root.inclusion ? _root.planStyle.keepInDashPattern : _root.planStyle.keepOutDashPattern)
+                    lineColor: _root._styledOutline ? _root.planStyle.lineColor : "transparent"
+                    lineWidth: _root._styledOutline ? _root.planStyle.boundaryLineWidth : 0
+                    dashPattern: _root._styledOutline
+                                 ? ((_root._styledPattern || _root.inclusion)
+                                    ? _root.planStyle.keepInDashPattern : _root.planStyle.keepOutDashPattern)
                                  : []
                     opacity: _root.boundaryOpacity
                     visible: fenceFill.visible
@@ -388,6 +394,7 @@ Item {
 
         MapQuickItem {
             id:             splitHandleMapItem
+            z:              _root._styledPattern ? _zorderSplitHandle : 0
             anchorPoint.x:  sourceItem.width / 2
             anchorPoint.y:  sourceItem.height / 2
             visible:        !_circleMode && !_isVertexBeingDragged && !mapPolygon.centerDrag

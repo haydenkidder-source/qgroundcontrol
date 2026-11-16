@@ -41,15 +41,40 @@ TransectStyleMapVisuals {
         id: boundaryLineComponent
 
         MapPolyline {
+            id: boundaryLine
+            objectName: "planCorridorBoundary"
             line.color: "black"
-            line.width: 1
-            visible:    !corridorVisuals.hideMapPolygon
+            line.width: corridorVisuals._styled ? 0 : 1
+            visible:    !corridorVisuals._styled && !corridorVisuals.hideMapPolygon
             opacity:    corridorVisuals.opacity
+
+            Loader {
+                active: corridorVisuals._styled
+                sourceComponent: MapBoundaryOutline {
+                    objectName: "planPatternOutline"
+                    mapControl: corridorVisuals.map
+                    vertices: boundaryLine.path
+                    lineColor: corridorVisuals._styled ? corridorVisuals.planStyle.lineColor : "transparent"
+                    lineWidth: corridorVisuals._styled ? corridorVisuals.planStyle.boundaryLineWidth : 0
+                    dashPattern: corridorVisuals._styled ? corridorVisuals.planStyle.keepInDashPattern : []
+                    opacity: corridorVisuals.opacity
+                    visible: !corridorVisuals.hideMapPolygon
+                    z: boundaryLine.z + 1
+                    coalesceProjection: true
+                    Component.onCompleted: corridorVisuals.map.addMapItem(this)
+                    Component.onDestruction: {
+                        if (corridorVisuals.map) {
+                            corridorVisuals.map.removeMapItem(this)
+                        }
+                    }
+                }
+            }
         }
     }
 
     QGCMapPolylineVisuals {
         id:             mapPolylineVisuals
+        planStyle:      corridorVisuals.planStyle
         mapControl:     map
         mapPolyline:    object.corridorPolyline
         interactive:    _currentItem && parent.interactive
