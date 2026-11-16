@@ -84,7 +84,7 @@ void GstVideoReceiverReconnectTest::_testStreamLossRestartPolicy()
     QFETCH(bool, autoReconnect);
 
     Receiver stream(udpListenUri(), autoReconnect, kShortWatchdogTimeout);
-    QVERIFY(stream.startStreaming());
+    QVERIFY2(stream.startStreaming(), qPrintable(stream.sender.error()));
 
     if (!autoReconnect) {
         expectLogMessage("Video.GStreamer.GstVideoReceiver", QtWarningMsg,
@@ -94,7 +94,7 @@ void GstVideoReceiverReconnectTest::_testStreamLossRestartPolicy()
 
     if (autoReconnect) {
         QVERIFY(stream.waitForState(State::Reconnecting));
-        QVERIFY(stream.resumeSending());
+        QVERIFY2(stream.resumeSending(), qPrintable(stream.sender.error()));
         QVERIFY(stream.errorSpy.isEmpty());
     } else {
         QVERIFY(stream.waitForState(State::Stopped));
