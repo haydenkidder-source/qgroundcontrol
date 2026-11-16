@@ -96,7 +96,7 @@ add_qgc_test(GstQgcSinkPipelineTest LABELS Integration)
 add_qgc_test(GstRecordingSinkTest LABELS Integration)
 add_qgc_test(GstSelfTestPipelineTest LABELS Integration)
 add_qgc_test(GstSourceFactoryStreamTest LABELS Integration)
-# The h265 UDP row enables Qt debug/info; QtTest's default 100-message cap can hide its failure dump.
+# The h265 UDP row enables Qt debug/info; QGC's default cap of 100 QtTest messages can hide its failure dump.
 add_qgc_test(GstVideoReceiverPipelineTest LABELS Integration ENV_MODIFICATION "QGC_TEST_MAXWARNINGS=set:2000")
 add_qgc_test(GstVideoReceiverReconnectTest LABELS Integration)
 add_qgc_test(GstVideoReceiverRecordingTest LABELS Integration)

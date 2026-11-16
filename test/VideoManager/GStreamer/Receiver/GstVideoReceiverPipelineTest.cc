@@ -207,6 +207,7 @@ void GstVideoReceiverPipelineTest::_testDecodesMockLinkStreams()
             out.noquote().nospace();
             const auto& config = stream.receiver->config();
             const auto& display = stream.receiver->displayConfig();
+            const auto stats = stream.receiver->stats();
             out << "Mock stream: type=" << streamType << " uri=" << config.uri << '\n'
                 << "Elapsed ms: now=" << elapsed.elapsed() << " activated=" << activatedMs
                 << " senderStarted=" << senderStartedMs << " streaming=" << streamingMs
@@ -214,6 +215,8 @@ void GstVideoReceiverPipelineTest::_testDecodesMockLinkStreams()
                 << "Receiver: state=" << stream.receiver->state() << " streaming=" << stream.receiver->streaming()
                 << " decoding=" << stream.receiver->decoding() << " videoSize=" << stream.receiver->videoSize()
                 << " active=" << stream.receiver->active() << '\n'
+                << "Stats (GUI-cached): valid=" << stats.valid << " keyframeIntervalMs=" << stats.keyframeIntervalMs
+                << '\n'
                 << "Decoder: requested=ForceVideoDecoderSoftware reported=" << stream.receiver->decoderName()
                 << " GST_PLUGIN_FEATURE_RANK=" << qgetenv("GST_PLUGIN_FEATURE_RANK") << '\n'
                 << "Config: timeoutSec=" << config.timeout.count() << " lowLatency=" << config.lowLatency
