@@ -4,12 +4,10 @@
 
 Each Microhard pMDDL2450 radio bridges its vehicle's serial MAVLink stream onto the mesh as
 UDP traffic. The bridge chunks bytes into UDP datagrams by a timer/buffer threshold, **not** by
-MAVLink message boundary. If two or more radios are configured to forward to the *same*
-destination port at the ground station, their byte streams land on one shared UDP socket, and a
-single datagram can contain the tail of one vehicle's message followed by the start of another's.
-QGC's parser then tries to stitch those together and produces malformed/corrupted packets - even
-though the radio itself reports zero drops, because the corruption happens downstream of
-successful RF delivery, at the socket-multiplexing layer.
+MAVLink message boundary. If two or more radios forward to the *same* destination port, QGC
+appends their separate datagrams to one link's byte stream and parses it on one MAVLink channel.
+When datagrams split messages, bytes from different senders can interleave and corrupt parsing.
+The corruption can occur after successful RF delivery, even when radios report no drops.
 
 Giving each vehicle's radio its own destination port isolates the streams into independent
 sockets, so they can never interleave. This was field-validated on 2026-09-22: before the port
@@ -131,11 +129,11 @@ versus loss, jitter and round-trip time. A ping while video is running measures 
 load; it is a different measurement from an idle ping.
 
 On the bench, keep radios a few metres apart and lower TX power. **10 dBm is a bench setting
-only; do not copy it to field use.** The operator must choose a separately tested, higher power
-for the actual field distance during field testing; no field-distance power was verified here.
+only; do not copy it to field use.** Choose a power setting tested for the actual field
+distance; no field-distance power was verified here.
 Distance testing is planned at maximum TX power; when running at maximum power, start with the
-radios well apart and move them to the test distance before judging link quality, because radios
-close together at high power overloaded each other's receivers in the bench test.
+radios well apart and move them to the test distance before judging link quality. Receiver
+overload was suspected, but not confirmed, in the bench test.
 When diagnosing, read each radio's signal strength and noise on its web page. Menu locations
 are model-specific; do not assume a menu name.
 

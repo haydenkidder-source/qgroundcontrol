@@ -96,6 +96,10 @@ directory to each Pi, or use a checkout on each Pi, and run the appropriate scri
 See the [installer README](deploy/video-relay/README.md) for usage and prerequisites.
 
 - Both Pis need internet access over Wi-Fi for installation, not over the radio link.
+- Optional tools are not installed by these scripts. For throughput checks, install `iperf3`
+  on both Pis with `sudo apt-get install iperf3`. For `ffplay` playback and `ffprobe` checks,
+  install `ffmpeg` on the Linux viewer with `sudo apt-get install ffmpeg`.
+  Run `sudo apt-get update` before installing these tools.
 - Both scripts require Bash and root privileges; run them through `sudo` from the account
   that will operate the vehicle camera.
 - The GCS script requires 64-bit Raspberry Pi OS (`aarch64`), `curl`, `tar` and standard Linux
@@ -206,6 +210,13 @@ starts the service immediately, using the default destination port 5602 unless a
 environment file specifies another port. Set the vehicle's own port before using its stream;
 never leave two vehicles sending to the same port. At every service start, the wrapper applies
 camera controls before starting GStreamer; a control failure warns and streaming continues.
+
+> **Known limitation (change planned):** With a new environment file, the installer starts the
+> stream immediately on example port 5602 until `DEST_PORT` is changed, briefly sending video
+> from any vehicle other than unit 2 to unit 2's port. The project owner decided on 2026-11-16
+> that the installer will require the unit number before starting the stream, before the next
+> field test; until then, set `DEST_PORT` to `5600 + N` right after the installer finishes (see
+> the [installer note](deploy/video-relay/README.md#usage)).
 
 ### Vehicle environment file
 
@@ -378,40 +389,45 @@ the following are viewing instructions, not a record of which players were used.
 Windows Firewall may block inbound UDP, affecting WebRTC or a direct-UDP receiver on the
 laptop. This was not verified on the bench. See [Troubleshooting](#troubleshooting) for other checks.
 
-Raspberry Pi OS has no firewall by default. If Uncomplicated Firewall (`ufw`) is enabled on
-the GCS Pi, allow the configured video UDP ports and TCP ports 8554, 8888 and 8889. For the
-units 2-4 example:
+Check the GCS Pi's firewall configuration. If Uncomplicated Firewall (`ufw`) is enabled, allow
+the configured video UDP ports and TCP ports 8554, 8888 and 8889. WebRTC also needs its media
+port: MediaMTX defaults to UDP 8189. Check `webrtcLocalUDPAddress` in the installed configuration
+and its defaults; adjust the rule if needed. See the
+[MediaMTX configuration reference](https://mediamtx.org/docs/references/configuration-file).
+For the units 2-4 example with the default media port:
 
 ```bash
 sudo ufw allow 5602:5604/udp
 sudo ufw allow 8554/tcp
 sudo ufw allow 8888/tcp
 sudo ufw allow 8889/tcp
+sudo ufw allow 8189/udp
 ```
 
 ## Pointing QGC at the relay
 
 This section comes from reading this fork's source code. It has not been tested on hardware.
 
-**Standard fly view / application-wide setting.** Open Application Settings > Video, choose
-the source **RTSP Video Stream**, and enter the full **RTSP URL**, for example
-`rtsp://10.0.1.2:8554/vehicleA`. This setting is application-wide, not per vehicle. If the
-active connected vehicle advertises its own camera stream over MAVLink, that stream takes
-priority over the manual setting. The manual source controls are disabled and the manual
-connection fields are hidden while an advertised stream is available.
+**Standard fly view / application-wide setting.** The active connected vehicle's saved COP
+**Video URI** takes priority in the standard primary preview. With that URI empty, QGC uses
+the vehicle's advertised stream, then the application-wide Video settings. To set the manual
+fallback, open Application Settings > Video, choose **RTSP Video Stream** and enter the full
+**RTSP URL**, for example `rtsp://10.0.1.2:8554/vehicleA`. Manual source controls are disabled
+and connection fields hidden while a saved URI or advertised stream configures playback.
 
 **COP overview (custom build): per-vehicle tiles.** Each connected vehicle's tile in the Common
 Operating Picture (COP) overview has a **Video URI** field. Enter the full RTSP URL there to
 give that vehicle its own stream; leave it empty to use the stream that vehicle advertises.
 There is no fallback to the application-wide manual URL. The value is saved per vehicle
 (by MAVLink system ID) and restored on the next launch. Duplicate full RTSP URLs and duplicate
-UDP ports across active tiles are rejected.
+UDP ports prevent conflicting active tiles from playing; the entered values remain saved.
 
-**Scope caveat.** The saved COP URIs apply to the COP overview only: tile sessions are enabled
-only while the overview is selected. The fly view uses the active vehicle's advertised stream
-or the application-wide manual setting. No code was found that applies the saved COP URIs to
-the fly view. QGC does not automatically map `5600 + N` ports to vehicles for RTSP; the full
-URL, including the path name such as `vehicleA`, must be entered or advertised.
+**Scope caveat.** Tile sessions run only while the COP overview is selected; the standard
+receiver takes over outside it, using the active vehicle's saved URI as described above.
+Selecting a tab alone does not change the active vehicle; use **Assume Control** when needed.
+Clearing the saved URI restores fallback to the advertised stream, then manual Video settings
+for the preview. Saved URIs do not affect thermal video. QGC does not map `5600 + N` ports to RTSP
+paths; enter or advertise the full URL, including the path name such as `vehicleA`.
 
 **Transport.** The GStreamer RTSP receiver allows unicast UDP and TCP. The code's own comment
 says it tries UDP first and retries over TCP when no UDP data arrives within the timeout
@@ -568,9 +584,10 @@ would check whether the Pi keeps up when encoding. Restart the stream afterwards
 
 **QGC stats panel.** Open the toolbar video-stream indicator (camera icon with fps and
 bitrate). It appears only for the standard receiver, not while the COP overview is selected
-in this build, where `startStandardVideoReceivers` is false. Jitter and packet-loss lines
-appear only for RTP streams (RTSP), not MPEG-TS. The latency readout with Low Latency Mode
-on does not measure glass-to-glass delay.
+in this build, where `startStandardVideoReceivers` is false. With GStreamer, jitter and
+packet-loss lines appear when an RTP jitter buffer supplies statistics: RTSP, or direct UDP
+RTP with Low Latency Mode off. MPEG-TS has no RTP statistics. The latency readout with Low
+Latency Mode on does not measure glass-to-glass delay.
 
 ### Untested ideas
 
@@ -596,8 +613,9 @@ for the measured link problems and the before/after results.
 
 ### Checking the link
 
-Run order-sensitive commands **one at a time** and wait for each to finish. Pasting several
-commands at once can cancel a service stop with a later start. See
+Run order-sensitive commands **one at a time** and check each result before continuing.
+Foreground commands in one shell run sequentially; a start from another terminal can
+conflict with a pending stop. See
 [Terminal basics](#terminal-basics) if Linux commands are new to you.
 
 1. **Check the services.** On the GCS Pi:
