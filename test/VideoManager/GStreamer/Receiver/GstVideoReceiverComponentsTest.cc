@@ -13,6 +13,7 @@
 #include <QtMultimedia/QVideoFrame>
 #include <QtMultimedia/QVideoFrameFormat>
 
+#include "DecodingBranch.h"
 #include "GStreamerTestHelpers.h"
 #include "GstBusPump.h"
 #include "GstVideoReceiver.h"
@@ -34,6 +35,38 @@ GStreamer::GstElementPtr ownedBin(const char* name)
 }
 
 }  // namespace
+
+void GstVideoReceiverComponentsTest::_testDecoderThreadLimit_data()
+{
+    QTest::addColumn<QByteArray>("factoryName");
+    QTest::addColumn<QByteArray>("elementName");
+    QTest::addColumn<int>("expectedThreads");
+
+    QTest::newRow("software hevc") << QByteArray("avdec_h265") << QByteArray("decoder") << 1;
+    QTest::newRow("software avc named like hevc") << QByteArray("avdec_h264") << QByteArray("avdec_h265") << 4;
+}
+
+void GstVideoReceiverComponentsTest::_testDecoderThreadLimit()
+{
+    QFETCH(QByteArray, factoryName);
+    QFETCH(QByteArray, elementName);
+    QFETCH(int, expectedThreads);
+
+    GSTTEST_REQUIRE_GSTREAMER();
+    GSTTEST_SKIP_UNLESS_FACTORIES(factoryName.constData());
+
+    const GStreamer::GstElementPtr decoder = GStreamer::makeElement(factoryName.constData(), elementName.constData());
+    QVERIFY(decoder);
+    g_object_set(decoder.get(), "max-threads", 4, nullptr);
+    GStreamer::configureDecoderThreads(decoder.get());
+    gint threads = 0;
+    g_object_get(decoder.get(), "max-threads", &threads, nullptr);
+    QCOMPARE(threads, expectedThreads);
+
+    const GStreamer::GstElementPtr bin = ownedBin("avdec_h265");
+    GStreamer::configureDecoderThreads(bin.get());
+    GStreamer::configureDecoderThreads(nullptr);
+}
 
 void GstVideoReceiverComponentsTest::_testStallDetection_data()
 {

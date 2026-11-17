@@ -15,6 +15,11 @@ namespace GstQgc {
 struct PathStats;
 }
 
+namespace GStreamer {
+/// Applies decoder thread limits before the element sees stream data.
+void configureDecoderThreads(GstElement* element);
+}  // namespace GStreamer
+
 /// \brief The display branch behind the session's tee: leaky queue ! valve [! decodebin3 ! video sink].
 ///
 /// Takes the receiver's video sink, inserts decodebin3 once the source streams and links its pad to the sink, asking

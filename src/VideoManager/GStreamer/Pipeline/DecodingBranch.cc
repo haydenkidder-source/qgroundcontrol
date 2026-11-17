@@ -15,6 +15,7 @@ namespace {
 constexpr guint kDisplayQueueMaxBuffers = 2;
 // A stream without keyframes (intra refresh) would otherwise freeze for good after a dropped frame.
 constexpr int kMaxGateDrops = 300;
+constexpr gint kAvdecH265MaxThreads = 1;
 
 /// Sets "sync" on @p sink, or on the sinks inside it when it is a bin without the property.
 void setSinkSync(GstElement* sink, bool sync)
@@ -67,6 +68,17 @@ SinkFrameCounts sinkFrameCountsSince(const GstStructure* stats, const GstStructu
 }
 
 }  // namespace
+
+void GStreamer::configureDecoderThreads(GstElement* element)
+{
+    GstElementFactory* const factory = element ? gst_element_get_factory(element) : nullptr;
+    if (!factory || (g_strcmp0(GST_OBJECT_NAME(factory), "avdec_h265") != 0)) {
+        return;
+    }
+
+    // FFmpeg 7.1's HEVC WPP slice threads can deadlock waiting for row progress.
+    g_object_set(element, "max-threads", kAvdecH265MaxThreads, nullptr);
+}
 
 DecodingBranch::DecodingBranch(const BranchContext& context, Listener& listener, bool lowLatency)
     : _context(context)
@@ -393,6 +405,7 @@ void DecodingBranch::_onDecoderElementAdded(GstBin* /*decodebin*/, GstBin* /*sub
     if (g_object_class_find_property(G_OBJECT_GET_CLASS(element), "qos")) {
         g_object_set(element, "qos", FALSE, nullptr);
     }
+    GStreamer::configureDecoderThreads(element);
 
     qCDebug(GstVideoReceiverLog).noquote()
         << "Decodebin3 selected" << GStreamer::describeDecoderFactory(factory) << "- QoS disabled";
