@@ -18,6 +18,8 @@ target_sources(
         GStreamerTestHelpers.h
         GstSelfTestPipelineTest.cc
         GstSelfTestPipelineTest.h
+        GstThreadStackDump.cc
+        GstThreadStackDump.h
         HwBuffers/GStreamerHwFrameTexturesTest.cc
         HwBuffers/GStreamerHwImportCacheTest.cc
         HwBuffers/GstHwBuffersGlReadbackTest.cc
@@ -63,6 +65,12 @@ target_sources(
 )
 
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+# Keep Windows/DbgHelp headers and their macros out of unity batches.
+set_property(SOURCE GstThreadStackDump.cc TARGET_DIRECTORY QGCUnitTests PROPERTY SKIP_UNITY_BUILD_INCLUSION ON)
+if(WIN32)
+    target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE dbghelp)
+endif()
 
 # Encoded streams the tests send instead of encoding their own (GstTest::FixtureRtpSender): the app's self-test
 # samples, made by src/VideoManager/GStreamer/Runtime/Media/generate.sh.
