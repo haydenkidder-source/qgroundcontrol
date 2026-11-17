@@ -1,5 +1,43 @@
 # Release notes
 
+## v1.15.1
+
+**Test build.** Checks so far include the Linux and Windows automated Unit and
+Integration suites with simulated vehicles, offscreen UI tests and mutation checks
+of the tests added for these changes. The changes have not been checked on real
+vehicles, radios, a real display or real H.265 camera streams. Treat v1.15.1 as a
+test build until the owner has accepted it on the bench.
+
+Based on v1.15.0 plus the changes below, with no upstream merge.
+
+### Fixes in the fork
+
+- **H.265 video**: in Windows test runs, a software-decoded H.265 stream could stop
+  showing video and stall when stopped, because the decoder could hang waiting for
+  its threads.
+- **Overall Status**: the active vehicle going away while the status drawer was open
+  or closing could produce errors in the debug log, because the tab still read that
+  vehicle's sensor data. There is no visible change while a vehicle is connected.
+
+### Changes to know about
+
+- **Software H.265**: decoding uses one thread on every platform. Hardware decoders
+  and other codecs keep their settings. The cost has not been measured; very
+  high-resolution or high-bitrate streams may take longer to decode per frame on a
+  machine without hardware decoding. Please report stuttering. The limit is to be
+  removed once the bundled FFmpeg is 7.1.1 or newer.
+
+### Checking it on the bench
+
+1. Play an H.265 stream using software decoding for several minutes. Start and stop
+   it a few times; expect video each time and a prompt stop.
+2. Watch a high-resolution H.265 stream for stutter.
+3. Open the Overall Status tab and disconnect the active vehicle. Check the
+   App Log Viewer: expect no "Cannot read property 'sysStatusSensorInfo' of null"
+   errors.
+
+The other changes since v1.15.0 are test-only and do not change the app in real use.
+
 ## v1.15.0
 
 **Test build.** Checks so far include the automated Unit and Integration suites with
