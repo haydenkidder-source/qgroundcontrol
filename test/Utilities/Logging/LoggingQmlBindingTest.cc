@@ -1,5 +1,7 @@
 #include "LoggingQmlBindingTest.h"
 
+#include <algorithm>
+
 #include <QtCore/QTimer>
 #include <QtQml/QQmlComponent>
 #include <QtQml/QQmlContext>
@@ -8,10 +10,7 @@
 #include "LogEntry.h"
 #include "LogManager.h"
 #include "LogModel.h"
-#include "QGCLoggingCategory.h"
 #include "UnitTestList.h"
-
-QGC_LOGGING_CATEGORY(LoggingQmlBindingTestLog, "Test.LoggingQmlBinding")
 
 // Share a single QQmlEngine across all test methods.
 // qmlRegisterSingletonInstance ties the singleton to the first engine that
@@ -79,15 +78,22 @@ void LoggingQmlBindingTest::_modelRolesExposed()
 
 void LoggingQmlBindingTest::_modelReceivesEntries()
 {
-    auto* model = LogManager::instance()->model();
-    const int before = model->totalCount();
+    const QString message = QStringLiteral("LoggingQmlBindingTest model entry");
 
-    expectLogMessage("Test.LoggingQmlBinding", QtWarningMsg, QRegularExpression("test message for model"));
-    qCWarning(LoggingQmlBindingTestLog) << "test message for model";
-    // Model update is an in-process queued signal, not I/O; a 500 ms window
-    // is generous for a local Qt signal and keeps failure feedback fast.
-    QTRY_VERIFY_WITH_TIMEOUT(model->totalCount() > before, 500);
-    verifyExpectedLogMessage();
+    auto* model = LogManager::instance()->model();
+    LogEntry entry;
+    entry.level = LogEntry::Info;
+    entry.category = QStringLiteral("Test.LoggingQmlBinding");
+    entry.message = message;
+    entry.buildFormatted();
+
+    // QtTest's message handler does not route Qt messages to the model.
+    model->enqueue(entry);
+    const auto hasEntry = [model, &message]() {
+        const QList<LogEntry> entries = model->allEntriesSnapshot();
+        return std::ranges::any_of(entries, [&message](const LogEntry& e) { return e.message == message; });
+    };
+    QTRY_VERIFY_WITH_TIMEOUT(hasEntry(), TestTimeout::shortMs());
 
     QQmlComponent component(_engine);
     component.setData(R"(
@@ -105,8 +111,10 @@ void LoggingQmlBindingTest::_modelReceivesEntries()
     QScopedPointer<QObject> obj(component.create());
     QVERIFY(obj);
 
-    QVERIFY(obj->property("total").toInt() > 0);
-    QVERIFY(obj->property("filtered").toInt() > 0);
+    QVERIFY(model->totalCount() >= 1);
+    QVERIFY(model->rowCount() >= 1);
+    QCOMPARE(obj->property("total").toInt(), model->totalCount());
+    QCOMPARE(obj->property("filtered").toInt(), model->rowCount());
 }
 
 void LoggingQmlBindingTest::_filterBindingsWork()
