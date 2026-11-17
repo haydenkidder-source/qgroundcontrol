@@ -110,7 +110,6 @@ void GstVideoReceiverPipelineTest::_testDecodesMockLinkStreams()
     if (!MockVideoStreamServer::isStreamTypeAvailable(type)) {
         QSKIP("This GStreamer install lacks the stream type's encoder or muxer");
     }
-
     const bool diagnoseH265 = (type == StreamType::RtpUdpH265);
     const GstDebugLevel previousDefault = gst_debug_get_default_threshold();
     const gboolean previousActive = gst_debug_is_active();
@@ -276,6 +275,20 @@ void GstVideoReceiverPipelineTest::_testDecodesMockLinkStreams()
     streamingMs = elapsed.elapsed();
     displayStartedMs = elapsed.elapsed();
     QVERIFY(stream.display());
+    // Installs without gst-libav decode H.265 another way, and the thread limit only applies to avdec_h265.
+    if (type == StreamType::RtpUdpH265 && GstTest::firstMissingFactory({"avdec_h265"}).isEmpty()) {
+        bool foundDecoder = false;
+        gint maxThreads = -1;
+        QVERIFY(runOnPipeline(stream.receiver.get(), [&foundDecoder, &maxThreads](GstElement* pipeline) {
+            const GStreamer::GstElementPtr decoder = GstTest::findByFactory(pipeline, "avdec_h265");
+            foundDecoder = bool(decoder);
+            if (decoder) {
+                g_object_get(decoder.get(), "max-threads", &maxThreads, nullptr);
+            }
+        }));
+        QVERIFY2(foundDecoder, "decodebin3 did not create avdec_h265 for the H.265 mock stream");
+        QCOMPARE(maxThreads, 1);
+    }
 #endif
 }
 

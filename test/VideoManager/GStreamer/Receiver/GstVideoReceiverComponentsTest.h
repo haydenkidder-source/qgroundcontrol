@@ -9,6 +9,8 @@ class GstVideoReceiverComponentsTest : public UnitTest
 
 private slots:
 #ifdef QGC_GST_STREAMING
+    void _testDecoderThreadLimit_data();
+    void _testDecoderThreadLimit();
     void _testStallDetection_data();
     void _testStallDetection();
     void _testFirstFrameGrace();
