@@ -29,9 +29,9 @@ RowLayout {
     // Pre-vehicle checks are the only checks which can be pending while disconnected
     property bool   _preVehicleWarning: _preVehicleChecklistActive && !_preVehiclePassed
     property bool   _anyChecklistWarning: _activeVehicle ? _checklistWarning : _preVehicleWarning
-    property int    _healthErrorCount:      _healthAndArmingChecksSupported ?
+    property int    _healthErrorCount:      _activeVehicle && _healthAndArmingChecksSupported ?
                                                 _activeVehicle.healthAndArmingCheckReport.errorCount : 0
-    property int    _healthWarningCount:    _healthAndArmingChecksSupported ?
+    property int    _healthWarningCount:    _activeVehicle && _healthAndArmingChecksSupported ?
                                                 _activeVehicle.healthAndArmingCheckReport.warningCount : 0
 
     readonly property int tabChecklist: 0
@@ -541,17 +541,17 @@ RowLayout {
                         id:             sensorStatusGrid
                         rowSpacing:     _spacing
                         columnSpacing:  _spacing
-                        rows:           _activeVehicle.sysStatusSensorInfo.sensorNames.length
+                        rows:           _activeVehicle ? _activeVehicle.sysStatusSensorInfo.sensorNames.length : 0
                         flow:           GridLayout.TopToBottom
                         visible:        parametersReady && !_healthAndArmingChecksSupported
 
                         Repeater {
-                            model: _activeVehicle.sysStatusSensorInfo.sensorNames
+                            model: _activeVehicle ? _activeVehicle.sysStatusSensorInfo.sensorNames : []
                             QGCLabel { text: modelData }
                         }
 
                         Repeater {
-                            model: _activeVehicle.sysStatusSensorInfo.sensorStatus
+                            model: _activeVehicle ? _activeVehicle.sysStatusSensorInfo.sensorStatus : []
                             QGCLabel { text: modelData }
                         }
                     }
@@ -560,7 +560,7 @@ RowLayout {
                         id:                 overallStatusList
                         Layout.fillWidth:   true
                         spacing:            _spacing
-                        visible:            parametersReady && _healthAndArmingChecksSupported &&
+                        visible:            _activeVehicle && parametersReady && _healthAndArmingChecksSupported &&
                                             _activeVehicle.healthAndArmingCheckReport.problemsForCurrentMode.count > 0
 
                         QGCButton {

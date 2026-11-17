@@ -46,6 +46,7 @@ private slots:
     void _testPreVehicleChecklistResetsAfterFlight();
     void _testEnforcedChecklistRequiresPreVehicleChecks();
     void _testAutomaticPreVehicleChecksPassOnLoad();
+    void _testOverallStatusWithNullVehicle();
 
 private:
     /// Shared implementation: connect a MockLink via \a factory and cycle

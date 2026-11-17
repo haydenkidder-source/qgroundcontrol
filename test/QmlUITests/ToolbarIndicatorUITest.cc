@@ -7,6 +7,9 @@
 #include <QtCore/QRegularExpression>
 #include <QtCore/QScopeGuard>
 #include <QtCore/QVariant>
+#include <QtQml/QQmlContext>
+#include <QtQml/QQmlEngine>
+#include <QtQml/QQmlProperty>
 #include <QtQuick/QQuickItem>
 #include <QtQuick/QQuickWindow>
 #include <QtTest/QSignalSpy>
@@ -641,6 +644,56 @@ void ToolbarIndicatorUITest::_testIndicatorDrawerClosesOnVehicleDisconnect()
                         QVERIFY2(!findVisibleItem(_rootItem, drawerName, 0),
                                  "Indicator drawer still open after the vehicle disconnected");
                     });
+}
+
+void ToolbarIndicatorUITest::_testOverallStatusWithNullVehicle()
+{
+    runWithMockLink(
+        [] { return MockLink::startPX4MockLink(); },
+        [this](QPointer<MockLink>, Vehicle* vehicle) {
+            const QString indicatorName = QStringLiteral("toolbar_mainStatusIndicator");
+            QQuickItem* const indicator = findVisibleItem(_rootItem, indicatorName, TestTimeout::mediumMs());
+            QVERIFY2(indicator, "Main status indicator not visible");
+            QVERIFY(_clickItemAt(indicator, 0.5, 0.5, indicatorName));
+            QVERIFY(clickButton(QStringLiteral("mainStatusOverallStatusTab")));
+
+            QQuickItem* const badge = findItem(_rootItem, QStringLiteral("mainStatusOverallStatusTabBadge"));
+            QVERIFY(badge);
+            QQmlContext* const context = qmlContext(badge);
+            QVERIFY(context);
+            QObject* const sensorGrid = context->contextProperty(QStringLiteral("sensorStatusGrid")).value<QObject*>();
+            QObject* const statusList = context->contextProperty(QStringLiteral("overallStatusList")).value<QObject*>();
+            QObject* const mainLayout = context->contextProperty(QStringLiteral("mainLayout")).value<QObject*>();
+            QVERIFY(sensorGrid);
+            QVERIFY(statusList);
+            QVERIFY(mainLayout);
+            QVERIFY(mainLayout->property("parametersReady").toBool());
+
+            // Hold the derived flag true and the local vehicle null, independently of notification order
+            // and Popup exit timing. The manager stays connected so it cannot close the drawer for us.
+            QVERIFY(QQmlProperty::write(indicator, QStringLiteral("_healthAndArmingChecksSupported"), true));
+            QVERIFY(QQmlProperty::write(indicator, QStringLiteral("_activeVehicle"),
+                                        QVariant::fromValue<QObject*>(nullptr)));
+            QVERIFY(!indicator->property("_activeVehicle").value<QObject*>());
+            QCOMPARE(MultiVehicleManager::instance()->activeVehicle(), vehicle);
+            QVERIFY(indicator->property("_healthAndArmingChecksSupported").toBool());
+            QCOMPARE(indicator->property("_healthErrorCount").toInt(), 0);
+            QCOMPARE(indicator->property("_healthWarningCount").toInt(), 0);
+            QCOMPARE(sensorGrid->property("rows").toInt(), 0);
+            QVERIFY(!statusList->property("visible").toBool());
+
+            int repeaterCount = 0;
+            for (QObject* const child : sensorGrid->children()) {
+                if (child->inherits("QQuickRepeater")) {
+                    QVERIFY(child->property("model").isValid());
+                    QCOMPARE(child->property("count").toInt(), 0);
+                    ++repeaterCount;
+                }
+            }
+            QCOMPARE(repeaterCount, 2);
+            QVERIFY(findVisibleItem(_rootItem, QStringLiteral("indicatorDrawerLoader"), 0));
+            QVERIFY2(_closeIndicatorDrawer(), "Drawer did not close on Escape");
+        });
 }
 
 void ToolbarIndicatorUITest::_testVehicleMessagesMarkReadAndClear()
