@@ -71,12 +71,13 @@ SinkFrameCounts sinkFrameCountsSince(const GstStructure* stats, const GstStructu
 
 void GStreamer::configureDecoderThreads(GstElement* element)
 {
-    GstElementFactory* const factory = element ? gst_element_get_factory(element) : nullptr;
-    if (!factory || (g_strcmp0(GST_OBJECT_NAME(factory), "avdec_h265") != 0)) {
+    GstElementFactory* const factory = (element != nullptr) ? gst_element_get_factory(element) : nullptr;
+    if ((factory == nullptr) || (g_strcmp0(GST_OBJECT_NAME(factory), "avdec_h265") != 0)) {
         return;
     }
 
-    // FFmpeg 7.1's HEVC WPP slice threads can deadlock waiting for row progress.
+    // FFmpeg 7.1.0, which the GStreamer 1.28 SDKs bundle, can lose a wake-up between its HEVC wavefront slice threads
+    // and hang the decoder for good. 7.1.1 fixed it; decode on one thread until the bundled FFmpeg is newer.
     g_object_set(element, "max-threads", kAvdecH265MaxThreads, nullptr);
 }
 
