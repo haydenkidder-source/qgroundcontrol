@@ -2,6 +2,7 @@
 
 #ifdef QGC_GST_STREAMING
 
+#include <cstdio>
 #include <memory>
 #include <utility>
 #include <vector>
@@ -11,6 +12,7 @@
 #include <QtCore/QRegularExpression>
 #include <QtCore/QScopeGuard>
 #include <QtCore/QTemporaryDir>
+#include <QtCore/QTimer>
 #include <QtGui/QImage>
 #include <QtMultimedia/QVideoSink>
 #include <QtNetwork/QHostAddress>
@@ -20,6 +22,7 @@
 #include "GStreamerDecoderRanks.h"
 #include "GStreamerLogging.h"
 #include "GstScoped.h"
+#include "GstThreadStackDump.h"
 #include "MockVideoStreamServer.h"
 
 namespace {
@@ -140,6 +143,8 @@ void GstVideoReceiverPipelineTest::_testDecodesMockLinkStreams()
 
     // QGC's filter overrides QT_LOGGING_RULES; strict capture includes debug and info too.
     std::vector<std::unique_ptr<TestFixtures::LoggingCategoryFixture>> diagnosticLogging;
+    QTimer decoderTraceWindow;
+    decoderTraceWindow.setSingleShot(true);
     if (diagnoseH265) {
         GSList* const categories = gst_debug_get_all_categories();
         for (const GSList* entry = categories; entry; entry = entry->next) {
@@ -156,9 +161,14 @@ void GstVideoReceiverPipelineTest::_testDecodesMockLinkStreams()
         }
         gst_debug_set_color_mode(GST_DEBUG_COLOR_MODE_OFF);
         gst_debug_set_threshold_from_string(
-            "0,GST_STATES:4,decodebin3:4,h265parse:4,rtph265depay:4,udpsrc:4,x265enc:4,rtph265pay:4,"
-            "rtpjitterbuffer:4,avdec*:4,libav:4,d3d11*:4,mf*:4,qgc:4",
+            "0,GST_STATES:4,decodebin3:5,h265parse:4,rtph265depay:4,udpsrc:4,x265enc:4,rtph265pay:4,"
+            "rtpjitterbuffer:4,avdec*:4,libav:5,d3d11*:4,mf*:4,qgc:4,multiqueue:4,parsebin:5,"
+            "videodecoder:5,ffmpegviddec:5,GST_PADS:4,GST_EVENT:4,GST_QUERY:4",
             TRUE);
+        // Upstream gst-libav uses libav; the ffmpegviddec rule is harmless when no such category exists.
+        // Per-frame DEBUG is useful at first output, but a full timeout would drown the failure evidence.
+        connect(&decoderTraceWindow, &QTimer::timeout, &decoderTraceWindow,
+                []() { gst_debug_set_threshold_from_string("videodecoder:4,ffmpegviddec:4,libav:4", FALSE); });
         for (const char* category :
              {"Video.GStreamer.GstVideoReceiver", "Video.GStreamer.GstSourceFactory", "Video.GStreamer.DecoderRanks",
               "Video.GStreamer.QGCQVideoSinkController", "VideoManager.MockVideoStreamServer"}) {
@@ -251,6 +261,11 @@ void GstVideoReceiverPipelineTest::_testDecodesMockLinkStreams()
                 out << "errorOccurred: " << error.constFirst().toString() << '\n';
             }
         }
+        if (diagnoseH265 && QTest::currentTestFailed()) {
+            const QByteArray stacks = GstTest::dumpAllThreadStacks().toUtf8();
+            std::fputs(stacks.constData(), stderr);
+            std::fflush(stderr);
+        }
         return context;
     };
     // Dump while the locals exist, before teardown can wait on a stuck worker. Never query its pipeline here.
@@ -263,6 +278,9 @@ void GstVideoReceiverPipelineTest::_testDecodesMockLinkStreams()
     stream.window.show();
     stream.receiver->setVideoOutput(stream.output);
     activatedMs = elapsed.elapsed();
+    if (diagnoseH265) {
+        decoderTraceWindow.start(2000);
+    }
     stream.receiver->setActive(true);
     if (receiverListens) {
         // Connecting lasts until the server sends. A server that already does can take the receiver on to
