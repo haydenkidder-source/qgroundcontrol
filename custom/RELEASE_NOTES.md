@@ -276,7 +276,7 @@ the UDP disconnect fix (PR 53), which was merged after v1.12.1 but never release
   second gives `rxDatagrams`, `rxBytes`, `emptyDatagrams`, `drains`, `largestDrain`
   (datagrams read per pass), `writeCalls`, `writeAttempts` (above `writeCalls` means
   packets go to more than one destination), `txDatagrams`, `txBytes`, `learnedTargets`,
-  `writeFailures`, `largestArrivalGapMs` (longest gap between received datagrams in that
+  `writeFailures`, `largestArrivalGapMs` (longest gap between reads from the link in that
   second).
 - **Main thread stalls** (`Custom.MainThreadStall`): `Main thread stalled for N ms` when
   the main thread runs more than 250 ms late, at most once per second. One line right
@@ -288,7 +288,8 @@ the UDP disconnect fix (PR 53), which was merged after v1.12.1 but never release
    `Vehicle.FTPManager`, `Comms.UDPLink` and `Custom.MainThreadStall`.
 2. Note which links are connected and which is Primary. Run the transfer over UDP and
    note the time, then over serial.
-3. Open Settings > Telemetry > Link Status and note loss per link.
+3. Connect one link at a time and note the change in loss in Settings > Telemetry > Link Status
+   for the current vehicle; its totals combine all connected links.
 4. On Windows, run `netstat -s -p udp` before and after. A rising "Receive Errors" count
    means Windows dropped datagrams.
 5. Click Save on App Log Viewer to save the log.

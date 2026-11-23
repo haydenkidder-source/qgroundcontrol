@@ -41,10 +41,12 @@ cd custom/deploy/video-relay/
 sudo ./gcs-setup.sh
 ```
 
-The GCS installer downloads the latest MediaMTX release by default. To pin a release, use
-`sudo MEDIAMTX_VERSION=v1.x.y ./gcs-setup.sh` with an actual release tag. It backs up any existing
-`/etc/mediamtx/mediamtx.yml`, replaces it with the generic `vehicleA`/5602, `vehicleB`/5603 and
-`vehicleC`/5604 paths, and enables and starts `mediamtx.service` as the `mediamtx` system account.
+The GCS installer pins MediaMTX v1.21.4 and verifies its arm64 archive before installation.
+The SHA-256 pin is deliberately unset; a maintainer must copy the arm64 archive's digest from
+that release's checksums file into `MEDIAMTX_PINNED_SHA256_LINUX_ARM64` before use. To override
+both values, set `MEDIAMTX_VERSION` and `MEDIAMTX_SHA256` together through `sudo`. The installer
+keeps an existing `/etc/mediamtx/mediamtx.yml` and refreshes `mediamtx.yml.example` alongside it;
+a new configuration is created from that example. Every run enables and restarts the service.
 The configuration has no authentication; review access control before field use.
 
 The GCS unit now includes `TimeoutStopSec=10` under `[Service]` to limit the stop wait to
@@ -79,11 +81,20 @@ Never leave two vehicles sending to the same port.
 > Invalid input exits with status 2 before package installation or file writes. Without terminal
 > input or a unit, setup also exits with status 2 and usage text before changes, except when an
 > environment file exists and the service is already enabled or active: that re-run updates the
-> wrapper and unit, prints the existing `DEST_PORT`, and preserves the enabled/active state without
-> enabling or starting anything. An existing environment file is always preserved. With a unit,
+> wrapper and unit, prints the existing `DEST_PORT`, preserves the enabled state, and restarts only an active service. An existing environment file is always preserved. With a unit,
 > its `DEST_PORT` must match `5600 + N`; a mismatch exits with status 2 before changes, reports both
 > ports and the file path, and leaves service state unchanged. Edit the file or remove it and
-> re-run with `--unit N`. A matching re-run enables and starts the service as usual.
+> re-run with `--unit N`. A matching re-run enables and restarts the service. A unitless re-run restarts it only if active.
+
+For a new configuration, specify `--camera /dev/v4l/by-id/...` or set `CAMERA` to an
+existing `/dev/v4l/by-id/` or `/dev/v4l/by-path/` device. Otherwise the installer selects the
+single `*-video-index0` entry under `/dev/v4l/by-id/`. If none or several exist, it lists the
+candidates, leaves `CAM_DEVICE` empty and does not start the service; edit the environment file
+before starting it. Existing environment files are preserved, with a warning for empty or unstable
+`/dev/video*` camera paths.
+
+Both installers return 0 on success, 1 for verification or service failure, 2 for usage or pin
+errors, and 3 when installed but the camera path is not set.
 
 The wrapper applies `CAM_CTRLS` before starting GStreamer at every service start. It is a
 space-separated list of `name=value` V4L2 controls; if unset, it defaults to
