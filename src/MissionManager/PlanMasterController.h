@@ -11,6 +11,7 @@
 class QmlObjectListModel;
 class MultiVehicleManager;
 class Vehicle;
+class GeoFenceManager;
 #ifdef QGC_UNITTEST_BUILD
 class PlanMasterControllerTest;
 #endif
@@ -199,6 +200,8 @@ private:
     void _trackRemoveAllFromVehicle(bool geoFenceRequested, bool rallyPointsRequested);
     void _removeAllFromVehicleStepComplete(bool error);
     void _finishRemoveAllFromVehicle(bool error);
+    bool _acquireExclusive();
+    void _releaseExclusive();
 
 #ifdef QGC_UNITTEST_BUILD
     // Used by unit tests to set dirty flags for initial state
@@ -209,6 +212,8 @@ private:
     MultiVehicleManager* _multiVehicleMgr = nullptr;
     Vehicle* _controllerVehicle = nullptr;    ///< Offline controller vehicle
     QPointer<Vehicle> _managerVehicle;        ///< Either active vehicle or _controllerVehicle if none
+    QPointer<GeoFenceManager> _exclusiveFence;
+    QPointer<GeoFenceManager> _removeExclusiveFence;
     quint32 _planVehicleId = 0;
     quint32 _loadVehicleId = 0;               ///< Captured at download/adoption start; 0 after a transfer error
     quint32 _sendVehicleId = 0;               ///< Captured at upload start; 0 after a transfer error

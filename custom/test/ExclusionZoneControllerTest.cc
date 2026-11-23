@@ -8,11 +8,14 @@
 #include "GeoFenceManager.h"
 #include "LinkManager.h"
 #include "MissionItem.h"
+#include "MissionManager.h"
 #include "MockConfiguration.h"
 #include "MockLink.h"
+#include "PlanMasterController.h"
 #include "QGCFenceCircle.h"
 #include "QGCFencePolygon.h"
 #include "QmlObjectListModel.h"
+#include "RallyPointManager.h"
 #include "SettingsManager.h"
 #include "StagedExclusionZone.h"
 #include "Vehicle.h"
@@ -119,6 +122,134 @@ void ExclusionZoneControllerTest::_expectFenceError(int errorCode, const QString
         QStringLiteral("GeoFence transfer failed\\. Error: %1").arg(QRegularExpression::escape(message))));
 }
 
+void ExclusionZoneControllerTest::_exclusiveToken()
+{
+    _connectMockLink(MAV_AUTOPILOT_PX4);
+    QVERIFY(vehicle());
+    GeoFenceManager* const fence = vehicle()->geoFenceManager();
+    QVERIFY(fence);
+    QObject other;
+    auto* owner = new QObject;
+    QVERIFY(fence->tryAcquireExclusive(owner));
+    QVERIFY(fence->exclusiveBusy());
+    QVERIFY(fence->tryAcquireExclusive(owner));
+    QVERIFY(!fence->tryAcquireExclusive(&other));
+    fence->releaseExclusive(&other);
+    QVERIFY(fence->exclusiveBusy());
+    delete owner;
+    QVERIFY(!fence->exclusiveBusy());
+    QVERIFY(fence->tryAcquireExclusive(&other));
+    fence->releaseExclusive(&other);
+    QVERIFY(!fence->exclusiveBusy());
+}
+
+void ExclusionZoneControllerTest::_pushRejectedWhileExclusive()
+{
+    _connectMockLink(MAV_AUTOPILOT_PX4);
+    QVERIFY(vehicle());
+    QVERIFY(mockLink());
+    QTRY_VERIFY_WITH_TIMEOUT(vehicle()->initialPlanRequestComplete(), TestTimeout::longMs());
+    GeoFenceManager* const fence = vehicle()->geoFenceManager();
+    QVERIFY(fence);
+    ExclusionZoneController controller;
+    controller.setTargetVehicle(vehicle());
+    _stageZone(controller);
+    QObject owner;
+    QVERIFY(fence->tryAcquireExclusive(&owner));
+    QSignalSpy finished(&controller, &ExclusionZoneController::pushFinished);
+    const int requests = mockLink()->receivedMissionRequestListCount(MAV_MISSION_TYPE_FENCE);
+    QVERIFY(!controller.pushApproved());
+    QCOMPARE(finished.count(), 1);
+    QCOMPARE(finished.first().at(0).toBool(), false);
+    QCOMPARE(finished.first().at(1).toString(),
+             QStringLiteral(
+                 "Another plan or fence operation is in progress on this vehicle. Try again when it has finished."));
+    QCOMPARE(mockLink()->receivedMissionRequestListCount(MAV_MISSION_TYPE_FENCE), requests);
+    fence->releaseExclusive(&owner);
+    QVERIFY(controller.pushApproved());
+    QTRY_COMPARE_WITH_TIMEOUT(finished.count(), 2, TestTimeout::longMs());
+    QVERIFY(finished.last().first().toBool());
+    QVERIFY(!fence->exclusiveBusy());
+}
+
+void ExclusionZoneControllerTest::_testPushRejectedDuringPlanUpload()
+{
+    _connectMockLink(MAV_AUTOPILOT_PX4);
+    QVERIFY(vehicle());
+    QVERIFY(mockLink());
+    QTRY_VERIFY_WITH_TIMEOUT(vehicle()->initialPlanRequestComplete(), TestTimeout::longMs());
+    _connectOtherVehicle();
+    QVERIFY(_otherLink);
+    Vehicle* const target = MultiVehicleManager::instance()->getVehicleById(_otherLink->vehicleId());
+    QVERIFY(target);
+    QTRY_VERIFY_WITH_TIMEOUT(target->initialPlanRequestComplete(), TestTimeout::longMs());
+    PlanMasterController plan;
+    plan.startStaticActiveVehicle(target);
+    ExclusionZoneController controller;
+    controller.setTargetVehicle(target);
+    _stageZone(controller);
+    QSignalSpy finished(&controller, &ExclusionZoneController::pushFinished);
+    QSignalSpy complete(target->rallyPointManager(), &RallyPointManager::sendComplete);
+    QList<int> order;
+    bool attempted = false;
+    connect(target->missionManager(), &PlanManager::inProgressChanged, &controller, [&](bool inProgress) {
+        if (!inProgress && !attempted) {
+            attempted = true;
+            order.append(0);
+            const int requests = _otherLink->receivedMissionRequestListCount(MAV_MISSION_TYPE_FENCE);
+            QVERIFY(!controller.pushApproved());
+            QCOMPARE(_otherLink->receivedMissionRequestListCount(MAV_MISSION_TYPE_FENCE), requests);
+        }
+    });
+    connect(target->geoFenceManager(), &GeoFenceManager::sendComplete, &controller, [&](bool error) {
+        if (!error) {
+            order.append(1);
+        }
+    });
+    connect(target->rallyPointManager(), &RallyPointManager::sendComplete, &controller, [&](bool error) {
+        if (!error) {
+            order.append(2);
+        }
+    });
+    plan.sendToVehicle();
+    QTRY_COMPARE_WITH_TIMEOUT(complete.count(), 1, TestTimeout::longMs());
+    QVERIFY(attempted);
+    QCOMPARE(order, (QList<int>{0, 1, 2}));
+    QCOMPARE(finished.count(), 1);
+    QVERIFY(!finished.first().first().toBool());
+    QVERIFY(controller.pushApproved());
+    QTRY_COMPARE_WITH_TIMEOUT(finished.count(), 2, TestTimeout::longMs());
+    QVERIFY(finished.last().first().toBool());
+}
+
+void ExclusionZoneControllerTest::_testPlanUploadRejectedDuringPush()
+{
+    _connectMockLink(MAV_AUTOPILOT_PX4);
+    QVERIFY(vehicle());
+    QVERIFY(mockLink());
+    QTRY_VERIFY_WITH_TIMEOUT(vehicle()->initialPlanRequestComplete(), TestTimeout::longMs());
+    PlanMasterController plan;
+    plan.setFlyView(false);
+    plan.start();
+    ExclusionZoneController controller;
+    controller.setTargetVehicle(vehicle());
+    _stageZone(controller);
+    QSignalSpy finished(&controller, &ExclusionZoneController::pushFinished);
+    QSignalSpy complete(vehicle()->rallyPointManager(), &RallyPointManager::sendComplete);
+    QVERIFY(controller.pushApproved());
+    const int sends = mockLink()->receivedMavlinkMessageCount(MAVLINK_MSG_ID_MISSION_COUNT);
+    expectAppMessage(QRegularExpression(QStringLiteral(
+        "Another plan or fence operation is in progress on this vehicle\\. Try again when it has finished\\.")));
+    plan.sendToVehicle();
+    verifyExpectedLogMessage();
+    QCOMPARE(mockLink()->receivedMavlinkMessageCount(MAVLINK_MSG_ID_MISSION_COUNT), sends);
+    QTRY_COMPARE_WITH_TIMEOUT(finished.count(), 1, TestTimeout::longMs());
+    QVERIFY(finished.first().first().toBool());
+    plan.sendToVehicle();
+    QTRY_COMPARE_WITH_TIMEOUT(complete.count(), 1, TestTimeout::longMs());
+    QVERIFY(!complete.first().first().toBool());
+}
+
 void ExclusionZoneControllerTest::_pushVerification_data()
 {
     QTest::addColumn<int>("firmware");
@@ -177,6 +308,7 @@ void ExclusionZoneControllerTest::_pushVerification()
     QVERIFY(original);
     GeoFenceManager* const fence = original->geoFenceManager();
     QVERIFY(fence);
+    QPointer<GeoFenceManager> guardedFence(fence);
     ExclusionZoneController controller;
     controller.setTargetVehicle(original);
     _stageZone(controller);
@@ -334,7 +466,11 @@ void ExclusionZoneControllerTest::_pushVerification()
         });
 
     QVERIFY(controller.pushApproved());
+    QVERIFY(fence->exclusiveBusy());
     QTRY_VERIFY_WITH_TIMEOUT(finished.count() > rejectedPushes, TestTimeout::longMs());
+    if (guardedFence) {
+        QVERIFY(!guardedFence->exclusiveBusy());
+    }
     if (scenario == QStringLiteral("read-error") || scenario == QStringLiteral("read-timeout")) {
         verifyExpectedLogMessage();
         verifyExpectedLogMessage();

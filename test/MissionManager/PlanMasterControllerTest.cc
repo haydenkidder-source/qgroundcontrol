@@ -811,8 +811,8 @@ void PlanMasterControllerTest::_testRemoveAllFromVehicleRejectsOverlappingReques
     QVERIFY(_masterController->syncInProgress());
 
     // A second request before the first completes must not reset the pending count mid-flight
-    expectLogMessage("PlanManager.PlanMasterController", QtCriticalMsg,
-                     QRegularExpression(QStringLiteral("removeAllFromVehicle called while syncInProgress")));
+    expectAppMessage(QRegularExpression(QStringLiteral(
+        "Another plan or fence operation is in progress on this vehicle\\. Try again when it has finished\\.")));
     _masterController->removeAllFromVehicle();
     verifyExpectedLogMessage();
 
@@ -1804,7 +1804,9 @@ void PlanMasterControllerTest::_testPlanVehicleIdStaleDownloadKeepsAssociation()
     QSignalSpy changed(_masterController, &PlanMasterController::planVehicleIdChanged);
     _masterController->loadFromVehicle();
     QVERIFY(_vehicle->missionManager()->inProgress());
+    QVERIFY(_vehicle->geoFenceManager()->exclusiveBusy());
     _masterController->_activeVehicleChanged(otherVehicle);
+    QVERIFY(!_vehicle->geoFenceManager()->exclusiveBusy());
     QTRY_COMPARE_WITH_TIMEOUT(oldComplete.count(), 1, TestTimeout::longMs());
     QCOMPARE(_masterController->planVehicleId(), vehicleId);
     QCOMPARE(_masterController->missionController()->visualItems()->count(), count);
@@ -2009,8 +2011,10 @@ void PlanMasterControllerTest::_testPlanVehicleIdFailedDownloadClearsAssociation
                          QRegularExpression(errorPrefix + " transfer failed"));
         QSignalSpy complete(_vehicle->rallyPointManager(), &RallyPointManager::loadComplete);
         _masterController->loadFromVehicle();
+        QVERIFY(_vehicle->geoFenceManager()->exclusiveBusy());
         QCOMPARE(_masterController->planVehicleId(), _vehicle->id());
         QTRY_COMPARE_WITH_TIMEOUT(complete.count(), 1, TestTimeout::longMs());
+        QVERIFY(!_vehicle->geoFenceManager()->exclusiveBusy());
         verifyExpectedLogMessage();
         verifyExpectedLogMessage();
         QCOMPARE(_masterController->planVehicleId(), quint32(0));
@@ -2077,8 +2081,10 @@ void PlanMasterControllerTest::_testPlanVehicleIdUpload()
     QSignalSpy changed(_masterController, &PlanMasterController::planVehicleIdChanged);
     QSignalSpy complete(target->rallyPointManager(), &RallyPointManager::sendComplete);
     _masterController->sendToVehicle();
+    QVERIFY(target->geoFenceManager()->exclusiveBusy());
     QCOMPARE(_masterController->planVehicleId(), sourceId);
     QTRY_COMPARE_WITH_TIMEOUT(complete.count(), 1, TestTimeout::longMs());
+    QVERIFY(!target->geoFenceManager()->exclusiveBusy());
     if (failureElement >= 0) {
         verifyExpectedLogMessage();
         verifyExpectedLogMessage();
@@ -2144,6 +2150,27 @@ void PlanMasterControllerTest::_testPlanVehicleIdUploadRetryAfterFailure()
     QTRY_COMPARE_WITH_TIMEOUT(complete.count(), 2, TestTimeout::longMs());
     QCOMPARE(_masterController->dirtyForUpload(), false);
     QCOMPARE(_masterController->planVehicleId(), target->id());
+}
+
+void PlanMasterControllerTest::_testUploadTokenReleasedOnVehicleChange()
+{
+    _connectMockLink(MAV_AUTOPILOT_PX4);
+    QVERIFY(_vehicle);
+    QTRY_VERIFY_WITH_TIMEOUT(_vehicle->initialPlanRequestComplete(), TestTimeout::longMs());
+    _populatePlanForIdentityTransfer();
+    expectAppMessage(QRegularExpression(QStringLiteral("Connected to Vehicle [0-9]+")));
+    Vehicle* const target = _connectExtraVehicle();
+    verifyExpectedLogMessage();
+    QVERIFY(target);
+    QTRY_VERIFY_WITH_TIMEOUT(target->initialPlanRequestComplete(), TestTimeout::longMs());
+    QSignalSpy complete(_vehicle->missionManager(), &MissionManager::sendComplete);
+    _masterController->sendToVehicle();
+    QVERIFY(_vehicle->geoFenceManager()->exclusiveBusy());
+    expectAppMessage(QRegularExpression(QStringLiteral("Plan upload interrupted")));
+    _masterController->_activeVehicleChanged(target);
+    verifyExpectedLogMessage();
+    QVERIFY(!_vehicle->geoFenceManager()->exclusiveBusy());
+    QTRY_COMPARE_WITH_TIMEOUT(complete.count(), 1, TestTimeout::longMs());
 }
 
 void PlanMasterControllerTest::_testPlanVehicleIdStaticVehicle()
