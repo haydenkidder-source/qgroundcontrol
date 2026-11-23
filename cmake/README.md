@@ -34,6 +34,10 @@ entry point for normal builds.
 - The lint hooks run cmakelang 0.6.13, which predates `return(PROPAGATE)` and `file(ARCHIVE_EXTRACT)`. Silence its
   findings on those with a `# cmake-lint: disable=` line in the function; no other comment is needed.
 
+`CPMPinnedGitCommit.cmake` downloads exact Git commits into commit-specific CPM cache directories.
+Set `QGC_TRACK_ARDUPILOT_PARAMS=ON` to track ArduPilot parameter metadata on `main` instead of using its pin.
+`QGC_UPDATE_TRACKED_DEPS` controls refreshes for dependencies that track a branch.
+
 `cmake/modules/CPM.cmake` is vendored. Do not modify or reformat it as part of project CMake
 maintenance; the pre-commit CMake hooks intentionally exclude it.
 
