@@ -5,12 +5,14 @@ import QGroundControl.Controls
 
 Item {
     id: rootItem
+    objectName: "onScreenGimbalController"
     anchors.fill: parent
 
     required property bool cameraTrackingEnabled
 
     property var _activeVehicle: QGroundControl.multiVehicleManager.activeVehicle
     property var _gimbalController: _activeVehicle ? _activeVehicle.gimbalController : undefined
+    property var _dragController
     property var _activeGimbal: _gimbalController ? _gimbalController.activeGimbal : undefined
     property bool _gimbalAvailable: _activeGimbal != undefined
     property var _gimbalControllerSettings: QGroundControl.settingsManager.gimbalControllerSettings
@@ -47,6 +49,7 @@ Item {
         _mouseY = mouseY
         _dragStartNormX = _toNormX(mouseX)
         _dragStartNormY = _toNormY(mouseY)
+        _dragController = _gimbalController
         sendRateTimer.start()
     }
 
@@ -57,17 +60,23 @@ Item {
 
     function mouseDragEnd() {
         sendRateTimer.stop()
+        _dragController = undefined
     }
 
     Timer {
         id: sendRateTimer
+        objectName: "gimbalSendRateTimer"
         interval: 100
         repeat: true
         onTriggered: {
+            if (!rootItem._dragController || rootItem._dragController !== rootItem._gimbalController) {
+                rootItem.mouseDragEnd()
+                return
+            }
             if (rootItem._gimbalAvailable) {
                 var dx = rootItem._toNormX(rootItem._mouseX) - rootItem._dragStartNormX
                 var dy = rootItem._toNormY(rootItem._mouseY) - rootItem._dragStartNormY
-                _gimbalController.gimbalOnScreenControl(dx, dy, false, true, true)
+                rootItem._dragController.gimbalOnScreenControl(dx, dy, false, true, true)
             }
         }
     }

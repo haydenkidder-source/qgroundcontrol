@@ -31,7 +31,7 @@ Item {
             _vehicleWasInMissionFlightMode = _vehicleInMissionFlightMode
         } else {
             if (_showMissionCompleteDialog) {
-                missionCompleteDialogFactory.open()
+                missionCompleteDialogFactory.open({ activeVehicleCopy: _activeVehicle })
             }
             _vehicleWasArmed = false
             _vehicleWasInMissionFlightMode = false
@@ -46,6 +46,7 @@ Item {
 
     QGCPopupDialogFactory {
         id: missionCompleteDialogFactory
+        objectName: "missionCompleteDialogFactory"
 
         dialogComponent: missionCompleteDialogComponent
     }
@@ -58,11 +59,15 @@ Item {
             title:      qsTr("Flight Plan complete")
             buttons:    Dialog.Close
 
-            property var activeVehicleCopy: _activeVehicle
-            onActiveVehicleCopyChanged:
-                if (!activeVehicleCopy) {
-                    missionCompleteDialog.close()
+            property var activeVehicleCopy
+            Connections {
+                target: missionCompleteDialogHelper
+                function on_ActiveVehicleChanged() {
+                    if (_activeVehicle !== missionCompleteDialog.activeVehicleCopy) {
+                        missionCompleteDialog.close()
+                    }
                 }
+            }
 
             ColumnLayout {
                 id:         column
@@ -71,17 +76,20 @@ Item {
 
                 QGCLabel {
                     Layout.fillWidth:       true
-                    text:                   qsTr("%1 Images Taken").arg(_activeVehicle.cameraTriggerPoints.count)
+                    text:                   qsTr("%1 Images Taken").arg(activeVehicleCopy ? activeVehicleCopy.cameraTriggerPoints.count : 0)
                     horizontalAlignment:    Text.AlignHCenter
-                    visible:                _activeVehicle.cameraTriggerPoints.count !== 0
+                    visible:                !!activeVehicleCopy && activeVehicleCopy.cameraTriggerPoints.count !== 0
                 }
 
                 QGCButton {
+                    objectName:         "missionCompleteRemoveButton"
                     Layout.fillWidth:   true
                     text:               qsTr("Remove plan from vehicle")
-                    visible:            !_activeVehicle.communicationLost// && !_activeVehicle.apmFirmware  // ArduPilot has a bug somewhere with mission clear
+                    visible:            !!activeVehicleCopy && !activeVehicleCopy.communicationLost
                     onClicked: {
-                        _planController.removeAllFromVehicle()
+                        if (activeVehicleCopy && _activeVehicle === activeVehicleCopy && _planController.managerVehicle === activeVehicleCopy) {
+                            _planController.removeAllFromVehicle()
+                        }
                         missionCompleteDialog.close()
                     }
                 }
@@ -103,7 +111,7 @@ Item {
                 ColumnLayout {
                     Layout.fillWidth:   true
                     spacing:            ScreenTools.defaultFontPixelHeight
-                    visible:            !_activeVehicle.communicationLost && globals.guidedControllerFlyView.showResumeMission
+                    visible:            !!activeVehicleCopy && !activeVehicleCopy.communicationLost && globals.guidedControllerFlyView.showResumeMission
 
                     QGCButton {
                         Layout.fillWidth:   true
@@ -111,7 +119,9 @@ Item {
                         text:               qsTr("Resume Mission From Waypoint %1").arg(globals.guidedControllerFlyView._resumeMissionIndex)
 
                         onClicked: {
-                            globals.guidedControllerFlyView.executeAction(globals.guidedControllerFlyView.actionResumeMission, null, null)
+                            if (activeVehicleCopy && _activeVehicle === activeVehicleCopy && _planController.managerVehicle === activeVehicleCopy) {
+                                globals.guidedControllerFlyView.executeAction(globals.guidedControllerFlyView.actionResumeMission, null, null)
+                            }
                             missionCompleteDialog.close()
                         }
                     }
