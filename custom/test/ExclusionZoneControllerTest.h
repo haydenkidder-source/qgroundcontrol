@@ -18,6 +18,11 @@ private slots:
     void _pushRejectedWhileExclusive();
     void _testPushRejectedDuringPlanUpload();
     void _testPlanUploadRejectedDuringPush();
+    void _verifiedPushUpdatesPlan_data();
+    void _verifiedPushUpdatesPlan();
+    void _verifiedPushPlanAlreadyMatches();
+    void _verifiedPushPreservesPlanFile();
+    void _failedVerificationPreservesPlan();
     void _pushVerification_data();
     void _pushVerification();
     void _initialFenceValidation_data();

@@ -144,6 +144,162 @@ void ExclusionZoneControllerTest::_exclusiveToken()
     QVERIFY(!fence->exclusiveBusy());
 }
 
+void ExclusionZoneControllerTest::_verifiedPushUpdatesPlan_data()
+{
+    QTest::addColumn<bool>("seeded");
+    QTest::newRow("empty") << false;
+    QTest::newRow("seeded") << true;
+}
+
+void ExclusionZoneControllerTest::_verifiedPushUpdatesPlan()
+{
+    QFETCH(bool, seeded);
+    _connectMockLink(MAV_AUTOPILOT_PX4);
+    QVERIFY(vehicle());
+    QTRY_VERIFY_WITH_TIMEOUT(vehicle()->initialPlanRequestComplete(), TestTimeout::longMs());
+    PlanMasterController plan;
+    plan.setFlyView(false);
+    plan.start();
+    if (seeded) {
+        _seedFence(false);
+        QVERIFY(!QTest::currentTestFailed());
+    }
+    ExclusionZoneController controller;
+    controller.setTargetVehicle(vehicle());
+    _stageZone(controller);
+    QSignalSpy finished(&controller, &ExclusionZoneController::pushFinished);
+    QVERIFY(controller.pushApproved());
+    QTRY_COMPARE_WITH_TIMEOUT(finished.count(), 1, TestTimeout::longMs());
+    QVERIFY(finished.first().first().toBool());
+    QCOMPARE(plan.geoFenceController()->polygons()->count(), seeded ? 3 : 1);
+    QCOMPARE(plan.geoFenceController()->circles()->count(), seeded ? 2 : 0);
+    QCOMPARE(plan.geoFenceController()->breachReturnPoint().isValid(), seeded);
+    QVERIFY(plan.geoFenceController()->dirty());
+    QVERIFY(plan.dirtyForSave());
+    QVERIFY(plan.dirtyForUpload());
+    QVERIFY(finished.first().at(1).toString().contains(QStringLiteral("unsaved")));
+    QVERIFY(finished.first().at(1).toString().contains(seeded ? QStringLiteral(" 5 shape(s) were added")
+                                                              : QStringLiteral(" 1 shape(s) were added")));
+    QSignalSpy uploaded(vehicle()->rallyPointManager(), &RallyPointManager::sendComplete);
+    plan.sendToVehicle();
+    QTRY_COMPARE_WITH_TIMEOUT(uploaded.count(), 1, TestTimeout::longMs());
+    QVERIFY(!uploaded.first().first().toBool());
+    GeoFenceManager* const fence = vehicle()->geoFenceManager();
+    QSignalSpy readback(fence, &GeoFenceManager::loadComplete);
+    fence->loadFromVehicle();
+    QTRY_COMPARE_WITH_TIMEOUT(readback.count(), 1, TestTimeout::longMs());
+    QCOMPARE(fence->polygons().count(), seeded ? 3 : 1);
+    QCOMPARE(fence->circles().count(), seeded ? 2 : 0);
+}
+
+void ExclusionZoneControllerTest::_verifiedPushPlanAlreadyMatches()
+{
+    _connectMockLink(MAV_AUTOPILOT_PX4);
+    QVERIFY(vehicle());
+    QTRY_VERIFY_WITH_TIMEOUT(vehicle()->initialPlanRequestComplete(), TestTimeout::longMs());
+    PlanMasterController plan;
+    plan.setFlyView(false);
+    plan.start();
+    ExclusionZoneController controller;
+    controller.setTargetVehicle(vehicle());
+    _stageZone(controller);
+    const auto* staged = controller.stagedZones()->value<StagedExclusionZone*>(0);
+    QVERIFY(staged);
+    const QList<QGeoCoordinate> vertices = staged->polygon()->coordinateList();
+    auto* polygon = new QGCFencePolygon(staged->polygon()->inclusion(), plan.geoFenceController());
+    polygon->appendVertices(vertices);
+    plan.geoFenceController()->polygons()->append(polygon);
+    const bool fenceDirty = plan.geoFenceController()->dirty();
+    const bool dirtyForSave = plan.dirtyForSave();
+    const bool dirtyForUpload = plan.dirtyForUpload();
+    QSignalSpy finished(&controller, &ExclusionZoneController::pushFinished);
+    QVERIFY(controller.pushApproved());
+    QTRY_COMPARE_WITH_TIMEOUT(finished.count(), 1, TestTimeout::longMs());
+    QVERIFY(finished.first().first().toBool());
+    const QString message = finished.first().at(1).toString();
+    QVERIFY(message.contains(QStringLiteral("No shapes needed to be added to the Plan.")));
+    QVERIFY(!message.contains(QStringLiteral("shape(s) were added")));
+    QCOMPARE(plan.geoFenceController()->polygons()->count(), 1);
+    QCOMPARE(plan.geoFenceController()->polygons()->value<QGCFencePolygon*>(0), polygon);
+    QVERIFY(!polygon->inclusion());
+    QCOMPARE(polygon->coordinateList(), vertices);
+    QCOMPARE(plan.geoFenceController()->dirty(), fenceDirty);
+    QCOMPARE(plan.dirtyForSave(), dirtyForSave);
+    QCOMPARE(plan.dirtyForUpload(), dirtyForUpload);
+}
+
+void ExclusionZoneControllerTest::_verifiedPushPreservesPlanFile()
+{
+    _connectMockLink(MAV_AUTOPILOT_PX4);
+    QVERIFY(vehicle());
+    QTRY_VERIFY_WITH_TIMEOUT(vehicle()->initialPlanRequestComplete(), TestTimeout::longMs());
+    PlanMasterController plan;
+    plan.setFlyView(false);
+    plan.start();
+    auto* polygon = new QGCFencePolygon(true, plan.geoFenceController());
+    const QList<QGeoCoordinate> vertices{QGeoCoordinate(47.01, 8.01), QGeoCoordinate(47.02, 8.01),
+                                         QGeoCoordinate(47.02, 8.02)};
+    polygon->appendVertices(vertices);
+    plan.geoFenceController()->polygons()->append(polygon);
+    const QString filename = _directory.filePath(QStringLiteral("inclusion.plan"));
+    QVERIFY(plan.saveToFile(filename));
+    plan.loadFromFile(filename);
+    QCOMPARE(plan.currentPlanFile(), filename);
+    ExclusionZoneController controller;
+    controller.setTargetVehicle(vehicle());
+    _stageZone(controller);
+    QSignalSpy finished(&controller, &ExclusionZoneController::pushFinished);
+    QVERIFY(controller.pushApproved());
+    QTRY_COMPARE_WITH_TIMEOUT(finished.count(), 1, TestTimeout::longMs());
+    QVERIFY(finished.first().first().toBool());
+    QCOMPARE(plan.currentPlanFile(), filename);
+    QCOMPARE(plan.geoFenceController()->polygons()->count(), 2);
+    const auto* inclusion = plan.geoFenceController()->polygons()->value<QGCFencePolygon*>(0);
+    QVERIFY(inclusion);
+    QVERIFY(inclusion->inclusion());
+    QCOMPARE(inclusion->coordinateList(), vertices);
+    QVERIFY(plan.dirtyForSave());
+    QVERIFY(plan.dirtyForUpload());
+    QSignalSpy uploaded(vehicle()->rallyPointManager(), &RallyPointManager::sendComplete);
+    plan.sendToVehicle();
+    QTRY_COMPARE_WITH_TIMEOUT(uploaded.count(), 1, TestTimeout::longMs());
+    QVERIFY(!uploaded.first().first().toBool());
+    GeoFenceManager* const fence = vehicle()->geoFenceManager();
+    QSignalSpy readback(fence, &GeoFenceManager::loadComplete);
+    fence->loadFromVehicle();
+    QTRY_COMPARE_WITH_TIMEOUT(readback.count(), 1, TestTimeout::longMs());
+    QCOMPARE(fence->polygons().count(), 2);
+    QVERIFY(fence->polygons().first().inclusion());
+    QVERIFY(!fence->polygons().last().inclusion());
+}
+
+void ExclusionZoneControllerTest::_failedVerificationPreservesPlan()
+{
+    _connectMockLink(MAV_AUTOPILOT_PX4);
+    QVERIFY(vehicle());
+    QTRY_VERIFY_WITH_TIMEOUT(vehicle()->initialPlanRequestComplete(), TestTimeout::longMs());
+    PlanMasterController plan;
+    plan.setFlyView(false);
+    plan.start();
+    GeoFenceManager* const fence = vehicle()->geoFenceManager();
+    ExclusionZoneController controller;
+    controller.setTargetVehicle(vehicle());
+    _stageZone(controller);
+    int loads = 0;
+    connect(fence, &GeoFenceManager::loadComplete, &controller, [&]() {
+        if (++loads == 2 && !fence->missionItems().isEmpty()) {
+            fence->missionItems().first()->setParam5(46.0);
+        }
+    });
+    QSignalSpy finished(&controller, &ExclusionZoneController::pushFinished);
+    QVERIFY(controller.pushApproved());
+    QTRY_COMPARE_WITH_TIMEOUT(finished.count(), 1, TestTimeout::longMs());
+    QVERIFY(!finished.first().first().toBool());
+    QCOMPARE(plan.geoFenceController()->polygons()->count(), 0);
+    QVERIFY(!plan.dirtyForSave());
+    QVERIFY(!plan.dirtyForUpload());
+}
+
 void ExclusionZoneControllerTest::_pushRejectedWhileExclusive()
 {
     _connectMockLink(MAV_AUTOPILOT_PX4);
@@ -591,7 +747,7 @@ void ExclusionZoneControllerTest::_pushVerification()
                          scenario == QStringLiteral("equivalent") || scenario == QStringLiteral("snapshot");
     QCOMPARE(finished.count(), 1 + rejectedPushes);
     QCOMPARE(finished.last().at(0).toBool(), success);
-    QCOMPARE(finished.last().at(1).toString().isEmpty(), success);
+    QVERIFY(!finished.last().at(1).toString().isEmpty());
     QVERIFY(uploadComplete);
     QVERIFY(verificationStarted);
     QCOMPARE(approved.count(), int(success));

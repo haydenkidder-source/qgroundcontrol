@@ -24,6 +24,8 @@
 #include "MultiVehicleManager.h"
 #include "PlanCreator.h"
 #include "PlanMasterController.h"
+#include "QGCFenceCircle.h"
+#include "QGCFencePolygon.h"
 #include "QGCMapCircle.h"
 #include "QGCMapPolygon.h"
 #include "QGroundControlQmlGlobal.h"
@@ -617,6 +619,109 @@ void PlanMasterControllerTest::_testUnrequestedSendCompletePreservesDirtyForUplo
     _masterController->_sendRallyPointsComplete();
 
     QVERIFY(_masterController->dirtyForUpload());
+}
+
+void PlanMasterControllerTest::_testVerifiedFenceMerge()
+{
+    _connectMockLink(MAV_AUTOPILOT_PX4);
+    QVERIFY(vehicle());
+    QTRY_VERIFY_WITH_TIMEOUT(vehicle()->initialPlanRequestComplete(), TestTimeout::longMs());
+    GeoFenceController* const fence = _masterController->geoFenceController();
+    const QList<QGeoCoordinate> vertices{QGeoCoordinate(47.0, 8.0), QGeoCoordinate(47.1, 8.0),
+                                         QGeoCoordinate(47.1, 8.1)};
+    for (int i = 0; i < 2; ++i) {
+        auto* polygon = new QGCFencePolygon(false, fence);
+        polygon->appendVertices(vertices);
+        fence->polygons()->append(polygon);
+    }
+    const QGeoCoordinate planReturn(47.2, 8.2, 30);
+    fence->setBreachReturnPoint(planReturn);
+    fence->breachReturnAltitude()->setRawValue(planReturn.altitude());
+    const QString filename = QDir::temp().filePath(QStringLiteral("verified-fence-test.plan"));
+    QVERIFY(_masterController->saveToFile(filename));
+    _masterController->_setDirtyForUploadUnitTest(false);
+    PlanMasterController::VerifiedFence snapshot;
+    snapshot.shapes.append({true, false, {vertices[1], vertices[0], vertices[2]}, 0});
+    snapshot.shapes.append({true, true, vertices, 0});
+    snapshot.shapes.append({false, false, {QGeoCoordinate(47.3, 8.3)}, 50});
+    snapshot.returnPoint = QGeoCoordinate(47.4, 8.4, 40);
+    const auto result = PlanMasterController::applyVerifiedFenceForTest(
+        vehicle(), snapshot, PlanMasterController::ExternalFencePolicy::Merge);
+    QCOMPARE(result.editors, 1);
+    QCOMPARE(result.shapesAdded, 2);
+    QVERIFY(result.returnPointConflict);
+    QCOMPARE(fence->polygons()->count(), 3);
+    QCOMPARE(fence->circles()->count(), 1);
+    QCOMPARE(fence->polygons()->value<QGCFencePolygon*>(0)->coordinateList(), vertices);
+    QCOMPARE(fence->polygons()->value<QGCFencePolygon*>(1)->coordinateList(), vertices);
+    QCOMPARE(fence->breachReturnPoint(), planReturn);
+    QCOMPARE(_masterController->currentPlanFile(), filename);
+    QVERIFY(fence->dirty());
+    QVERIFY(_masterController->dirtyForSave());
+    QVERIFY(_masterController->dirtyForUpload());
+    QVERIFY(_masterController->saveToFile(filename));
+    _masterController->_setDirtyForUploadUnitTest(false);
+    const auto repeated = PlanMasterController::applyVerifiedFenceForTest(
+        vehicle(), snapshot, PlanMasterController::ExternalFencePolicy::Merge);
+    QCOMPARE(repeated.shapesAdded, 0);
+    QCOMPARE(fence->polygons()->count(), 3);
+    QCOMPARE(fence->circles()->count(), 1);
+    QVERIFY(!_masterController->dirtyForSave());
+    QVERIFY(!_masterController->dirtyForUpload());
+    QFile::remove(filename);
+}
+
+void PlanMasterControllerTest::_testVerifiedFenceRequireReload()
+{
+    _connectMockLink(MAV_AUTOPILOT_PX4);
+    QVERIFY(vehicle());
+    QTRY_VERIFY_WITH_TIMEOUT(vehicle()->initialPlanRequestComplete(), TestTimeout::longMs());
+    PlanMasterController::VerifiedFence snapshot;
+    const auto result = PlanMasterController::applyVerifiedFenceForTest(
+        vehicle(), snapshot, PlanMasterController::ExternalFencePolicy::RequireReload);
+    QCOMPARE(result.editors, 1);
+    QVERIFY(result.reloadRequired);
+    expectAppMessage(QRegularExpression(QStringLiteral("The vehicle fence has changed\\. Reload the plan.*")));
+    _masterController->sendToVehicle();
+    verifyExpectedLogMessage();
+    QSignalSpy loaded(vehicle()->rallyPointManager(), &RallyPointManager::loadComplete);
+    _masterController->loadFromVehicle();
+    QTRY_VERIFY_WITH_TIMEOUT(loaded.count() > 0, TestTimeout::longMs());
+    QVERIFY(!_masterController->_staleFenceVehicles.contains(vehicle()));
+}
+
+void PlanMasterControllerTest::_testVerifiedFenceVehicleIsolation()
+{
+    _connectMockLink(MAV_AUTOPILOT_PX4);
+    QVERIFY(vehicle());
+    QTRY_VERIFY_WITH_TIMEOUT(vehicle()->initialPlanRequestComplete(), TestTimeout::longMs());
+    expectAppMessage(QRegularExpression(QStringLiteral("Connected to Vehicle [0-9]+")));
+    Vehicle* const other = _connectExtraVehicle();
+    verifyExpectedLogMessage();
+    QVERIFY(other);
+    MultiVehicleManager::instance()->setActiveVehicle(vehicle());
+    QTRY_COMPARE_WITH_TIMEOUT(_masterController->managerVehicle(), vehicle(), TestTimeout::longMs());
+    PlanMasterController second;
+    second.setFlyView(false);
+    second.start();
+    PlanMasterController unrelated;
+    unrelated.setFlyView(false);
+    unrelated.start();
+    unrelated._activeVehicleChanged(other);
+    PlanMasterController offline;
+    offline.setFlyView(false);
+    offline.start();
+    offline._activeVehicleChanged(nullptr);
+    PlanMasterController::VerifiedFence snapshot;
+    snapshot.shapes.append({false, true, {QGeoCoordinate(47.0, 8.0)}, 20});
+    const auto result = PlanMasterController::applyVerifiedFenceForTest(
+        vehicle(), snapshot, PlanMasterController::ExternalFencePolicy::Merge);
+    QCOMPARE(result.editors, 2);
+    QCOMPARE(result.shapesAdded, 2);
+    QCOMPARE(_masterController->geoFenceController()->circles()->count(), 1);
+    QCOMPARE(second.geoFenceController()->circles()->count(), 1);
+    QCOMPARE(unrelated.geoFenceController()->circles()->count(), 0);
+    QCOMPARE(offline.geoFenceController()->circles()->count(), 0);
 }
 
 void PlanMasterControllerTest::_testStaleInitialPlanLoadRallyCompletePreservesPlan()

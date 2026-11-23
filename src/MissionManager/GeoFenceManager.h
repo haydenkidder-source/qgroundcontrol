@@ -30,6 +30,8 @@ public:
 
     bool exclusiveBusy() const { return !_exclusiveOwner.isNull(); }
 
+    bool exclusiveOwnedBy(const QObject* owner) const { return _exclusiveOwner.data() == owner; }
+
     /// Signals sendComplete when done
     void sendToVehicle(const QGeoCoordinate&    breachReturn,   ///< Breach return point
                        QmlObjectListModel&      polygons,       ///< List of QGCFencePolygons

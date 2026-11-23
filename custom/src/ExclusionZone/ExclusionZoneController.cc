@@ -1,5 +1,7 @@
 #include "ExclusionZoneController.h"
 
+#include <utility>
+
 #include <QtCore/QDateTime>
 #include <QtCore/QDir>
 #include <QtCore/QFile>
@@ -13,6 +15,7 @@
 #include "GeoFenceManager.h"
 #include "GeoJsonHelper.h"
 #include "MultiVehicleManager.h"
+#include "PlanMasterController.h"
 #include "QGCFenceCircle.h"
 #include "QGCFencePolygon.h"
 #include "QGCLoggingCategory.h"
@@ -506,6 +509,25 @@ void ExclusionZoneController::_startVerification(quint64 transactionId)
                 _failTransaction(tr("The fence read back from the vehicle does not match the fence sent."));
                 return;
             }
+            QList<FenceItem> verifiedItems;
+            QList<FenceShape> verifiedShapes;
+            if (!_readFenceItems(fenceMgr, verifiedItems) || !_parseFence(verifiedItems, verifiedShapes)) {
+                _failTransaction(tr("The fence read back from the vehicle is invalid."));
+                return;
+            }
+            PlanMasterController::VerifiedFence snapshot;
+            for (const FenceShape& shape : std::as_const(verifiedShapes)) {
+                if (shape.command == MAV_CMD_NAV_FENCE_RETURN_POINT) {
+                    snapshot.returnPoint = shape.vertices.first();
+                } else {
+                    const bool polygon = shape.command == MAV_CMD_NAV_FENCE_POLYGON_VERTEX_INCLUSION ||
+                                         shape.command == MAV_CMD_NAV_FENCE_POLYGON_VERTEX_EXCLUSION;
+                    const bool inclusion = shape.command == MAV_CMD_NAV_FENCE_POLYGON_VERTEX_INCLUSION ||
+                                           shape.command == MAV_CMD_NAV_FENCE_CIRCLE_INCLUSION;
+                    snapshot.shapes.append({polygon, inclusion, shape.vertices, shape.parameter});
+                }
+            }
+            const auto reconciliation = PlanMasterController::applyVerifiedFence(_transactionVehicle, snapshot);
             const auto approvedZones = _approvedZones;
             _clearTransaction();
             int completed = 0;
@@ -527,6 +549,25 @@ void ExclusionZoneController::_startVerification(quint64 transactionId)
                              "%2 approved staged zones were removed during the push.")
                               .arg(completed)
                               .arg(approvedZones.count() - completed);
+            }
+            if (reconciliation.reloadRequired) {
+                message += tr(" The vehicle fence was verified. Reload the Plan from the vehicle before uploading.");
+            } else if (reconciliation.editors > 0) {
+                if (reconciliation.shapesAdded > 0) {
+                    message += tr(" The vehicle fence was verified. %n shape(s) were added to the Plan.", "",
+                                  reconciliation.shapesAdded);
+                } else {
+                    message += tr(" The vehicle fence was verified. No shapes needed to be added to the Plan.");
+                }
+                if (reconciliation.changedEditors > 0) {
+                    message += tr(" The updated Plan has unsaved changes.");
+                }
+                if (reconciliation.returnPointConflict) {
+                    message +=
+                        tr(" A Plan return point differs; uploading the Plan will replace the vehicle return point.");
+                }
+            } else if (message.isEmpty()) {
+                message = tr("The vehicle fence was verified.");
             }
             emit pushFinished(completed > 0, message);
         });
