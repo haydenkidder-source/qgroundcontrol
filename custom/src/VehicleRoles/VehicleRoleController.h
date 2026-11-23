@@ -172,6 +172,10 @@ public:
     /// already another vehicle's nickname (see isNicknameTaken()).
     Q_INVOKABLE void addEntry(quint32 sysid, const QString& role, const QString& name, int port);
 
+    Q_INVOKABLE bool hasEntry(quint32 sysid) const { return _indexForSysid(sysid) >= 0; }
+
+    Q_INVOKABLE bool addEntryIfNew(quint32 sysid, const QString& role, const QString& name, int port);
+
     Q_INVOKABLE void removeEntry(int index);
     Q_INVOKABLE void setRole(int index, const QString& role);
     Q_INVOKABLE void setName(int index, const QString& name);

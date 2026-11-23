@@ -152,6 +152,15 @@ void VehicleRoleController::addEntry(quint32 sysid, const QString& role, const Q
     _save();
 }
 
+bool VehicleRoleController::addEntryIfNew(quint32 sysid, const QString& role, const QString& name, int port)
+{
+    if (hasEntry(sysid)) {
+        return false;
+    }
+    addEntry(sysid, role, name, port);
+    return hasEntry(sysid);
+}
+
 void VehicleRoleController::removeEntry(int index)
 {
     if (auto* entry = qobject_cast<VehicleRoleEntry*>(_roleEntries->get(index))) {
@@ -372,13 +381,18 @@ bool VehicleRoleController::isLinkConfigConnected(const QString& linkConfigName)
         return false;
     }
 
-    const QList<SharedLinkInterfacePtr> links = LinkManager::instance()->links();
+    auto* manager = LinkManager::instance();
+    if (manager->configurationCount(linkConfigName) > 1) {
+        return false;
+    }
+    int matches = 0;
+    const QList<SharedLinkInterfacePtr> links = manager->links();
     for (const SharedLinkInterfacePtr& link : links) {
         if (link && link->linkConfiguration() && link->linkConfiguration()->name() == linkConfigName) {
-            return true;
+            ++matches;
         }
     }
-    return false;
+    return matches == 1;
 }
 
 bool VehicleRoleController::_writeBytes(const QString& path, const QByteArray& bytes, QString* error)

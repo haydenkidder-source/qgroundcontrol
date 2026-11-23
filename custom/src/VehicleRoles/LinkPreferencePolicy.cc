@@ -14,8 +14,9 @@ LinkPreferencePolicy::LinkPreferencePolicy(const Timing& timing)
 bool LinkPreferencePolicy::preferredHealthy(const Input& input)
 {
     const auto index = input.linkNames.indexOf(input.preferredName);
-    return !input.preferredName.isEmpty() && index >= 0 && index < input.linkStatuses.size() &&
-           input.linkNames.count(input.preferredName) == 1 && input.linkStatuses[index].isEmpty();
+    return !input.configurationAmbiguous && !input.preferredName.isEmpty() && index >= 0 &&
+           index < input.linkStatuses.size() && input.linkNames.count(input.preferredName) == 1 &&
+           input.linkStatuses[index].isEmpty();
 }
 
 bool LinkPreferencePolicy::transferActive(const TransferFlags& flags)
@@ -99,6 +100,9 @@ LinkPreferencePolicy::Status LinkPreferencePolicy::status(const Input& input, qi
 {
     if (input.preferredName.isEmpty()) {
         return {Gate::Off};
+    }
+    if (input.configurationAmbiguous || input.linkNames.count(input.preferredName) > 1) {
+        return {Gate::Ambiguous};
     }
     if (!input.linkNames.contains(input.preferredName)) {
         return {Gate::NotAttached};

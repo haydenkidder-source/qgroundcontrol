@@ -6,12 +6,15 @@
 #include <QtCore/QJsonDocument>
 #include <QtCore/QJsonObject>
 #include <QtCore/QRegularExpression>
+#include <QtCore/qscopeguard.h>
 #include <QtTest/QSignalSpy>
 
 #include "AppSettings.h"
+#include "LinkManager.h"
 #include "QGCCorePlugin.h"
 #include "QmlObjectListModel.h"
 #include "SettingsManager.h"
+#include "UDPLink.h"
 #include "VehicleRoleController.h"
 #include "VehicleSystemIdTestData.h"
 
@@ -32,6 +35,26 @@ void VehicleRoleControllerTest::cleanup()
 {
     SettingsManager::instance()->appSettings()->savePath()->setRawValue(_savePath);
     UnitTest::cleanup();
+}
+
+void VehicleRoleControllerTest::_ambiguousConnectedConfiguration()
+{
+    auto* const manager = LinkManager::instance();
+    auto first = manager->addConfiguration(new UDPConfiguration(QStringLiteral("Controller ambiguity")));
+    SharedLinkConfigurationPtr second;
+    const auto cleanup = qScopeGuard([&] {
+        manager->disconnectLinkConfiguration(first.get());
+        manager->removeConfiguration(first.get());
+        if (second) {
+            manager->removeConfiguration(second.get());
+        }
+    });
+    QVERIFY(manager->createConnectedLink(first));
+    QTRY_VERIFY_WITH_TIMEOUT(first->link() && first->link()->isConnected(), TestTimeout::longMs());
+    VehicleRoleController controller;
+    QVERIFY(controller.isLinkConfigConnected(QStringLiteral("Controller ambiguity")));
+    second = manager->addConfiguration(new UDPConfiguration(QStringLiteral("Controller ambiguity")));
+    QVERIFY(!controller.isLinkConfigConnected(QStringLiteral("Controller ambiguity")));
 }
 
 void VehicleRoleControllerTest::_systemIdRoundTrip_data()
@@ -156,6 +179,18 @@ void VehicleRoleControllerTest::_suggestedRoleFollowsVehicleType()
     }
     // No vehicle, nothing to suggest
     QVERIFY(VehicleRoleController().suggestedRole(nullptr).isEmpty());
+}
+
+void VehicleRoleControllerTest::_addEntryIfNewDoesNotReplace()
+{
+    VehicleRoleController controller;
+    controller.addEntry(211, QStringLiteral("Rover"), QStringLiteral("Scout"), 14550);
+    QVERIFY(!controller.addEntryIfNew(211, QStringLiteral("Plane"), QStringLiteral("Other"), 14551));
+    QCOMPARE(controller.roleForSysid(211), QStringLiteral("Rover"));
+    QCOMPARE(controller.nameForSysid(211), QStringLiteral("Scout"));
+    QCOMPARE(controller.portForSysid(211), 14550);
+    QVERIFY(controller.addEntryIfNew(212, QStringLiteral("Plane"), QStringLiteral("Other"), 14551));
+    QCOMPARE(controller.roleEntries()->count(), 2);
 }
 
 void VehicleRoleControllerTest::_addEntryRejectsUnrecognizedRole()

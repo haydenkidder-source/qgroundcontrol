@@ -2,6 +2,7 @@
 
 #include <memory>
 
+#include <QtCore/QCoreApplication>
 #include <QtCore/QDir>
 #include <QtCore/QRegularExpression>
 #include <QtCore/QSettings>
@@ -24,6 +25,7 @@
 #include "QmlObjectListModel.h"
 #include "RallyPointManager.h"
 #include "SettingsManager.h"
+#include "UDPLink.h"
 #include "Vehicle.h"
 #include "VehicleLinkManager.h"
 #include "VehicleRoleController.h"
@@ -161,7 +163,7 @@ void VehicleLinksPageUITest::_vehicleAddedByHandGetsACard()
     QVERIFY(roleCombo->setProperty("currentIndex", roles->availableRoles().indexOf(QStringLiteral("Rover"))));
     QVERIFY(nicknameField->setProperty("text", QStringLiteral("Scout")));
     QTRY_VERIFY_WITH_TIMEOUT(addButton->isEnabled(), TestTimeout::shortMs());
-    QVERIFY(clickButton(QStringLiteral("newVehicleAdd")));
+    QVERIFY(clickButtonScrolled(QStringLiteral("newVehicleAdd"), QStringLiteral("vehicleLinksFlickable")));
 
     QTRY_COMPARE_WITH_TIMEOUT(roles->roleForSysid(sysid), QStringLiteral("Rover"), TestTimeout::mediumMs());
     QCOMPARE(roles->nameForSysid(sysid), QStringLiteral("Scout"));
@@ -259,7 +261,8 @@ void VehicleLinksPageUITest::_connectedVehicleIsOfferedForOneClickSetup()
             QQuickItem* const nicknameField = _requireItem(QStringLiteral("setUpNickname_%1").arg(sysid));
             QVERIFY(nicknameField);
             QVERIFY(nicknameField->setProperty("text", QStringLiteral("Mapper")));
-            QVERIFY(clickButton(QStringLiteral("setUpAdd_%1").arg(sysid)));
+            QVERIFY(
+                clickButtonScrolled(QStringLiteral("setUpAdd_%1").arg(sysid), QStringLiteral("vehicleLinksFlickable")));
 
             QTRY_COMPARE_WITH_TIMEOUT(roles->roleForSysid(sysid), QStringLiteral("Copter"), TestTimeout::mediumMs());
             QCOMPARE(roles->nameForSysid(sysid), QStringLiteral("Mapper"));
@@ -301,9 +304,462 @@ void VehicleLinksPageUITest::_nicknameAlreadyInUseBlocksAdd()
 
     QVERIFY(nicknameField->setProperty("text", QStringLiteral("Sentinel")));
     QTRY_VERIFY_WITH_TIMEOUT(addButton->isEnabled(), TestTimeout::shortMs());
-    QVERIFY(clickButton(QStringLiteral("newVehicleAdd")));
+    QVERIFY(clickButtonScrolled(QStringLiteral("newVehicleAdd"), QStringLiteral("vehicleLinksFlickable")));
     QTRY_COMPARE_WITH_TIMEOUT(roles->nameForSysid(212), QStringLiteral("Sentinel"), TestTimeout::mediumMs());
     QCOMPARE(roles->nameForSysid(211), QStringLiteral("Scout"));
+}
+
+void VehicleLinksPageUITest::_existingSystemIdBlocksAdd()
+{
+    startUI();
+    QVERIFY(!QTest::currentTestFailed());
+    VehicleRoleController* const roles = _roles();
+    QVERIFY(roles);
+    roles->addEntry(211, QStringLiteral("Rover"), QStringLiteral("Scout"), 0);
+    QVERIFY(_openPage());
+    QQuickItem* const sysid = _requireItem(QStringLiteral("newVehicleSysid"));
+    QQuickItem* const add = _requireItem(QStringLiteral("newVehicleAdd"));
+    QVERIFY(sysid && add);
+    QVERIFY(sysid->setProperty("text", QStringLiteral("212")));
+    QTRY_VERIFY_WITH_TIMEOUT(add->isEnabled(), TestTimeout::shortMs());
+    QVERIFY(sysid->setProperty("text", QStringLiteral("211")));
+    QTRY_VERIFY_WITH_TIMEOUT(!add->isEnabled(), TestTimeout::shortMs());
+    QVERIFY(findVisibleItem(_rootItem, QStringLiteral("newVehicleSysidTaken"), TestTimeout::shortMs()));
+}
+
+void VehicleLinksPageUITest::_failedAddKeepsFields()
+{
+    startUI();
+    QVERIFY(!QTest::currentTestFailed());
+    auto* const roles = _roles();
+    QVERIFY(roles);
+    QVERIFY(_openPage());
+    QQuickItem* const sysid = _requireItem(QStringLiteral("newVehicleSysid"));
+    QQuickItem* const name = _requireItem(QStringLiteral("newVehicleNickname"));
+    QQuickItem* const add = _requireItem(QStringLiteral("newVehicleAdd"));
+    QVERIFY(sysid && name && add);
+    QVERIFY(sysid->setProperty("text", QStringLiteral("211")));
+    QVERIFY(name->setProperty("text", QStringLiteral("Draft")));
+    QTRY_VERIFY_WITH_TIMEOUT(add->isEnabled(), TestTimeout::shortMs());
+    roles->addEntry(211, QStringLiteral("Rover"), QStringLiteral("Existing"), 0);
+    QVERIFY(QMetaObject::invokeMethod(add, "clicked"));
+    QCOMPARE(sysid->property("text").toString(), QStringLiteral("211"));
+    QCOMPARE(name->property("text").toString(), QStringLiteral("Draft"));
+    QVERIFY(sysid->setProperty("text", QStringLiteral("212")));
+    QTRY_VERIFY_WITH_TIMEOUT(add->isEnabled(), TestTimeout::shortMs());
+    QVERIFY(clickButtonScrolled(QStringLiteral("newVehicleAdd"), QStringLiteral("vehicleLinksFlickable")));
+    QCOMPARE(sysid->property("text").toString(), QString());
+    QCOMPARE(name->property("text").toString(), QString());
+}
+
+void VehicleLinksPageUITest::_duplicateConfigurationDisablesLinkAction()
+{
+    startUI();
+    QVERIFY(!QTest::currentTestFailed());
+    VehicleRoleController* const roles = _roles();
+    QVERIFY(roles);
+    auto* manager = LinkManager::instance();
+    const auto first = manager->addConfiguration(new UDPConfiguration(QStringLiteral("Duplicate UI link")));
+    SharedLinkConfigurationPtr second;
+    const auto cleanup = qScopeGuard([&] {
+        manager->removeConfiguration(first.get());
+        if (second) {
+            manager->removeConfiguration(second.get());
+        }
+    });
+    roles->addEntry(211, QStringLiteral("Rover"), QStringLiteral("Scout"), 0);
+    roles->addLink(0, QStringLiteral("Radio"), QStringLiteral("Duplicate UI link"));
+    QVERIFY(_openPage());
+    QQuickItem* const status = _requireItem(QStringLiteral("vehicleLinkStatus_211_0"));
+    QQuickItem* const action = _requireItem(QStringLiteral("vehicleLinkAction_211_0"));
+    QVERIFY(status && action);
+    QCOMPARE(status->property("text").toString(), QStringLiteral("Disconnected"));
+    QVERIFY(action->isEnabled());
+    second = manager->addConfiguration(new UDPConfiguration(QStringLiteral("Duplicate UI link")));
+    QTRY_COMPARE_WITH_TIMEOUT(status->property("text").toString(), QStringLiteral("Ambiguous name"),
+                              TestTimeout::shortMs());
+    QVERIFY(!action->isEnabled());
+    QQuickItem* const page = findItem(_rootItem, QStringLiteral("vehicleLinksPage"));
+    QVERIFY(page);
+    QVariant result;
+    QVERIFY(QMetaObject::invokeMethod(page, "_configForName", Q_RETURN_ARG(QVariant, result),
+                                      Q_ARG(QVariant, QStringLiteral("Duplicate UI link"))));
+    QVERIFY(result.isNull());
+    manager->removeConfiguration(second.get());
+    second.reset();
+    QVERIFY(QMetaObject::invokeMethod(page, "_configForName", Q_RETURN_ARG(QVariant, result),
+                                      Q_ARG(QVariant, QStringLiteral("Duplicate UI link"))));
+    QCOMPARE(result.value<QObject*>(), first.get());
+    QVERIFY(QMetaObject::invokeMethod(page, "_configForName", Q_RETURN_ARG(QVariant, result),
+                                      Q_ARG(QVariant, QStringLiteral("Missing UI link"))));
+    QVERIFY(result.isNull());
+}
+
+void VehicleLinksPageUITest::_stockLinkEditor()
+{
+    startUI();
+    QVERIFY(!QTest::currentTestFailed());
+    auto* const manager = LinkManager::instance();
+    const auto existing = manager->addConfiguration(new UDPConfiguration(QStringLiteral("Editor existing")));
+    const auto cleanup = qScopeGuard([&] { manager->removeConfiguration(existing.get()); });
+    QVERIFY(clickToolSelectDropdownButton(QStringLiteral("toolbar_viewSettings")));
+    QVERIFY(clickButtonScrolled(QStringLiteral("settingsButton_Comm Links"), QStringLiteral("settings_buttonList")));
+    QQuickItem* const add = findVisibleItem(_rootItem, QStringLiteral("stockAddLink"));
+    QVERIFY(add);
+    QVERIFY(QMetaObject::invokeMethod(add, "clicked"));
+    QVERIFY(waitForDialog(QStringLiteral("Add New Link")));
+    QQuickItem* const name = findVisibleItem(_rootItem, QStringLiteral("stockLinkName"));
+    QQuickItem* const save = findVisibleItem(_rootItem, QStringLiteral("popupDialog_acceptButton"));
+    QQuickItem* const type = findVisibleItem(_rootItem, QStringLiteral("stockLinkType"));
+    QQuickItem* const loader = findVisibleItem(_rootItem, QStringLiteral("stockLinkSettingsLoader"));
+    QVERIFY(name && save && type && loader);
+    QVERIFY(name->setProperty("text", QStringLiteral("Editor existing")));
+    QTRY_VERIFY_WITH_TIMEOUT(findVisibleItem(_rootItem, QStringLiteral("stockLinkNameTaken"), 0),
+                             TestTimeout::longMs());
+    QVERIFY(!save->isEnabled());
+    QVERIFY(name->setProperty("text", QStringLiteral("Editor unique")));
+    QTRY_VERIFY_WITH_TIMEOUT(save->isEnabled(), TestTimeout::longMs());
+    QVERIFY(name->setProperty("text", QStringLiteral("Editor existing")));
+    QObject* const dialog = name->property("dialog").value<QObject*>();
+    QVERIFY(dialog);
+    QPointer<LinkConfiguration> previous = qvariant_cast<LinkConfiguration*>(dialog->property("editingConfig"));
+    QVERIFY(previous);
+    QSignalSpy destroyed(previous, &QObject::destroyed);
+    const int nextType =
+        previous->type() == LinkConfiguration::TypeUdp ? LinkConfiguration::TypeSerial : LinkConfiguration::TypeUdp;
+    QVERIFY(QMetaObject::invokeMethod(type, "activated", Q_ARG(int, nextType)));
+    QTRY_VERIFY_WITH_TIMEOUT(previous.isNull(), TestTimeout::shortMs());
+    QCOMPARE(destroyed.count(), 1);
+    QTRY_VERIFY_WITH_TIMEOUT(loader->property("item").value<QObject*>(), TestTimeout::longMs());
+    QVERIFY(name->setProperty("text", QStringLiteral("Editor unique")));
+    QTRY_VERIFY_WITH_TIMEOUT(save->isEnabled(), TestTimeout::longMs());
+    QVERIFY(loader->setProperty("active", false));
+    QVERIFY(!loader->property("item").value<QObject*>());
+    QVERIFY(!save->isEnabled());
+    QVERIFY(QMetaObject::invokeMethod(dialog, "_accept"));
+    QVERIFY(dialogVisible(QStringLiteral("Add New Link")));
+    QVERIFY(loader->setProperty("active", true));
+    QTRY_VERIFY_WITH_TIMEOUT(loader->property("item").value<QObject*>(), TestTimeout::longMs());
+    QTRY_VERIFY_WITH_TIMEOUT(save->isEnabled(), TestTimeout::shortMs());
+    QVERIFY(name->setProperty("text", QStringLiteral("Editor existing")));
+    QVERIFY(!save->isEnabled());
+    QVERIFY(QMetaObject::invokeMethod(dialog, "_accept"));
+    QVERIFY(dialogVisible(QStringLiteral("Add New Link")));
+    QPointer<LinkConfiguration> current = qvariant_cast<LinkConfiguration*>(dialog->property("editingConfig"));
+    QVERIFY(current);
+    QSignalSpy currentDestroyed(current, &QObject::destroyed);
+    QVERIFY(rejectDialog());
+    QTRY_VERIFY_WITH_TIMEOUT(current.isNull(), TestTimeout::shortMs());
+    QCOMPARE(currentDestroyed.count(), 1);
+
+    // Locate the existing configuration's edit icon through its row, which has no object name.
+    const auto findText = [&](QQuickItem* root, const auto& self) -> QQuickItem* {
+        if (root->isVisible() && root->property("text").toString() == QStringLiteral("Editor existing")) {
+            return root;
+        }
+        for (QQuickItem* child : root->childItems()) {
+            if (auto* found = self(child, self)) {
+                return found;
+            }
+        }
+        return nullptr;
+    };
+    QQuickItem* const existingLabel = findText(_rootItem, findText);
+    QVERIFY(existingLabel && existingLabel->parentItem());
+    const auto rowItems = existingLabel->parentItem()->childItems();
+    const int labelIndex = rowItems.indexOf(existingLabel);
+    QVERIFY(labelIndex >= 0 && labelIndex + 1 < rowItems.size());
+    QVERIFY(_clickItemAt(rowItems.at(labelIndex + 1), 0.5, 0.5, QStringLiteral("Edit existing link")));
+    QVERIFY(waitForDialog(QStringLiteral("Edit Link")));
+    QQuickItem* const editName = findVisibleItem(_rootItem, QStringLiteral("stockLinkName"));
+    QVERIFY(editName);
+    QObject* const editDialog = editName->property("dialog").value<QObject*>();
+    QVERIFY(editDialog);
+    const auto conflicting = manager->addConfiguration(new UDPConfiguration(QStringLiteral("Edit conflict")));
+    const auto cleanupConflict = qScopeGuard([&] { manager->removeConfiguration(conflicting.get()); });
+    QVERIFY(editName->setProperty("text", QStringLiteral("Edit conflict")));
+    QTRY_VERIFY_WITH_TIMEOUT(findVisibleItem(_rootItem, QStringLiteral("stockLinkNameTaken"), 0),
+                             TestTimeout::shortMs());
+    QVERIFY(QMetaObject::invokeMethod(editDialog, "_accept"));
+    QVERIFY(dialogVisible(QStringLiteral("Edit Link")));
+    QVERIFY(qvariant_cast<LinkConfiguration*>(editDialog->property("editingConfig")));
+    QVERIFY(findVisibleItem(_rootItem, QStringLiteral("stockLinkNameTaken"), 0));
+    QCOMPARE(existing->name(), QStringLiteral("Editor existing"));
+    // The stock loader is asynchronous; accepted() returns early until its item exists.
+    QQuickItem* const editLoader = findVisibleItem(_rootItem, QStringLiteral("stockLinkSettingsLoader"));
+    QVERIFY(editLoader);
+    QTRY_VERIFY_WITH_TIMEOUT(editLoader->property("item").value<QObject*>() != nullptr, TestTimeout::longMs());
+    // _accept() is blocked while the name is taken, so emit accepted() to reach the manager's own refusal.
+    QVERIFY(QMetaObject::invokeMethod(editDialog, "accepted"));
+    QVERIFY(editDialog->property("preventClose").toBool());
+    QVERIFY(qvariant_cast<LinkConfiguration*>(editDialog->property("editingConfig")));
+    QCOMPARE(existing->name(), QStringLiteral("Editor existing"));
+    // _accept() would have cleared the flag; left set, the next _reject() would not close the dialog.
+    QVERIFY(editDialog->setProperty("preventClose", false));
+    QVERIFY(rejectDialog());
+
+    QVERIFY(QMetaObject::invokeMethod(add, "clicked"));
+    QVERIFY(waitForDialog(QStringLiteral("Add New Link")));
+    QQuickItem* const newName = findVisibleItem(_rootItem, QStringLiteral("stockLinkName"));
+    QQuickItem* const newSave = findVisibleItem(_rootItem, QStringLiteral("popupDialog_acceptButton"));
+    QVERIFY(newName && newSave);
+    QVERIFY(newName->setProperty("text", QStringLiteral("Stock editor saved")));
+    QTRY_VERIFY_WITH_TIMEOUT(newSave->isEnabled(), TestTimeout::longMs());
+    QObject* const newDialog = newName->property("dialog").value<QObject*>();
+    QVERIFY(newDialog);
+    QPointer<LinkConfiguration> saved = qvariant_cast<LinkConfiguration*>(newDialog->property("editingConfig"));
+    QVERIFY(saved);
+    const auto cleanupSaved = qScopeGuard([&] {
+        if (saved)
+            manager->removeConfiguration(saved.data());
+    });
+    auto* const configurations = manager->property("linkConfigurations").value<QmlObjectListModel*>();
+    QVERIFY(configurations);
+    const int count = configurations->count();
+    QVERIFY(acceptDialog());
+    QTRY_VERIFY_WITH_TIMEOUT(!dialogVisible(QStringLiteral("Add New Link")), TestTimeout::shortMs());
+    QTRY_COMPARE_WITH_TIMEOUT(configurations->count(), count + 1, TestTimeout::shortMs());
+    QVERIFY(saved);
+    QCOMPARE(saved->name(), QStringLiteral("Stock editor saved"));
+}
+
+void VehicleLinksPageUITest::_customLinkEditor_data()
+{
+    QTest::addColumn<int>("savedType");
+    QTest::newRow("serial") << static_cast<int>(LinkConfiguration::TypeSerial);
+    QTest::newRow("udp") << static_cast<int>(LinkConfiguration::TypeUdp);
+}
+
+void VehicleLinksPageUITest::_customLinkEditor()
+{
+    QFETCH(int, savedType);
+    startUI();
+    QVERIFY(!QTest::currentTestFailed());
+    VehicleRoleController* const roles = _roles();
+    QVERIFY(roles);
+    auto* const manager = LinkManager::instance();
+    const auto existing = manager->addConfiguration(new UDPConfiguration(QStringLiteral("Editor existing")));
+    QPointer<LinkConfiguration> saved;
+    const auto cleanup = qScopeGuard([&] {
+        manager->removeConfiguration(existing.get());
+        if (saved) {
+            manager->removeConfiguration(saved.data());
+        }
+    });
+    roles->addEntry(211, QStringLiteral("Rover"), QStringLiteral("Scout"), 0);
+    roles->addLink(0, QStringLiteral("Radio"), QString());
+    QVERIFY(_openPage());
+    QQuickItem* const page = findItem(_rootItem, QStringLiteral("vehicleLinksPage"));
+    QVERIFY(page);
+    QVERIFY(QMetaObject::invokeMethod(page, "_openCreateLinkDialog", Q_ARG(QVariant, 0), Q_ARG(QVariant, 0),
+                                      Q_ARG(QVariant, QStringLiteral("Rover")),
+                                      Q_ARG(QVariant, QStringLiteral("Radio"))));
+    QVERIFY(waitForDialog(QStringLiteral("New Link Configuration")));
+    QQuickItem* name = findVisibleItem(_rootItem, QStringLiteral("customLinkName"));
+    QQuickItem* save = findVisibleItem(_rootItem, QStringLiteral("popupDialog_acceptButton"));
+    QQuickItem* type = findVisibleItem(_rootItem, QStringLiteral("customLinkType"));
+    QVERIFY(name && save && type);
+    QObject* dialog = name->property("dialog").value<QObject*>();
+    QVERIFY(dialog);
+    QVERIFY(name->setProperty("text", QStringLiteral("Editor existing")));
+    QTRY_VERIFY_WITH_TIMEOUT(findVisibleItem(_rootItem, QStringLiteral("customLinkNameTaken"), 0),
+                             TestTimeout::longMs());
+    QVERIFY(!save->isEnabled());
+    QVERIFY(name->setProperty("text", QStringLiteral("Editor unique")));
+    QTRY_VERIFY_WITH_TIMEOUT(save->isEnabled(), TestTimeout::longMs());
+    QQuickItem* const initialLoader = findItem(_rootItem, QStringLiteral("customLinkSettingsLoader"));
+    QVERIFY(initialLoader);
+    QVERIFY(initialLoader->setProperty("active", false));
+    QVERIFY(!initialLoader->property("item").value<QObject*>());
+    QVERIFY(!save->isEnabled());
+    QVERIFY(QMetaObject::invokeMethod(dialog, "_accept"));
+    QVERIFY(dialogVisible(QStringLiteral("New Link Configuration")));
+    QVERIFY(initialLoader->setProperty("active", true));
+    QTRY_VERIFY_WITH_TIMEOUT(initialLoader->property("item").value<QObject*>(), TestTimeout::longMs());
+    QTRY_VERIFY_WITH_TIMEOUT(save->isEnabled(), TestTimeout::shortMs());
+    QVERIFY(name->setProperty("text", QStringLiteral("Editor existing")));
+    QVERIFY(!save->isEnabled());
+    QVERIFY(QMetaObject::invokeMethod(dialog, "_accept"));
+    QVERIFY(dialogVisible(QStringLiteral("New Link Configuration")));
+    QPointer<LinkConfiguration> first = qvariant_cast<LinkConfiguration*>(dialog->property("editingConfig"));
+    QVERIFY(first);
+    QSignalSpy firstDestroyed(first, &QObject::destroyed);
+    const int firstType = first->type();
+    const int secondType =
+        firstType == LinkConfiguration::TypeUdp ? LinkConfiguration::TypeTcp : LinkConfiguration::TypeUdp;
+    QVERIFY(QMetaObject::invokeMethod(type, "activated", Q_ARG(int, secondType)));
+    QTRY_VERIFY_WITH_TIMEOUT(first.isNull(), TestTimeout::shortMs());
+    QCOMPARE(firstDestroyed.count(), 1);
+    QPointer<LinkConfiguration> second = qvariant_cast<LinkConfiguration*>(dialog->property("editingConfig"));
+    QVERIFY(second);
+    QSignalSpy secondDestroyed(second, &QObject::destroyed);
+    QVERIFY(QMetaObject::invokeMethod(type, "activated", Q_ARG(int, firstType)));
+    QTRY_VERIFY_WITH_TIMEOUT(second.isNull(), TestTimeout::shortMs());
+    QCOMPARE(secondDestroyed.count(), 1);
+    QPointer<LinkConfiguration> current = qvariant_cast<LinkConfiguration*>(dialog->property("editingConfig"));
+    QVERIFY(current);
+    QCOMPARE(current->type(), static_cast<LinkConfiguration::LinkType>(firstType));
+    QSignalSpy currentDestroyed(current, &QObject::destroyed);
+    auto* const configurations = manager->property("linkConfigurations").value<QmlObjectListModel*>();
+    QVERIFY(configurations);
+    const int count = configurations->count();
+    QVERIFY(rejectDialog());
+    QTRY_VERIFY_WITH_TIMEOUT(current.isNull(), TestTimeout::shortMs());
+    QCOMPARE(currentDestroyed.count(), 1);
+    QCOMPARE(configurations->count(), count);
+
+    QVERIFY(QMetaObject::invokeMethod(page, "_openCreateLinkDialog", Q_ARG(QVariant, 0), Q_ARG(QVariant, 0),
+                                      Q_ARG(QVariant, QStringLiteral("Rover")),
+                                      Q_ARG(QVariant, QStringLiteral("Radio"))));
+    QVERIFY(waitForDialog(QStringLiteral("New Link Configuration")));
+    name = findVisibleItem(_rootItem, QStringLiteral("customLinkName"));
+    type = findVisibleItem(_rootItem, QStringLiteral("customLinkType"));
+    QQuickItem* const loader = findVisibleItem(_rootItem, QStringLiteral("customLinkSettingsLoader"));
+    QVERIFY(name && type && loader);
+    dialog = name->property("dialog").value<QObject*>();
+    QVERIFY(dialog);
+    QVERIFY(name->setProperty("text", QStringLiteral("Editor unique")));
+    auto* initial = qvariant_cast<LinkConfiguration*>(dialog->property("editingConfig"));
+    QVERIFY(initial);
+    if (initial->type() != LinkConfiguration::TypeSerial) {
+        QVERIFY(
+            QMetaObject::invokeMethod(type, "activated", Q_ARG(int, static_cast<int>(LinkConfiguration::TypeSerial))));
+    }
+    QTRY_VERIFY_WITH_TIMEOUT(loader->property("item").value<QObject*>(), TestTimeout::longMs());
+    QVERIFY(loader->property("source").toUrl().toString().endsWith(QStringLiteral("/SerialSettings.qml")));
+    QVERIFY(findVisibleItem(_rootItem, QStringLiteral("serialPortCombo"), TestTimeout::longMs()));
+    if (savedType == LinkConfiguration::TypeUdp) {
+        QVERIFY(QMetaObject::invokeMethod(type, "activated", Q_ARG(int, savedType)));
+        QTRY_VERIFY_WITH_TIMEOUT(loader->property("item").value<QObject*>(), TestTimeout::longMs());
+        QVERIFY(loader->property("source").toUrl().toString().endsWith(QStringLiteral("/UdpSettings.qml")));
+    }
+    save = findVisibleItem(_rootItem, QStringLiteral("popupDialog_acceptButton"));
+    QVERIFY(save);
+    QTRY_VERIFY_WITH_TIMEOUT(save->isEnabled(), TestTimeout::longMs());
+    saved = qvariant_cast<LinkConfiguration*>(dialog->property("editingConfig"));
+    QVERIFY(saved);
+    QVERIFY(acceptDialog());
+    QTRY_VERIFY_WITH_TIMEOUT(!dialogVisible(QStringLiteral("New Link Configuration")), TestTimeout::shortMs());
+    QTRY_COMPARE_WITH_TIMEOUT(configurations->count(), count + 1, TestTimeout::shortMs());
+    QCOMPARE(saved->name(), QStringLiteral("Editor unique"));
+    QCOMPARE(saved->type(), static_cast<LinkConfiguration::LinkType>(savedType));
+    auto* const roleLink = qobject_cast<VehicleRoleLinkEntry*>(roles->linksForSysid(211)->get(0));
+    QVERIFY(roleLink);
+    QCOMPARE(roleLink->linkConfigName(), QStringLiteral("Editor unique"));
+}
+
+void VehicleLinksPageUITest::_singleVehicleDisconnectsImmediately()
+{
+    auto* const manager = LinkManager::instance();
+    auto config = std::make_shared<MockConfiguration>(QStringLiteral("Single vehicle link"));
+    config->setSystemId(211);
+    config->setIncrementVehicleId(false);
+    config->setDynamic(true);
+    auto listed = manager->addConfiguration(new MockConfiguration(config.get()));
+    const auto cleanup = qScopeGuard([&] { manager->removeConfiguration(listed.get()); });
+    runWithMockLink(
+        [manager, listed]() mutable -> MockLink* {
+            if (!manager->createConnectedLink(listed)) {
+                return nullptr;
+            }
+            return qobject_cast<MockLink*>(listed->link());
+        },
+        [this, listed](QPointer<MockLink> link, Vehicle* vehicle) {
+            QVERIFY(link && vehicle);
+            auto* const roles = _roles();
+            QVERIFY(roles);
+            roles->addEntry(vehicle->id(), QStringLiteral("Rover"), QStringLiteral("Scout"), 0);
+            roles->addLink(0, QStringLiteral("Radio"), listed->name());
+            QVERIFY(_openPage());
+            const QString action = QStringLiteral("vehicleLinkAction_%1_0").arg(vehicle->id());
+            QQuickItem* const button = findVisibleItemScrolled(action, QStringLiteral("vehicleLinksFlickable"));
+            QVERIFY(button);
+            QTRY_COMPARE_WITH_TIMEOUT(button->property("text").toString(), QStringLiteral("Disconnect link"),
+                                      TestTimeout::longMs());
+            QVERIFY(clickButtonScrolled(action, QStringLiteral("vehicleLinksFlickable")));
+            QVERIFY(!dialogVisible(QStringLiteral("Disconnect link")));
+            QTRY_VERIFY_WITH_TIMEOUT(!listed->link(), TestTimeout::longMs());
+        });
+}
+
+void VehicleLinksPageUITest::_sharedLinkDisconnectAsksFirst()
+{
+    auto* const manager = LinkManager::instance();
+    auto config = std::make_shared<MockConfiguration>(QStringLiteral("Shared vehicle link"));
+    config->setSystemId(211);
+    config->setIncrementVehicleId(false);
+    config->setDynamic(true);
+    auto listed = manager->addConfiguration(new MockConfiguration(config.get()));
+    const auto cleanup = qScopeGuard([&] { manager->removeConfiguration(listed.get()); });
+    runWithMockLink(
+        [manager, listed]() mutable -> MockLink* {
+            return manager->createConnectedLink(listed) ? qobject_cast<MockLink*>(listed->link()) : nullptr;
+        },
+        [this, listed](QPointer<MockLink> link, Vehicle* vehicle) {
+            QVERIFY(link && vehicle);
+            auto* const roles = _roles();
+            QVERIFY(roles);
+            roles->addEntry(211, QStringLiteral("Rover"), QStringLiteral("Scout"), 0);
+            roles->addEntry(212, QStringLiteral("Plane"), QStringLiteral("Sentinel"), 0);
+            roles->addLink(0, QStringLiteral("Radio"), listed->name());
+            QVERIFY(_openPage());
+            QVERIFY(findVisibleItem(_rootItem, QStringLiteral("vehicleLinksFlickable"), TestTimeout::mediumMs()));
+            auto* secondConfig = new MockConfiguration(QStringLiteral("Second vehicle link"));
+            secondConfig->setSystemId(212);
+            secondConfig->setIncrementVehicleId(false);
+            secondConfig->setDynamic(true);
+            expectAppMessage(QRegularExpression(QStringLiteral("Connected to Vehicle 212")));
+            QPointer<MockLink> secondLink = MockLink::startMockLink(secondConfig);
+            QVERIFY(secondLink);
+            const auto disconnectSecond = qScopeGuard([&] {
+                if (secondLink)
+                    secondLink->disconnect();
+            });
+            auto* const vehicleManager = MultiVehicleManager::instance();
+            QTRY_VERIFY_WITH_TIMEOUT(vehicleManager->getVehicleById(212), TestTimeout::longMs());
+            Vehicle* const secondVehicle = vehicleManager->getVehicleById(212);
+            QTRY_VERIFY_WITH_TIMEOUT(secondVehicle->isInitialConnectComplete(), TestTimeout::longMs());
+            QVERIFY(waitForDialog(QCoreApplication::applicationName(), TestTimeout::longMs()));
+            verifyExpectedLogMessage();
+            QVERIFY(acceptDialog());
+            QTRY_VERIFY_WITH_TIMEOUT(!dialogVisible(QString()), TestTimeout::shortMs());
+            mavlink_message_t heartbeat{};
+            heartbeat.msgid = MAVLINK_MSG_ID_HEARTBEAT;
+            secondVehicle->vehicleLinkManager()->mavlinkMessageReceived(link, heartbeat);
+            QVERIFY(secondVehicle->vehicleLinkManager()->linkNames().contains(listed->name()));
+            const QString action = QStringLiteral("vehicleLinkAction_211_0");
+            QQuickItem* const button = findVisibleItemScrolled(action, QStringLiteral("vehicleLinksFlickable"));
+            QVERIFY(button);
+            QTRY_COMPARE_WITH_TIMEOUT(button->property("text").toString(), QStringLiteral("Disconnect link"),
+                                      TestTimeout::longMs());
+            QVERIFY(clickButtonScrolled(action, QStringLiteral("vehicleLinksFlickable")));
+            QVERIFY(waitForDialog(QStringLiteral("Disconnect link")));
+            QVERIFY(listed->link() && link->isConnected());
+            const std::function<bool(QQuickItem*)> containsMessage = [&](QQuickItem* item) {
+                if (item->isVisible()) {
+                    const QString text = item->property("text").toString();
+                    if (text.contains(QStringLiteral("Scout (211)")) &&
+                        text.contains(QStringLiteral("Sentinel (212)"))) {
+                        return true;
+                    }
+                    for (QQuickItem* child : item->childItems()) {
+                        if (containsMessage(child)) {
+                            return true;
+                        }
+                    }
+                }
+                return false;
+            };
+            QVERIFY(containsMessage(_rootItem));
+            QVERIFY(rejectDialog());
+            QTRY_VERIFY_WITH_TIMEOUT(!dialogVisible(QString()), TestTimeout::shortMs());
+            QVERIFY(listed->link() && link->isConnected());
+            QVERIFY(clickButtonScrolled(action, QStringLiteral("vehicleLinksFlickable")));
+            QVERIFY(waitForDialog(QStringLiteral("Disconnect link")));
+            QVERIFY(listed->link() && link->isConnected());
+            QVERIFY(acceptDialog());
+            QTRY_VERIFY_WITH_TIMEOUT(!listed->link(), TestTimeout::longMs());
+        });
 }
 
 void VehicleLinksPageUITest::_linksBelongToTheirVehicle()
@@ -321,16 +777,16 @@ void VehicleLinksPageUITest::_linksBelongToTheirVehicle()
     QQuickItem* const linkName = _requireItem(QStringLiteral("vehicleNewLinkName_257"));
     QVERIFY(linkName);
     QVERIFY(linkName->setProperty("text", QStringLiteral("Microhard")));
-    QVERIFY(clickButton(QStringLiteral("vehicleAddLink_257")));
+    QVERIFY(clickButtonScrolled(QStringLiteral("vehicleAddLink_257"), QStringLiteral("vehicleLinksFlickable")));
     QTRY_COMPARE_WITH_TIMEOUT(roles->linksForSysid(257)->count(), 1, TestTimeout::mediumMs());
     QCOMPARE(roles->linksForSysid(1)->count(), 0);
     QCOMPARE(linkName->property("text").toString(), QString());
 
-    QVERIFY(clickButton(QStringLiteral("vehicleRemoveLink_257_0")));
+    QVERIFY(clickButtonScrolled(QStringLiteral("vehicleRemoveLink_257_0"), QStringLiteral("vehicleLinksFlickable")));
     QTRY_COMPARE_WITH_TIMEOUT(roles->linksForSysid(257)->count(), 0, TestTimeout::mediumMs());
 
     // Removing a vehicle takes its card with it and leaves the other alone
-    QVERIFY(clickButton(QStringLiteral("vehicleRemove_257")));
+    QVERIFY(clickButtonScrolled(QStringLiteral("vehicleRemove_257"), QStringLiteral("vehicleLinksFlickable")));
     QTRY_VERIFY_WITH_TIMEOUT(roles->roleForSysid(257).isEmpty(), TestTimeout::mediumMs());
     QTRY_VERIFY_WITH_TIMEOUT(findVisibleItem(_rootItem, QStringLiteral("vehicleCard_257"), 0) == nullptr,
                              TestTimeout::mediumMs());
@@ -428,6 +884,19 @@ void VehicleLinksPageUITest::_preferredAndStatusTagsFollowVehicle()
             QQuickItem* const otherPrimary = _requireItem(QStringLiteral("vehicleLinkPrimary_%1_0").arg(otherSysid));
             QQuickItem* const otherLost = _requireItem(QStringLiteral("vehicleLinkLost_%1_0").arg(otherSysid));
             QVERIFY(firstPrimary && secondPrimary && secondLost && otherPrimary && otherLost);
+            const auto checkAmbiguousTag = [this](QQuickItem* tag, const QString& name) {
+                auto* const manager = LinkManager::instance();
+                const auto first = manager->addConfiguration(new UDPConfiguration(name));
+                const auto second = manager->addConfiguration(new UDPConfiguration(name));
+                const auto cleanup = qScopeGuard([&] {
+                    manager->removeConfiguration(first.get());
+                    manager->removeConfiguration(second.get());
+                });
+                QTRY_VERIFY_WITH_TIMEOUT(!tag->isVisible(), TestTimeout::shortMs());
+            };
+            QTRY_VERIFY_WITH_TIMEOUT(firstPrimary->isVisible(), TestTimeout::shortMs());
+            checkAmbiguousTag(firstPrimary, QStringLiteral("UI RFD"));
+            QVERIFY(!QTest::currentTestFailed());
             QTRY_VERIFY_WITH_TIMEOUT(firstPrimary->isVisible(), TestTimeout::shortMs());
             QVERIFY(!secondPrimary->isVisible() && !secondLost->isVisible());
             QVERIFY(!otherPrimary->isVisible() && !otherLost->isVisible());
@@ -451,6 +920,9 @@ void VehicleLinksPageUITest::_preferredAndStatusTagsFollowVehicle()
             QVERIFY(secondaryRowPrimary && secondaryRowLost);
             secondary->setCommLost(true);
             QTRY_VERIFY_WITH_TIMEOUT(secondaryRowLost->isVisible(), TestTimeout::longMs());
+            checkAmbiguousTag(secondaryRowLost, QStringLiteral("UI Secondary"));
+            QVERIFY(!QTest::currentTestFailed());
+            QTRY_VERIFY_WITH_TIMEOUT(secondaryRowLost->isVisible(), TestTimeout::shortMs());
             QVERIFY(!secondaryRowPrimary->isVisible());
             QVERIFY(secondPrimary->isVisible() && !secondLost->isVisible());
             QSignalSpy primaryChanges(links, &VehicleLinkManager::primaryLinkChanged);
@@ -494,6 +966,9 @@ void VehicleLinksPageUITest::_preferredAndStatusTagsFollowVehicle()
             QTRY_VERIFY_WITH_TIMEOUT(!secondPrimary->isVisible() && !secondLost->isVisible(), TestTimeout::shortMs());
             QQuickItem* const notAttached = _requireItem(QStringLiteral("vehicleLinkNotAttached_%1_1").arg(sysid));
             QVERIFY(notAttached);
+            QTRY_VERIFY_WITH_TIMEOUT(notAttached->isVisible(), TestTimeout::shortMs());
+            checkAmbiguousTag(notAttached, QStringLiteral("UI UDP"));
+            QVERIFY(!QTest::currentTestFailed());
             QTRY_VERIFY_WITH_TIMEOUT(notAttached->isVisible(), TestTimeout::shortMs());
             QCOMPARE(notAttached->property("text").toString(), QStringLiteral("Not connected to this vehicle"));
             backup->disconnect();

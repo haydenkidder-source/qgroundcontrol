@@ -23,6 +23,14 @@ private slots:
     void _connectedVehicleIsOfferedForOneClickSetup_data();
     void _connectedVehicleIsOfferedForOneClickSetup();
     void _nicknameAlreadyInUseBlocksAdd();
+    void _existingSystemIdBlocksAdd();
+    void _failedAddKeepsFields();
+    void _duplicateConfigurationDisablesLinkAction();
+    void _stockLinkEditor();
+    void _customLinkEditor_data();
+    void _customLinkEditor();
+    void _singleVehicleDisconnectsImmediately();
+    void _sharedLinkDisconnectAsksFirst();
     void _linksBelongToTheirVehicle();
     void _preferredAndStatusTagsFollowVehicle_data();
     void _preferredAndStatusTagsFollowVehicle();

@@ -550,6 +550,8 @@ if(QGC_BUILD_TESTING)
         Integration
         NoSanitizer
         Vehicle
+        SHARDS
+        2
     )
     cmake_language(
         DEFER

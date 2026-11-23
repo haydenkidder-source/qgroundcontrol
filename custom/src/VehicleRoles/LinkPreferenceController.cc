@@ -3,6 +3,7 @@
 #include <QtCore/QCoreApplication>
 
 #include "GeoFenceManager.h"
+#include "LinkManager.h"
 #include "MissionManager.h"
 #include "MultiVehicleManager.h"
 #include "ParameterManager.h"
@@ -136,12 +137,15 @@ LinkPreferencePolicy::Input LinkPreferenceController::_input(Vehicle* vehicle,
     if (transferFlags) {
         *transferFlags = flags;
     }
-    return {.preferredName = _roles->preferredLinkConfigNameForSysid(vehicle->id()),
+    const QString preferredName = _roles->preferredLinkConfigNameForSysid(vehicle->id());
+    return {.preferredName = preferredName,
             .linkNames = links->linkNames(),
             .linkStatuses = links->linkStatuses(),
             .primaryName = links->primaryLinkName(),
             .initialConnectDone = vehicle->isInitialConnectComplete(),
-            .transferActive = LinkPreferencePolicy::transferActive(flags)};
+            .transferActive = LinkPreferencePolicy::transferActive(flags),
+            .configurationAmbiguous =
+                !preferredName.isEmpty() && LinkManager::instance()->configurationCount(preferredName) > 1};
 }
 
 void LinkPreferenceController::_observe(State* state)
@@ -196,6 +200,8 @@ QString LinkPreferenceController::_statusText(const LinkPreferencePolicy::Input&
             return tr("Automatic return is off. Tick Preferred on one link to turn it on.");
         case LinkPreferencePolicy::Gate::NotAttached:
             return tr("%1 is not connected to this vehicle right now.").arg(input.preferredName);
+        case LinkPreferencePolicy::Gate::Ambiguous:
+            return tr("%1 has an ambiguous name.").arg(input.preferredName);
         case LinkPreferencePolicy::Gate::OnPreferred:
             return tr("Using %1, the preferred link.").arg(input.preferredName);
         case LinkPreferencePolicy::Gate::PreferredDown:
@@ -231,6 +237,8 @@ const char* LinkPreferenceController::_gateName(LinkPreferencePolicy::Gate gate)
             return "Off";
         case LinkPreferencePolicy::Gate::NotAttached:
             return "NotAttached";
+        case LinkPreferencePolicy::Gate::Ambiguous:
+            return "Ambiguous";
         case LinkPreferencePolicy::Gate::OnPreferred:
             return "OnPreferred";
         case LinkPreferencePolicy::Gate::PreferredDown:

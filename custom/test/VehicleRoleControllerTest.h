@@ -18,6 +18,8 @@ private slots:
     void _suggestedRoleFollowsVehicleType_data();
     void _suggestedRoleFollowsVehicleType();
     void _addEntryRejectsUnrecognizedRole();
+    void _addEntryIfNewDoesNotReplace();
+    void _ambiguousConnectedConfiguration();
     void _loadMigratesUnrecognizedSavedRoleToName();
     void _nicknamesMustBeDistinct();
     void _savedDuplicateNicknamesStillLoad();

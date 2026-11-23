@@ -30,6 +30,7 @@ public:
 #endif
 
 private slots:
+    void _testConfigurationNameValidation();
     void _testRetryGateDiagnostics();
     void _testSuspensionDiagnostics();
     void _testCreationDiagnostics();

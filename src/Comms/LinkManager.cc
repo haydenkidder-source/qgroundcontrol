@@ -758,29 +758,44 @@ QStringList LinkManager::linkTypeStrings() const
     return list;
 }
 
-void LinkManager::endConfigurationEditing(LinkConfiguration *config, LinkConfiguration *editedConfig)
+bool LinkManager::isConfigurationNameValid(const QString& name, const LinkConfiguration* excluding) const
 {
-    if (!config || !editedConfig) {
-        qCWarning(LinkManagerLog) << "Internal error";
-        return;
+    if (name.isEmpty()) {
+        return false;
+    }
+    if (excluding && excluding->name() == name) {
+        return true;
+    }
+    for (const auto& config : _rgLinkConfigs) {
+        if (config && config.get() != excluding && config->name() == name) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool LinkManager::endConfigurationEditing(LinkConfiguration* config, LinkConfiguration* editedConfig)
+{
+    if (!config || !editedConfig || !isConfigurationNameValid(editedConfig->name(), config)) {
+        return false;
     }
 
     config->copyFrom(editedConfig);
     saveLinkConfigurationList();
     emit config->nameChanged(config->name());
-    // Discard temporary duplicate
     delete editedConfig;
+    return true;
 }
 
-void LinkManager::endCreateConfiguration(LinkConfiguration *config)
+bool LinkManager::endCreateConfiguration(LinkConfiguration* config)
 {
-    if (!config) {
-        qCWarning(LinkManagerLog) << "Internal error";
-        return;
+    if (!config || !isConfigurationNameValid(config->name(), nullptr)) {
+        return false;
     }
 
     addConfiguration(config);
     saveLinkConfigurationList();
+    return true;
 }
 
 LinkConfiguration *LinkManager::createConfiguration(int type, const QString &name)
@@ -901,6 +916,12 @@ SharedLinkConfigurationPtr LinkManager::addConfiguration(LinkConfiguration *conf
     (void) _rgLinkConfigs.append(SharedLinkConfigurationPtr(config));
 
     return _rgLinkConfigs.last();
+}
+
+int LinkManager::configurationCount(const QString& name) const
+{
+    return std::count_if(_rgLinkConfigs.cbegin(), _rgLinkConfigs.cend(),
+                         [&name](const auto& config) { return config && config->name() == name; });
 }
 
 bool LinkManager::containsConfiguration(const QString& name) const

@@ -82,10 +82,13 @@ public:
 
     /// Create/Edit Link Configuration
     Q_INVOKABLE LinkConfiguration *createConfiguration(int type, const QString &name);
-    Q_INVOKABLE LinkConfiguration *startConfigurationEditing(LinkConfiguration *config);
-    Q_INVOKABLE void cancelConfigurationEditing(LinkConfiguration *config) const { delete config; }
-    Q_INVOKABLE void endConfigurationEditing(LinkConfiguration *config, LinkConfiguration *editedConfig);
-    Q_INVOKABLE void endCreateConfiguration(LinkConfiguration *config);
+    Q_INVOKABLE LinkConfiguration* startConfigurationEditing(LinkConfiguration* config);
+
+    Q_INVOKABLE void cancelConfigurationEditing(LinkConfiguration* config) const { delete config; }
+
+    Q_INVOKABLE bool isConfigurationNameValid(const QString& name, const LinkConfiguration* excluding = nullptr) const;
+    Q_INVOKABLE bool endConfigurationEditing(LinkConfiguration* config, LinkConfiguration* editedConfig);
+    Q_INVOKABLE bool endCreateConfiguration(LinkConfiguration* config);
     Q_INVOKABLE void removeConfiguration(LinkConfiguration *config);
     /// This should only be used by Qml code
     Q_INVOKABLE void createConnectedLink(const LinkConfiguration *config);
@@ -137,6 +140,7 @@ public:
 
     SharedLinkConfigurationPtr addConfiguration(LinkConfiguration *config);
     bool containsConfiguration(const QString& name) const;
+    int configurationCount(const QString& name) const;
 
     void startAutoConnectedLinks();
 

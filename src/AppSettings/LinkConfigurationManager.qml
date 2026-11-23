@@ -88,6 +88,7 @@ QGCGroupBox {
     }
 
     LabelledButton {
+        objectName: "stockAddLink"
         label:      qsTr("Add New Link")
         buttonText: qsTr("Add")
 
@@ -107,25 +108,53 @@ QGCGroupBox {
         id: linkDialogComponent
 
         QGCPopupDialog {
+            id:                     linkDialog
             title:                  originalConfig ? qsTr("Edit Link") : qsTr("Add New Link")
             buttons:                Dialog.Save | Dialog.Cancel
-            acceptButtonEnabled:    nameField.text !== ""
+            acceptButtonEnabled:    nameField.text !== "" && nameValid && linkSettingsLoader.status === Loader.Ready
 
             property var originalConfig
             property var editingConfig
+            readonly property bool nameValid: {
+                const configs = _linkManager.linkConfigurations
+                // Track renames as well as changes to the configuration list.
+                for (let i = 0; i < configs.count; i++) {
+                    configs.get(i).name
+                }
+                return _linkManager.isConfigurationNameValid(nameField.text, originalConfig)
+            }
 
             onAccepted: {
+                if (!editingConfig || !linkSettingsLoader.item) {
+                    preventClose = true
+                    return
+                }
                 linkSettingsLoader.item.saveSettings()
                 editingConfig.name = nameField.text
                 if (originalConfig) {
-                    _linkManager.endConfigurationEditing(originalConfig, editingConfig)
+                    linkSettingsLoader.active = false
+                    preventClose = !_linkManager.endConfigurationEditing(originalConfig, editingConfig)
+                    if (preventClose) {
+                        linkSettingsLoader.active = true
+                    } else {
+                        editingConfig = null
+                    }
                 } else {
                     editingConfig.dynamic = false
-                    _linkManager.endCreateConfiguration(editingConfig)
+                    preventClose = !_linkManager.endCreateConfiguration(editingConfig)
+                    if (!preventClose) {
+                        linkSettingsLoader.active = false
+                        editingConfig = null
+                    }
                 }
             }
 
-            onRejected: _linkManager.cancelConfigurationEditing(editingConfig)
+            onRejected: {
+                const config = editingConfig
+                linkSettingsLoader.active = false
+                editingConfig = null
+                Qt.callLater(function() { _linkManager.cancelConfigurationEditing(config) })
+            }
 
             ColumnLayout {
                 spacing: ScreenTools.defaultFontPixelHeight / 2
@@ -137,27 +166,37 @@ QGCGroupBox {
                     QGCLabel { text: qsTr("Name") }
                     QGCTextField {
                         id:                 nameField
+                        objectName:         "stockLinkName"
+                        property var dialog: linkDialog
                         Layout.fillWidth:   true
-                        text:               editingConfig.name
+                        text:               editingConfig ? editingConfig.name : ""
                         placeholderText:    qsTr("Enter name")
                     }
+                }
+
+                QGCLabel {
+                    objectName: "stockLinkNameTaken"
+                    visible: nameField.text !== "" && !nameValid
+                    color: QGroundControl.globalPalette.errorText
+                    text: qsTr("Name already in use")
                 }
 
                 QGCCheckBoxSlider {
                     Layout.fillWidth:   true
                     text:               qsTr("Automatically Connect on Start")
-                    checked:            editingConfig.autoConnect
-                    onCheckedChanged:   editingConfig.autoConnect = checked
+                    checked:            editingConfig ? editingConfig.autoConnect : false
+                    onCheckedChanged:   { if (editingConfig) editingConfig.autoConnect = checked }
                 }
 
                 QGCCheckBoxSlider {
                     Layout.fillWidth:   true
                     text:               qsTr("High Latency")
-                    checked:            editingConfig.highLatency
-                    onCheckedChanged:   editingConfig.highLatency = checked
+                    checked:            editingConfig ? editingConfig.highLatency : false
+                    onCheckedChanged:   { if (editingConfig) editingConfig.highLatency = checked }
                 }
 
                 LabelledComboBox {
+                    objectName:             "stockLinkType"
                     label:                  qsTr("Type")
                     enabled:                originalConfig == null
                     model:                  _linkManager.linkTypeStrings
@@ -165,14 +204,18 @@ QGCGroupBox {
 
                     onActivated: (index) => {
                         if (index !== editingConfig.linkType) {
-                            var name = nameField.text
-                            editingConfig = _linkManager.createConfiguration(index, name)
+                            var previousConfig = editingConfig
+                            linkSettingsLoader.active = false
+                            editingConfig = _linkManager.createConfiguration(index, nameField.text)
+                            linkSettingsLoader.active = true
+                            Qt.callLater(function() { _linkManager.cancelConfigurationEditing(previousConfig) })
                         }
                     }
                 }
 
                 Loader {
                     id:     linkSettingsLoader
+                    objectName: "stockLinkSettingsLoader"
                     source: editingConfig && editingConfig.settingsURL ? editingConfig.settingsURL : ""
                     asynchronous: true
 

@@ -9,6 +9,7 @@ import QGroundControl.AnalyzeView
 
 AnalyzePage {
     id:                 vehicleLinksPage
+    objectName:         "vehicleLinksPage"
     pageComponent:      pageComponent
     pageDescription:    qsTr("Set up each vehicle and its radio links in one place. A vehicle is its MAVLink " +
                               "system ID (sysid), an ArduPilot type and an optional nickname; QGC reads the " +
@@ -62,8 +63,22 @@ AnalyzePage {
     readonly property string _createNewChoice: qsTr("Create New Link…")
     readonly property string _pickTypeText:    qsTr("Pick a type…")
 
-    function _configForName(name) {
+    function _configCount(name) {
         if (!name) {
+            return 0
+        }
+        const configs = _linkManager.linkConfigurations
+        let count = 0
+        for (let i = 0; i < configs.count; i++) {
+            if (configs.get(i).name === name) {
+                count++
+            }
+        }
+        return count
+    }
+
+    function _configForName(name) {
+        if (_configCount(name) !== 1) {
             return null
         }
         const configs = _linkManager.linkConfigurations
@@ -73,6 +88,18 @@ AnalyzePage {
             }
         }
         return null
+    }
+
+    function _vehiclesUsingLink(name) {
+        const result = []
+        for (let i = 0; i < _vehicles.count; i++) {
+            const vehicle = _vehicles.get(i)
+            if (vehicle && vehicle.vehicleLinkManager && vehicle.vehicleLinkManager.linkNames.indexOf(name) >= 0) {
+                const label = _controller.nameForSysid(vehicle.id)
+                result.push(label ? label + " (" + vehicle.id + ")" : qsTr("Vehicle %1").arg(vehicle.id))
+            }
+        }
+        return result
     }
 
     function _vehicleForSysid(sysid) {
@@ -210,8 +237,8 @@ AnalyzePage {
                                 objectName: "setUpAdd_" + setUpRow.modelData.sysid
                                 text:       qsTr("Add Vehicle")
                                 enabled:    setUpRoleCombo.currentIndex >= 0 && !setUpNameField.taken
-                                onClicked:  _controller.addEntry(setUpRow.modelData.sysid, setUpRoleCombo.currentText,
-                                                                 setUpNameField.text, 0)
+                                onClicked:  _controller.addEntryIfNew(setUpRow.modelData.sysid, setUpRoleCombo.currentText,
+                                                                      setUpNameField.text, 0)
                             }
 
                             QGCLabel {
@@ -328,6 +355,9 @@ AnalyzePage {
                                     property var  _linkObject:     object
                                     property var  _resolvedConfig: vehicleLinksPage._configForName(
                                                                         _linkObject.linkConfigName)
+                                    property bool _ambiguous: vehicleLinksPage._configCount(_linkObject.linkConfigName) > 1 ||
+                                                              entrySection._linkState.names.filter(
+                                                                  name => name === _linkObject.linkConfigName).length > 1
                                     property bool _connected:      _resolvedConfig !== null && _resolvedConfig.linkActive
                                     readonly property int _attachedIndex: entrySection._linkState.names.indexOf(
                                                                               _linkObject.linkConfigName)
@@ -361,17 +391,29 @@ AnalyzePage {
                                     }
 
                                     QGCLabel {
+                                        objectName:             "vehicleLinkStatus_" + _entry.sysid + "_" + _linkIndex
                                         Layout.preferredWidth:  ScreenTools.defaultFontPixelWidth * 12
                                         color:                  _connected ? qgcPal.colorGreen : qgcPal.colorGrey
-                                        text:                   _connected ? qsTr("Connected") : qsTr("Disconnected")
+                                        text:                   _ambiguous ? qsTr("Ambiguous name") :
+                                                                    (_connected ? qsTr("Connected") : qsTr("Disconnected"))
                                     }
 
                                     QGCButton {
-                                        text:       _connected ? qsTr("Disconnect") : qsTr("Connect")
-                                        enabled:    _resolvedConfig !== null
+                                        objectName: "vehicleLinkAction_" + _entry.sysid + "_" + _linkIndex
+                                        text:       _connected ? qsTr("Disconnect link") : qsTr("Connect")
+                                        enabled:    _resolvedConfig !== null && !_ambiguous
                                         onClicked: {
                                             if (_connected) {
-                                                _linkManager.disconnectLinkConfiguration(_resolvedConfig)
+                                                const vehicles = vehicleLinksPage._vehiclesUsingLink(_linkObject.linkConfigName)
+                                                if (vehicles.length > 1) {
+                                                    const config = _resolvedConfig
+                                                    QGroundControl.showMessageDialog(vehicleLinksPage, qsTr("Disconnect link"),
+                                                        qsTr("Disconnect this link for %1?").arg(vehicles.join(", ")),
+                                                        Dialog.Ok | Dialog.Cancel,
+                                                        function() { _linkManager.disconnectLinkConfiguration(config) })
+                                                } else {
+                                                    _linkManager.disconnectLinkConfiguration(_resolvedConfig)
+                                                }
                                             } else {
                                                 _linkManager.createConnectedLink(_resolvedConfig)
                                             }
@@ -391,14 +433,14 @@ AnalyzePage {
                                             objectName: "vehicleLinkNotAttached_" + _entry.sysid + "_" + _linkIndex
                                             text:       qsTr("Not connected to this vehicle")
                                             color:      qgcPal.warningText
-                                            visible:    _linkObject.preferred && _vehicle !== null && _attachedIndex < 0
+                                            visible:    !_ambiguous && _linkObject.preferred && _vehicle !== null && _attachedIndex < 0
                                         }
 
                                         QGCLabel {
                                             objectName: "vehicleLinkPrimary_" + _entry.sysid + "_" + _linkIndex
                                             text:       qsTr("Primary")
                                             color:      qgcPal.colorGreen
-                                            visible:    _attachedIndex >= 0 &&
+                                            visible:    !_ambiguous && _attachedIndex >= 0 &&
                                                         entrySection._linkState.primary === _linkObject.linkConfigName
                                         }
 
@@ -406,7 +448,7 @@ AnalyzePage {
                                             objectName: "vehicleLinkLost_" + _entry.sysid + "_" + _linkIndex
                                             text:       qsTr("Comm lost")
                                             color:      qgcPal.warningText
-                                            visible:    _attachedIndex >= 0 &&
+                                            visible:    !_ambiguous && _attachedIndex >= 0 &&
                                                         _attachedIndex < entrySection._linkState.statuses.length &&
                                                         entrySection._linkState.statuses[_attachedIndex] !== ""
                                         }
@@ -503,6 +545,10 @@ AnalyzePage {
                             locale: "C"
                         }
                         readonly property real sysid: Number(text)
+                        readonly property bool taken: {
+                            _controller.roleEntries.count
+                            return validSysid && _controller.hasEntry(sysid)
+                        }
                         readonly property bool validSysid: acceptableInput && Number.isInteger(sysid)
                                                           && sysid >= 1 && sysid <= 4294967295
                     }
@@ -525,13 +571,21 @@ AnalyzePage {
                     QGCButton {
                         objectName: "newVehicleAdd"
                         text:       qsTr("Add Vehicle")
-                        enabled:    newSysidField.validSysid && !newNameField.taken
+                        enabled:    newSysidField.validSysid && !newSysidField.taken && !newNameField.taken
                         onClicked: {
-                            _controller.addEntry(newSysidField.sysid, newRoleCombo.currentText,
-                                                 newNameField.text, 0)
-                            newSysidField.text = ""
-                            newNameField.text = ""
+                            if (_controller.addEntryIfNew(newSysidField.sysid, newRoleCombo.currentText,
+                                                          newNameField.text, 0)) {
+                                newSysidField.text = ""
+                                newNameField.text = ""
+                            }
                         }
+                    }
+
+                    QGCLabel {
+                        objectName: "newVehicleSysidTaken"
+                        visible:    newSysidField.taken
+                        color:      QGroundControl.globalPalette.errorText
+                        text:       qsTr("System ID already configured")
                     }
 
                     QGCLabel {
@@ -554,23 +608,47 @@ AnalyzePage {
         id: newLinkDialogComponent
 
         QGCPopupDialog {
+            id:                     linkDialog
             title:                  qsTr("New Link Configuration")
             buttons:                Dialog.Save | Dialog.Cancel
-            acceptButtonEnabled:    nameField.text !== ""
+            acceptButtonEnabled:    nameField.text !== "" && nameValid && linkSettingsLoader.status === Loader.Ready
 
             property int entryIndex
             property int linkIndex
             property var editingConfig
+            readonly property bool nameValid: {
+                const configs = _linkManager.linkConfigurations
+                // Track renames as well as changes to the configuration list.
+                for (let i = 0; i < configs.count; i++) {
+                    configs.get(i).name
+                }
+                return _linkManager.isConfigurationNameValid(nameField.text, null)
+            }
 
             onAccepted: {
+                if (!editingConfig || !linkSettingsLoader.item) {
+                    preventClose = true
+                    return
+                }
                 linkSettingsLoader.item.saveSettings()
                 editingConfig.name = nameField.text
                 editingConfig.dynamic = false
-                QGroundControl.linkManager.endCreateConfiguration(editingConfig)
-                _controller.setLinkConfigName(entryIndex, linkIndex, editingConfig.name)
+                const name = editingConfig.name
+                if (_linkManager.endCreateConfiguration(editingConfig)) {
+                    linkSettingsLoader.active = false
+                    editingConfig = null
+                    _controller.setLinkConfigName(entryIndex, linkIndex, name)
+                } else {
+                    preventClose = true
+                }
             }
 
-            onRejected: QGroundControl.linkManager.cancelConfigurationEditing(editingConfig)
+            onRejected: {
+                const config = editingConfig
+                linkSettingsLoader.active = false
+                editingConfig = null
+                Qt.callLater(function() { QGroundControl.linkManager.cancelConfigurationEditing(config) })
+            }
 
             ColumnLayout {
                 spacing: ScreenTools.defaultFontPixelHeight / 2
@@ -582,35 +660,50 @@ AnalyzePage {
                     QGCLabel { text: qsTr("Name") }
                     QGCTextField {
                         id:                 nameField
+                        objectName:         "customLinkName"
+                        property var dialog: linkDialog
                         Layout.fillWidth:   true
-                        text:               editingConfig.name
+                        text:               editingConfig ? editingConfig.name : ""
                         placeholderText:    qsTr("Enter name")
                     }
+                }
+
+                QGCLabel {
+                    objectName: "customLinkNameTaken"
+                    visible: nameField.text !== "" && !nameValid
+                    color: QGroundControl.globalPalette.errorText
+                    text: qsTr("Name already in use")
                 }
 
                 QGCCheckBoxSlider {
                     Layout.fillWidth:   true
                     text:               qsTr("Automatically Connect on Start")
-                    checked:            editingConfig.autoConnect
-                    onCheckedChanged:   editingConfig.autoConnect = checked
+                    checked:            editingConfig ? editingConfig.autoConnect : false
+                    onCheckedChanged:   { if (editingConfig) editingConfig.autoConnect = checked }
                 }
 
                 LabelledComboBox {
+                    objectName:             "customLinkType"
                     label:                  qsTr("Type")
                     model:                  QGroundControl.linkManager.linkTypeStrings
                     Component.onCompleted:  comboBox.currentIndex = editingConfig.linkType
 
                     onActivated: (index) => {
                         if (index !== editingConfig.linkType) {
-                            const name = nameField.text
-                            editingConfig = QGroundControl.linkManager.createConfiguration(index, name)
+                            const previousConfig = editingConfig
+                            linkSettingsLoader.active = false
+                            editingConfig = QGroundControl.linkManager.createConfiguration(index, nameField.text)
+                            linkSettingsLoader.active = true
+                            Qt.callLater(function() { QGroundControl.linkManager.cancelConfigurationEditing(previousConfig) })
                         }
                     }
                 }
 
                 Loader {
                     id:             linkSettingsLoader
-                    source:         editingConfig && editingConfig.settingsURL ? editingConfig.settingsURL : ""
+                    objectName:     "customLinkSettingsLoader"
+                    source:         editingConfig && editingConfig.settingsURL ?
+                                        "qrc:/qml/QGroundControl/AppSettings/" + editingConfig.settingsURL : ""
                     asynchronous:   true
 
                     property var subEditConfig:         editingConfig
