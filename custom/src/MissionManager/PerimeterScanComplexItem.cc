@@ -20,6 +20,7 @@ PerimeterScanComplexItem::PerimeterScanComplexItem(PlanMasterController *masterC
           QStringLiteral(":/json/PerimeterScan.SettingsGroup.json"), this))
     , _altitudeFact(settingsGroup, _metaDataMap[QStringLiteral("Altitude")])
 {
+    _perimeterPolygon.setPreserveVertexOrder(true);
     _editorQml = QStringLiteral("qrc:/qml/Custom/Plan/PerimeterScanEditor.qml");
 
     // Initialise altitude from the application default.

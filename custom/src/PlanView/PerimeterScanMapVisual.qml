@@ -32,6 +32,12 @@ Item {
     property var  _missionItem:  object
     property var  _polygon:      object.perimeterPolygon
     property bool _currentItem:  object.isCurrentItem
+    property var  _arrowView:    null
+    readonly property var _arrowPath: {
+        const path = _polygon.path
+        const dragPath = _polygon.dragPath
+        return _polygon.vertexDrag ? dragPath : path
+    }
 
     // ----- polygon editing visuals (provides the Polygon Tools toolbar) -----
     QGCMapPolygonVisuals {
@@ -71,6 +77,25 @@ Item {
         }
     }
 
+    Component {
+        id: directionArrowsComponent
+
+        MapItemView {
+            model: _root._arrowPath.length >= 3 ? _root._arrowPath.length : 0
+            delegate: MapLineArrow {
+                required property int index
+                objectName:    "perimeterDirectionArrow_" + index
+                fromCoord:     _root._arrowPath[index] || QtPositioning.coordinate()
+                toCoord:       _root._arrowPath[(index + 1) % _root._arrowPath.length] || QtPositioning.coordinate()
+                arrowPosition: 2
+                arrowColor:    _root._styled ? _root.planStyle.lineColor : "#00cc44"
+                mapControl:    _root.map
+                visible:       _currentItem
+                opacity:       _root.opacity
+            }
+        }
+    }
+
     // ----- entry-point marker ----------------------------------------------
     Component {
         id: entryPointComponent
@@ -98,6 +123,8 @@ Item {
     QGCDynamicObjectManager { id: objMgr }
 
     Component.onCompleted: {
+        _arrowView = directionArrowsComponent.createObject(map)
+        map.addMapItemView(_arrowView)
         objMgr.createObjects(
             [flightPathComponent, entryPointComponent],
             map,
@@ -105,6 +132,10 @@ Item {
     }
 
     Component.onDestruction: {
+        if (_arrowView) {
+            map.removeMapItemView(_arrowView)
+            _arrowView.destroy()
+        }
         objMgr.destroyObjects()
     }
 }

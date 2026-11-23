@@ -410,6 +410,8 @@ if(QGC_BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/test/COPControllerTest.h
             ${CMAKE_CURRENT_SOURCE_DIR}/test/COPSerialNoticesUITest.cc
             ${CMAKE_CURRENT_SOURCE_DIR}/test/COPSerialNoticesUITest.h
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/PerimeterScanComplexItemTest.cc
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/PerimeterScanComplexItemTest.h
             ${CMAKE_CURRENT_SOURCE_DIR}/test/PlanStyleTest.cc
             ${CMAKE_CURRENT_SOURCE_DIR}/test/PlanStyleTest.h
             ${CMAKE_CURRENT_SOURCE_DIR}/test/PlanStyleUITest.cc
@@ -479,6 +481,17 @@ if(QGC_BUILD_TESTING)
         180
         SHARDS
         3
+    )
+    cmake_language(
+        DEFER
+        DIRECTORY
+        "${CMAKE_SOURCE_DIR}"
+        CALL
+        add_qgc_test
+        PerimeterScanComplexItemTest
+        LABELS
+        Unit
+        MissionManager
     )
     cmake_language(
         DEFER
