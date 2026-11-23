@@ -5,6 +5,7 @@
 #include <QtCore/QJsonArray>
 #include <QtCore/QJsonDocument>
 #include <QtCore/QJsonObject>
+#include <QtCore/QPointer>
 #include <QtCore/QRegularExpression>
 #include <QtCore/QSettings>
 
@@ -114,6 +115,36 @@ void VehicleRoleLinksTest::_oldFormatFileLoadsWithoutLinks()
     QmlObjectListModel* links = controller.linksForSysid(211);
     QVERIFY(links);
     QCOMPARE(links->count(), 0);
+}
+
+void VehicleRoleLinksTest::_removingRoleDeletesLinks_data()
+{
+    QTest::addColumn<bool>("reload");
+    QTest::newRow("created") << false;
+    QTest::newRow("loaded") << true;
+}
+
+void VehicleRoleLinksTest::_removingRoleDeletesLinks()
+{
+    QFETCH(bool, reload);
+    {
+        VehicleRoleController controller;
+        controller.addEntry(1, QStringLiteral("Rover"), QString(), 0);
+        controller.addLink(0, QStringLiteral("Radio"), QString());
+        if (!reload) {
+            QPointer<VehicleRoleLinkEntry> link = controller.linksForSysid(1)->value<VehicleRoleLinkEntry*>(0);
+            QVERIFY(!link.isNull());
+            controller.removeEntry(0);
+            QTRY_VERIFY_WITH_TIMEOUT(link.isNull(), TestTimeout::longMs());
+        }
+    }
+    if (reload) {
+        VehicleRoleController controller;
+        QPointer<VehicleRoleLinkEntry> link = controller.linksForSysid(1)->value<VehicleRoleLinkEntry*>(0);
+        QVERIFY(!link.isNull());
+        controller.removeEntry(0);
+        QTRY_VERIFY_WITH_TIMEOUT(link.isNull(), TestTimeout::longMs());
+    }
 }
 
 void VehicleRoleLinksTest::_isLinkConfigConnectedTracksLiveLink()
@@ -271,7 +302,10 @@ void VehicleRoleLinksTest::_duplicateSavedPreferences()
     QVERIFY(qobject_cast<VehicleRoleLinkEntry*>(links->get(0))->preferred());
     QVERIFY(!qobject_cast<VehicleRoleLinkEntry*>(links->get(1))->preferred());
     controller.setLinkPreferred(0, 1, true);
+    expectLogMessage("Custom.VehicleRoles", QtWarningMsg,
+                     QRegularExpression(QStringLiteral("Skipping saved link with empty label")));
     VehicleRoleController reloaded;
+    verifyExpectedLogMessage();
     QCOMPARE(reloaded.preferredLinkConfigNameForSysid(sysid), QStringLiteral("UDP"));
 }
 

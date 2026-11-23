@@ -1,5 +1,11 @@
 #pragma once
 
+#include <functional>
+
+#include <QtCore/QHash>
+#include <QtCore/QJsonObject>
+#include <QtCore/QJsonValue>
+#include <QtCore/QMap>
 #include <QtCore/QObject>
 #include <QtCore/QString>
 #include <QtCore/QStringList>
@@ -131,6 +137,8 @@ class VehicleRoleController : public QObject
     Q_PROPERTY(
         int failbackHoldSeconds READ failbackHoldSeconds WRITE setFailbackHoldSeconds NOTIFY failbackHoldSecondsChanged)
     Q_PROPERTY(int linkReturnStatusRevision READ linkReturnStatusRevision NOTIFY linkReturnStatusChanged)
+    Q_PROPERTY(QString persistenceError READ persistenceError NOTIFY persistenceErrorChanged)
+    Q_PROPERTY(QString persistenceNotice READ persistenceNotice NOTIFY persistenceNoticeChanged)
 
 public:
     explicit VehicleRoleController(QObject* parent = nullptr);
@@ -140,6 +148,10 @@ public:
     void setFailbackHoldSeconds(int seconds);
 
     int linkReturnStatusRevision() const { return _linkReturnStatusRevision; }
+
+    QString persistenceError() const { return _persistenceError; }
+
+    QString persistenceNotice() const { return _persistenceNotice; }
 
     Q_INVOKABLE QString linkReturnStatus(quint32 sysid) const;
 
@@ -214,8 +226,17 @@ signals:
     void linkPreferencesChanged();
     void failbackHoldSecondsChanged();
     void linkReturnStatusChanged();
+    void persistenceErrorChanged();
+    void persistenceNoticeChanged();
 
 private:
+#ifdef QGC_UNITTEST_BUILD
+    friend class VehicleRoleControllerTest;
+#endif
+    bool _writeBytes(const QString& path, const QByteArray& bytes, QString* error);
+    bool _readBytes(const QString& path, QByteArray* bytes, QString* error);
+    bool _renameFile(const QString& from, const QString& to);
+    void _setPersistenceError(const QString& error);
     void _load();
     void _save();
     int _indexForSysid(quint32 sysid) const;
@@ -225,4 +246,16 @@ private:
     int _failbackHoldSeconds = 60;
     LinkPreferenceController* _linkPreference = nullptr;
     int _linkReturnStatusRevision = 0;
+    QString _persistenceError;
+    bool _persistenceReadOnly = false;
+    bool _dirty = false;
+    QString _persistenceNotice;
+    QHash<const QObject*, QJsonObject> _rawObjects;
+    QMap<int, QJsonValue> _extraRoles;
+    QHash<const VehicleRoleEntry*, QMap<int, QJsonValue>> _extraLinks;
+#ifdef QGC_UNITTEST_BUILD
+    std::function<bool(const QString&, const QByteArray&, QString*)> _writeForTesting;
+    std::function<bool(const QString&, QByteArray*, QString*)> _readForTesting;
+    std::function<bool(const QString&, const QString&)> _renameForTesting;
+#endif
 };

@@ -118,6 +118,22 @@ AnalyzePage {
                 width:      parent.width
                 spacing:    ScreenTools.defaultFontPixelHeight
 
+                QGCLabel {
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
+                    color: qgcPal.warningText
+                    text: _controller.persistenceError
+                    visible: text !== ""
+                }
+
+                QGCLabel {
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
+                    color: qgcPal.warningText
+                    text: _controller.persistenceNotice
+                    visible: text !== ""
+                }
+
                 RowLayout {
                     spacing: ScreenTools.defaultFontPixelWidth
 
