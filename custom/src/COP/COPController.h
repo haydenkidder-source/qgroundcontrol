@@ -27,6 +27,7 @@ class COPVehicle : public QObject
     Q_PROPERTY(QGeoCoordinate coordinate READ coordinate NOTIFY stateChanged)
     Q_PROPERTY(QString flightMode READ flightMode NOTIFY stateChanged)
     Q_PROPERTY(QDateTime lastSeen READ lastSeen NOTIFY stateChanged)
+    Q_PROPERTY(QDateTime lastHeartbeat READ lastHeartbeat NOTIFY lastHeartbeatChanged)
     Q_PROPERTY(QColor color READ color NOTIFY colorChanged)
     Q_PROPERTY(
         bool planOverlayVisible READ planOverlayVisible WRITE setPlanOverlayVisible NOTIFY planOverlayVisibleChanged)
@@ -77,6 +78,8 @@ public:
 
     QDateTime lastSeen() const { return _lastSeen; }
 
+    QDateTime lastHeartbeat() const { return _lastHeartbeat; }
+
     /// This vehicle's identifying color for COP map markers and overlays (mission/geofence/rally),
     /// so an operator can visually tell vehicles apart at a glance. Assigned once, by the order
     /// vehicles were first remembered (see COPController::_remember()) - stable for the life of
@@ -94,6 +97,7 @@ public:
 
 signals:
     void stateChanged();
+    void lastHeartbeatChanged();
     void labelChanged();
     void videoUriChanged();
     void colorChanged();
@@ -101,6 +105,10 @@ signals:
     void planDataChanged();
 
 private:
+#ifdef QGC_UNITTEST_BUILD
+    friend class COPStressUITest;
+#endif
+
     void _snapshot();
     void _rememberPrimaryLink();
     /// Re-reads mission/geofence/rally data from the vehicle's managers into the cached lists
@@ -117,6 +125,7 @@ private:
     QString _flightMode;
     QString _videoUri;
     QDateTime _lastSeen;
+    QDateTime _lastHeartbeat;
     bool _planOverlayVisible = false;
     int _colorIndex = 0;
     QVariantList _missionCoordinates;

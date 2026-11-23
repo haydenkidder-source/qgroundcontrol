@@ -435,4 +435,58 @@ void COPVehicleLifecycleTest::_disconnectAndReconnect()
     QCOMPARE(controller.vehicles()->count(), count);
 }
 
+void COPVehicleLifecycleTest::_heartbeatTime()
+{
+    _connectMockLink();
+    QVERIFY(vehicle());
+    simulateCommLoss(true);
+
+    COPVehicle entry(vehicle()->id(), nullptr, this);
+    entry.setVehicle(vehicle());
+    QVERIFY(entry.metaObject()->indexOfProperty("lastHeartbeat") >= 0);
+    QVERIFY(!entry.property("lastHeartbeat").toDateTime().isValid());
+    QSignalSpy heartbeatChanged(&entry, SIGNAL(lastHeartbeatChanged()));
+    QVERIFY(heartbeatChanged.isValid());
+    QSignalSpy stateChanged(&entry, &COPVehicle::stateChanged);
+    const QGeoCoordinate coordinate = entry.coordinate();
+    const QString mode = entry.flightMode();
+    const QDateTime snapshotTime = entry.lastSeen();
+    mavlink_message_t message{};
+    message.sysid = static_cast<uint8_t>(vehicle()->id());
+    message.msgid = MAVLINK_MSG_ID_HEARTBEAT;
+    emit vehicle() -> mavlinkMessageReceived(message);
+    const QDateTime first = entry.property("lastHeartbeat").toDateTime();
+    QVERIFY(first.isValid());
+    QCOMPARE(heartbeatChanged.count(), 1);
+    QCOMPARE(stateChanged.count(), 0);
+    QTRY_VERIFY_WITH_TIMEOUT(QDateTime::currentDateTimeUtc() > first, TestTimeout::longMs());
+    message.sysid = message.sysid == 1 ? 2 : 1;
+    emit vehicle() -> mavlinkMessageReceived(message);
+    message.sysid = static_cast<uint8_t>(vehicle()->id());
+    message.msgid = MAVLINK_MSG_ID_SYS_STATUS;
+    emit vehicle() -> mavlinkMessageReceived(message);
+    QCOMPARE(entry.property("lastHeartbeat").toDateTime(), first);
+    QCOMPARE(heartbeatChanged.count(), 1);
+    message.msgid = MAVLINK_MSG_ID_HEARTBEAT;
+    emit vehicle() -> mavlinkMessageReceived(message);
+    const QDateTime second = entry.property("lastHeartbeat").toDateTime();
+    QVERIFY(second > first);
+    QCOMPARE(heartbeatChanged.count(), 2);
+    QCOMPARE(stateChanged.count(), 0);
+    QCOMPARE(entry.coordinate(), coordinate);
+    QCOMPARE(entry.flightMode(), mode);
+    QCOMPARE(entry.lastSeen(), snapshotTime);
+
+    entry.setVehicle(nullptr);
+    emit vehicle() -> mavlinkMessageReceived(message);
+    QCOMPARE(entry.property("lastHeartbeat").toDateTime(), second);
+    QCOMPARE(heartbeatChanged.count(), 2);
+    entry.setVehicle(vehicle());
+    QCOMPARE(entry.property("lastHeartbeat").toDateTime(), second);
+    QTRY_VERIFY_WITH_TIMEOUT(QDateTime::currentDateTimeUtc() > second, TestTimeout::longMs());
+    emit vehicle() -> mavlinkMessageReceived(message);
+    QVERIFY(entry.property("lastHeartbeat").toDateTime() > second);
+    QCOMPARE(heartbeatChanged.count(), 3);
+}
+
 UT_REGISTER_TEST(COPVehicleLifecycleTest, TestLabel::Integration, TestLabel::Vehicle)
