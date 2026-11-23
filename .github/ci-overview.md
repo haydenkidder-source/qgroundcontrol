@@ -278,7 +278,7 @@ ancestry; standalone branch checks remain available for other callers.
 Run `release.yml` manually on master. Semantic-release reads `.releaserc.json` using the isolated
 `tools/release/` dependencies and creates the tag and release. Because a GITHUB_TOKEN-created
 tag does not trigger builds, `release_builds.py` explicitly dispatches Linux and Windows,
-waits for their package jobs, and freezes the selected run IDs and attempts. Strict
+waits for their package and test jobs, and freezes the selected run IDs and attempts. Strict
 `download_artifacts.py` downloads only those producers; `release_assets.py` validates branded
 packages, SHA-256 sidecars, build manifests and per-platform SBOMs before the final upload.
 Imported breaking changes select a minor release, except excluded maintenance types whose

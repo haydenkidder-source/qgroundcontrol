@@ -23,19 +23,23 @@ WORKFLOWS = {
     "Windows": "windows.yml",
 }
 
-# The specific jobs each platform's release actually depends on. A workflow
-# run's own aggregate conclusion is failure if ANY job in it fails - but
-# linux.yml also runs "Test + Coverage linux_gcc_64 Debug", a known
-# pre-existing flake unrelated to the release packages themselves. Checking
-# these named jobs directly means that flake (or any other unrelated job in
-# the same run) can't block a release whose actual package-building jobs
-# succeeded.
+# Require the package and test jobs selected by tag dispatches. Checking named jobs
+# keeps unrelated workflow jobs from determining whether release artifacts are accepted.
 REQUIRED_JOBS: dict[str, tuple[str, ...]] = {
-    "Linux": ("Release linux_gcc_64", "Release linux_gcc_arm64"),
+    "Linux": (
+        "Release linux_gcc_64",
+        "Release linux_gcc_arm64",
+        "Custom Plugin",
+        "Test + Coverage linux_gcc_64 Debug",
+        "Sanitizers linux_gcc_64 Debug (ASan+UBSan)",
+        "AppImage on Ubuntu 24.04",
+        "AppImage on Debian 13",
+    ),
     "Windows": (
         "Build win64_msvc2022_64 Release",
         "Build win64_msvc2022_arm64 Release",
         "Build win64_msvc2022_arm64_cross_compiled Release",
+        "GStreamer tests win64_msvc2022_64 Debug",
     ),
 }
 
