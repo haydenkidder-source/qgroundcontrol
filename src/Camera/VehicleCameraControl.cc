@@ -1535,6 +1535,9 @@ void VehicleCameraControl::_updateRanges(Fact* pFact)
     for(QGCCameraOptionRange* pRange: _optionRanges) {
         if(!changedList.contains(pRange->targetParam) && (pRange->param == pFact->name() || pRange->condition.contains(pFact->name()))) {
             Fact* pTFact = getFact(pRange->targetParam);    //-- The target parameter (the one its range is to change)
+            if (!pTFact) {
+                continue;
+            }
             if(!resetList.contains(pRange->targetParam)) {
                 if(pTFact->enumStrings() != _originalOptNames[pRange->targetParam]) {
                     //-- Restore full option set
@@ -2211,6 +2214,13 @@ bool VehicleCameraControl::_loadRanges(QDomNode option, const QString factName, 
 void VehicleCameraControl::_processRanges()
 {
     //-- After all parameter are loaded, process parameter ranges
+    for (qsizetype i = _optionRanges.size(); i > 0; --i) {
+        QGCCameraOptionRange* pRange = _optionRanges.at(i - 1);
+        if (!factExists(pRange->targetParam)) {
+            _optionRanges.removeAt(i - 1);
+            delete pRange;
+        }
+    }
     for(QGCCameraOptionRange* pRange: _optionRanges) {
         Fact* pRFact = getFact(pRange->targetParam);
         if(pRFact) {
@@ -2345,24 +2355,33 @@ void VehicleCameraControl::_ftpDownloadComplete(const QString& fileName, const Q
 
     disconnect(_vehicle->ftpManager(), &FTPManager::downloadComplete, this, &VehicleCameraControl::_ftpDownloadComplete);
 
+    if (!errorMsg.isEmpty()) {
+        emit dataReady(QByteArray());
+        return;
+    }
+
     QString outputFileName = QGCCompression::decompressIfNeeded(fileName);
     if (outputFileName.isEmpty()) {
         qCWarning(VehicleCameraControlLog) << "Inflate of compressed xml failed" << fileName;
+        emit dataReady(QByteArray());
+        return;
     }
 
     QFile xmlFile(outputFileName);
 
     if (!xmlFile.exists()) {
         qCDebug(VehicleCameraControlLog) << "No camera definition file present after ftp download completed";
+        emit dataReady(QByteArray());
         return;
     }
     if (!xmlFile.open(QIODevice::ReadOnly)) {
         qWarning() << "Could not read downloaded camera definition file: " << fileName;
+        emit dataReady(QByteArray());
         return;
     }
 
-    _cached = true;
     QByteArray bytes = xmlFile.readAll();
+    _cached = true;
     emit dataReady(bytes);
 }
 
