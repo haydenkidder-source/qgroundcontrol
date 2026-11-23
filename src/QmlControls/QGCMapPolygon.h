@@ -81,6 +81,10 @@ public:
 
     bool isClockwise() const;
 
+    bool preserveVertexOrder() const { return _preserveVertexOrder; }
+
+    void setPreserveVertexOrder(bool preserve) { _preserveVertexOrder = preserve; }
+
     Q_INVOKABLE void beginReset (void);
     Q_INVOKABLE void endReset   (void);
 
@@ -174,4 +178,5 @@ private:
     bool                _showAltColor =         false;
     int                 _selectedVertexIndex =  -1;
     bool                _deferredPathChanged =  false;
+    bool _preserveVertexOrder = false;
 };

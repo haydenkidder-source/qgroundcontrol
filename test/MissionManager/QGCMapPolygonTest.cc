@@ -339,6 +339,37 @@ void QGCMapPolygonTest::_testOffset()
     QCOMPARE(_mapPolygon->count(), 2);
 }
 
+void QGCMapPolygonTest::_testWindingOrderPolicy()
+{
+    const QList<QGeoCoordinate> counterClockwise = {QGeoCoordinate(0, 0), QGeoCoordinate(0, 1), QGeoCoordinate(1, 1),
+                                                    QGeoCoordinate(1, 0)};
+    QList<QGeoCoordinate> moved = counterClockwise;
+    moved[1] = QGeoCoordinate(0, 2);
+    const QList<QGeoCoordinate> clockwise = {moved[3], moved[2], moved[1], moved[0]};
+
+    _mapPolygon->setPath(counterClockwise);
+    _mapPolygon->adjustVertex(1, moved[1]);
+    _mapPolygon->verifyClockwiseWinding();
+    QCOMPARE(_mapPolygon->coordinateList(), clockwise);
+    _mapPolygon->verifyClockwiseWinding();
+    QCOMPARE(_mapPolygon->coordinateList(), clockwise);
+
+    _mapPolygon->setPreserveVertexOrder(true);
+    _mapPolygon->setPath(counterClockwise);
+    _mapPolygon->adjustVertex(1, moved[1]);
+    _mapPolygon->verifyClockwiseWinding();
+    QCOMPARE(_mapPolygon->coordinateList(), moved);
+    _mapPolygon->setPath(clockwise);
+    _mapPolygon->verifyClockwiseWinding();
+    QCOMPARE(_mapPolygon->coordinateList(), clockwise);
+
+    QGCMapPolygon other;
+    other = *_mapPolygon;
+    QVERIFY(!other.preserveVertexOrder());
+    *_mapPolygon = other;
+    QVERIFY(_mapPolygon->preserveVertexOrder());
+}
+
 #include "UnitTest.h"
 
 UT_REGISTER_TEST(QGCMapPolygonTest, TestLabel::Unit, TestLabel::MissionManager)

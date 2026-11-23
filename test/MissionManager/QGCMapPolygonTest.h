@@ -31,6 +31,7 @@ private slots:
     void _testCenterExtraVertex();
     void _testCenterDegenerate();
     void _testOffset();
+    void _testWindingOrderPolicy();
 
 private:
     std::unique_ptr<MultiSignalSpy> _multiSpyPolygon;

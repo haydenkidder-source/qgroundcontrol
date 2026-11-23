@@ -59,6 +59,7 @@ void QGCMapPolygon::_init(void)
 
 const QGCMapPolygon& QGCMapPolygon::operator=(const QGCMapPolygon& other)
 {
+    // Vertex order policy belongs to the destination owner.
     clear();
 
     QVariantList vertices = other.path();
@@ -602,7 +603,7 @@ bool QGCMapPolygon::isClockwise() const
 
 void QGCMapPolygon::verifyClockwiseWinding(void)
 {
-    if (_polygonPath.count() <= 2) {
+    if (_preserveVertexOrder || _polygonPath.count() <= 2) {
         return;
     }
 
