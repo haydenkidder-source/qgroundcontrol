@@ -95,6 +95,7 @@ private slots:
     void _testPlanVehicleIdUpload();
     void _testPlanVehicleIdUploadRetryAfterFailure_data();
     void _testPlanVehicleIdUploadRetryAfterFailure();
+    void _testUploadTokenReleasedOnVehicleChange();
     void _testPlanVehicleIdStaticVehicle();
 
 private:

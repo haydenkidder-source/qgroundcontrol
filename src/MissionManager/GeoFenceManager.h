@@ -1,10 +1,12 @@
 #pragma once
 
 #include <QtCore/QObject>
+#include <QtCore/QPointer>
 #include <QtPositioning/QGeoCoordinate>
-#include "QGCFencePolygon.h"
-#include "QGCFenceCircle.h"
+
 #include "PlanManager.h"
+#include "QGCFenceCircle.h"
+#include "QGCFencePolygon.h"
 
 class Vehicle;
 class QmlObjectListModel;
@@ -22,6 +24,11 @@ public:
     ~GeoFenceManager();
 
     bool supported(void) const;
+
+    bool tryAcquireExclusive(QObject* owner);
+    void releaseExclusive(QObject* owner);
+
+    bool exclusiveBusy() const { return !_exclusiveOwner.isNull(); }
 
     /// Signals sendComplete when done
     void sendToVehicle(const QGeoCoordinate&    breachReturn,   ///< Breach return point
@@ -70,4 +77,5 @@ private:
     bool                    _firstParamLoadComplete = false;
     QList<QGCFencePolygon>  _sendPolygons;
     QList<QGCFenceCircle>   _sendCircles;
+    QPointer<QObject> _exclusiveOwner;
 };

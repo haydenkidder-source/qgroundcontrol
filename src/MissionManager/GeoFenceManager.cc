@@ -20,6 +20,24 @@ GeoFenceManager::~GeoFenceManager()
 
 }
 
+bool GeoFenceManager::tryAcquireExclusive(QObject* owner)
+{
+    if (!owner || (_exclusiveOwner && _exclusiveOwner != owner)) {
+        return false;
+    }
+    if (!_exclusiveOwner) {
+        _exclusiveOwner = owner;
+    }
+    return true;
+}
+
+void GeoFenceManager::releaseExclusive(QObject* owner)
+{
+    if (owner && _exclusiveOwner == owner) {
+        _exclusiveOwner.clear();
+    }
+}
+
 void GeoFenceManager::sendToVehicle(const QGeoCoordinate&   breachReturn,
                                     QmlObjectListModel&     polygons,
                                     QmlObjectListModel&     circles)

@@ -44,7 +44,10 @@ ExclusionZoneController::ExclusionZoneController(QObject* parent)
     });
 }
 
-ExclusionZoneController::~ExclusionZoneController() {}
+ExclusionZoneController::~ExclusionZoneController()
+{
+    _clearTransaction();
+}
 
 Vehicle* ExclusionZoneController::targetVehicle() const
 {
@@ -63,6 +66,9 @@ void ExclusionZoneController::_clearTransaction()
     disconnect(_fenceRemoveConnection);
     _transactionTimer.stop();
     ++_transactionId;  // Invalidate a queued verification from an earlier push.
+    if (_transactionFenceManager) {
+        _transactionFenceManager->releaseExclusive(this);
+    }
     _transactionFenceManager.clear();
     _expectedFence.clear();
     _approvedZones.clear();
@@ -194,7 +200,13 @@ bool ExclusionZoneController::pushApproved()
         emit pushFinished(false, tr("The vehicle is disconnected. Reconnect before sending the zones."));
         return false;
     }
+    if (!fenceMgr->tryAcquireExclusive(this)) {
+        emit pushFinished(false, tr("Another plan or fence operation is in progress on this vehicle. "
+                                    "Try again when it has finished."));
+        return false;
+    }
     if (fenceMgr->inProgress()) {
+        fenceMgr->releaseExclusive(this);
         emit pushFinished(false, tr("This vehicle is busy updating its fence. Try again in a moment."));
         return false;
     }

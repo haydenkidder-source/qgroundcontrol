@@ -78,7 +78,34 @@ void PlanMasterController::_commonInit(void)
 
 PlanMasterController::~PlanMasterController()
 {
+    _releaseExclusive();
+    if (_removeExclusiveFence) {
+        _removeExclusiveFence->releaseExclusive(&_removeAllFromVehicleContext);
+    }
+}
 
+bool PlanMasterController::_acquireExclusive()
+{
+    if (!_managerVehicle || !_managerVehicle->geoFenceManager()) {
+        return false;
+    }
+    GeoFenceManager* const fence = _managerVehicle->geoFenceManager();
+    if (fence->exclusiveBusy() || !fence->tryAcquireExclusive(this)) {
+        QGC::showAppMessage(
+            tr("Another plan or fence operation is in progress on this vehicle. "
+               "Try again when it has finished."));
+        return false;
+    }
+    _exclusiveFence = fence;
+    return true;
+}
+
+void PlanMasterController::_releaseExclusive()
+{
+    if (_exclusiveFence) {
+        _exclusiveFence->releaseExclusive(this);
+        _exclusiveFence.clear();
+    }
 }
 
 void PlanMasterController::start(void)
@@ -111,6 +138,8 @@ void PlanMasterController::_activeVehicleChanged(Vehicle* activeVehicle)
     }
 
     qCDebug(PlanMasterControllerLog) << "_activeVehicleChanged" << activeVehicle;
+
+    _releaseExclusive();
 
     if (_managerVehicle) {
         // Disconnect old vehicle. Be careful of wildcarding disconnect too much since _managerVehicle may equal _controllerVehicle
@@ -255,13 +284,17 @@ void PlanMasterController::loadFromVehicle(void)
         return;
     }
 
-    if (offline()) {
+    if (_managerVehicle->geoFenceManager()->exclusiveBusy()) {
+        QGC::showAppMessage(
+            tr("Another plan or fence operation is in progress on this vehicle. "
+               "Try again when it has finished."));
+    } else if (offline()) {
         qCCritical(PlanMasterControllerLog) << "PlanMasterController::loadFromVehicle called while offline";
     } else if (_flyView) {
         qCCritical(PlanMasterControllerLog) << "PlanMasterController::loadFromVehicle called from Fly view";
     } else if (syncInProgress()) {
         qCCritical(PlanMasterControllerLog) << "PlanMasterController::loadFromVehicle called while syncInProgress";
-    } else {
+    } else if (_acquireExclusive()) {
         _loadVehicleId = _editingVehicleId();
         _loadSequence = SyncSequence::Mission;
         qCDebug(PlanMasterControllerLog) << "PlanMasterController::loadFromVehicle calling _missionController.loadFromVehicle";
@@ -320,6 +353,9 @@ void PlanMasterController::_loadRallyPointsComplete(void)
 {
     if (_loadSequence != SyncSequence::RallyPoints && _loadSequence != SyncSequence::CachedRallyPoints) {
         return;
+    }
+    if (_loadSequence == SyncSequence::RallyPoints) {
+        _releaseExclusive();
     }
     _loadSequence = _loadVehicleId ? SyncSequence::Idle : SyncSequence::FailedLoad;
     _setPlanVehicleId(_loadVehicleId);
@@ -382,6 +418,7 @@ void PlanMasterController::_sendRallyPointsComplete(bool error)
         _sendFailed = true;
     }
     _sendSequence = SyncSequence::Idle;
+    _releaseExclusive();
     if (_sendVehicleId) {
         if (_loadSequence == SyncSequence::FailedLoad) {
             _loadSequence = SyncSequence::Idle;
@@ -419,11 +456,15 @@ void PlanMasterController::sendToVehicle(void)
         return;
     }
 
-    if (offline()) {
+    if (_managerVehicle->geoFenceManager()->exclusiveBusy()) {
+        QGC::showAppMessage(
+            tr("Another plan or fence operation is in progress on this vehicle. "
+               "Try again when it has finished."));
+    } else if (offline()) {
         qCCritical(PlanMasterControllerLog) << "PlanMasterController::sendToVehicle called while offline";
     } else if (syncInProgress()) {
         qCCritical(PlanMasterControllerLog) << "PlanMasterController::sendToVehicle called while syncInProgress";
-    } else {
+    } else if (_acquireExclusive()) {
         qCDebug(PlanMasterControllerLog) << "PlanMasterController::sendToVehicle start mission sendToVehicle";
         _sendVehicleId = _editingVehicleId();
         _sendSequence = SyncSequence::Mission;
@@ -618,11 +659,29 @@ void PlanMasterController::removeAll(void)
 
 void PlanMasterController::removeAllFromVehicle(void)
 {
-    if (offline()) {
+    if (!_managerVehicle || !_managerVehicle->geoFenceManager()) {
+        return;
+    }
+    GeoFenceManager* const fence = _managerVehicle->geoFenceManager();
+    if (fence->exclusiveBusy()) {
+        QGC::showAppMessage(
+            tr("Another plan or fence operation is in progress on this vehicle. "
+               "Try again when it has finished."));
+    } else if (offline()) {
         qCCritical(PlanMasterControllerLog) << "PlanMasterController::removeAllFromVehicle called while offline";
     } else if (syncInProgress()) {
         qCCritical(PlanMasterControllerLog) << "PlanMasterController::removeAllFromVehicle called while syncInProgress";
     } else {
+        if (_removeAllFromVehiclePendingCount > 0) {
+            _finishRemoveAllFromVehicle(true);
+        }
+        if (!fence->tryAcquireExclusive(&_removeAllFromVehicleContext)) {
+            QGC::showAppMessage(
+                tr("Another plan or fence operation is in progress on this vehicle. "
+                   "Try again when it has finished."));
+            return;
+        }
+        _removeExclusiveFence = fence;
         const bool geoFenceRequested = _geoFenceController.supported();
         const bool rallyPointsRequested = _rallyPointController.supported();
         _trackRemoveAllFromVehicle(geoFenceRequested, rallyPointsRequested);
@@ -700,6 +759,10 @@ void PlanMasterController::_finishRemoveAllFromVehicle(bool error)
     }
     _removeAllFromVehicleConnections.clear();
     _removeAllFromVehiclePendingCount = 0;
+    if (_removeExclusiveFence) {
+        _removeExclusiveFence->releaseExclusive(&_removeAllFromVehicleContext);
+        _removeExclusiveFence.clear();
+    }
     emit removeAllFromVehicleCompleted(error, _removeAllFromVehicleId);
 }
 
