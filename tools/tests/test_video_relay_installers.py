@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import io
 import os
+import re
 import shutil
 import subprocess
 import tarfile
@@ -147,19 +148,59 @@ def test_gcs_checksum_mismatch_leaves_installation_untouched(rig):
         {"MEDIAMTX_VERSION": "v1"},
         {"MEDIAMTX_SHA256": "a" * 64},
         {"MEDIAMTX_VERSION": "v1", "MEDIAMTX_SHA256": "bad"},
-        {},
     ],
 )
-def test_gcs_pin_and_override_validation(rig, variables):
-    """An unset pin, incomplete override, or malformed digest refuses installation."""
+def test_gcs_override_validation(rig, variables):
+    """An incomplete override or a malformed digest refuses installation."""
     result = rig.run("gcs-setup.sh", **variables)
     assert result.returncode == 2
-    assert ("pin is not set" if not variables else "MEDIAMTX_SHA256") in result.stderr
-    if not variables:
-        assert (
-            "MediaMTX SHA256 pin is not set in gcs-setup.sh; use the version and digest of a "
-            "verified release (see README.md), or supply MEDIAMTX_VERSION and MEDIAMTX_SHA256 together."
-        ) in result.stderr
+    assert "MEDIAMTX_SHA256" in result.stderr
+    assert not any(c.startswith("curl ") for c in rig.calls())
+
+
+def shipped_pin():
+    source = (SCRIPTS / "gcs-setup.sh").read_text()
+    version = re.search(r'^MEDIAMTX_PINNED_VERSION="([^"]*)"$', source, re.MULTILINE)
+    digest = re.search(r'^MEDIAMTX_PINNED_SHA256_LINUX_ARM64="([^"]*)"$', source, re.MULTILINE)
+    assert version and digest
+    return version.group(1), digest.group(1)
+
+
+def test_gcs_shipped_pin_names_a_release_and_a_real_digest():
+    """The committed pin is a release version and a SHA-256 digest, not the placeholder."""
+    version, digest = shipped_pin()
+    assert re.fullmatch(r"v\d+\.\d+\.\d+", version)
+    assert re.fullmatch(r"[0-9a-f]{64}", digest) and set(digest) != {"0"}
+
+
+def test_gcs_default_install_enforces_the_shipped_pin(rig):
+    """Without overrides the pinned release is fetched and its pinned digest is the one enforced."""
+    version, digest = shipped_pin()
+    result = rig.run("gcs-setup.sh")
+    assert result.returncode == 1 and f"expected {digest}" in result.stderr
+    curl = next(call for call in rig.calls() if call.startswith("curl "))
+    assert f"/releases/download/{version}/mediamtx_{version}_linux_arm64.tar.gz" in curl
+    assert not list(rig.root.iterdir()) and not any(c.startswith("systemctl") for c in rig.calls())
+
+
+def test_gcs_unset_pin_refuses_installation(rig, tmp_path):
+    """A copy of the script whose digest pin is the all-zero placeholder refuses to install."""
+    source = (SCRIPTS / "gcs-setup.sh").read_text()
+    unset = re.sub(
+        r'^(MEDIAMTX_PINNED_SHA256_LINUX_ARM64=)"[0-9a-f]{64}"$',
+        r'\1"' + "0" * 64 + '"',
+        source,
+        flags=re.MULTILINE,
+    )
+    assert unset != source
+    script = tmp_path / "gcs-setup-unset.sh"
+    script.write_text(unset)
+    result = rig.run(str(script))
+    assert result.returncode == 2
+    assert (
+        "MediaMTX SHA256 pin is not set in gcs-setup.sh; use the version and digest of a "
+        "verified release (see README.md), or supply MEDIAMTX_VERSION and MEDIAMTX_SHA256 together."
+    ) in result.stderr
     assert not any(c.startswith("curl ") for c in rig.calls())
 
 

@@ -41,11 +41,12 @@ cd custom/deploy/video-relay/
 sudo ./gcs-setup.sh
 ```
 
-The GCS installer pins MediaMTX v1.21.4 and verifies its arm64 archive before installation.
-The SHA-256 pin is deliberately unset; a maintainer must copy the arm64 archive's digest from
-that release's checksums file into `MEDIAMTX_PINNED_SHA256_LINUX_ARM64` before use. To override
-both values, set `MEDIAMTX_VERSION` and `MEDIAMTX_SHA256` together through `sudo`. The installer
-keeps an existing `/etc/mediamtx/mediamtx.yml` and refreshes `mediamtx.yml.example` alongside it;
+The GCS installer pins MediaMTX v1.21.4 and installs its arm64 archive only if the archive's
+SHA-256 matches `MEDIAMTX_PINNED_SHA256_LINUX_ARM64` in `gcs-setup.sh`. That digest is the one the
+release's `checksums.sha256` lists for `mediamtx_v1.21.4_linux_arm64.tar.gz`. To move to another
+release, change the version and the digest together, copying the digest from that release's
+checksums file. To install another release without editing the script, set `MEDIAMTX_VERSION`
+and `MEDIAMTX_SHA256` together through `sudo`. The installer keeps an existing `/etc/mediamtx/mediamtx.yml` and refreshes `mediamtx.yml.example` alongside it;
 a new configuration is created from that example. Every run enables and restarts the service.
 The configuration has no authentication; review access control before field use.
 
