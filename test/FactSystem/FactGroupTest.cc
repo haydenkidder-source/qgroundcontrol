@@ -223,8 +223,8 @@ void FactGroupTest::_factNames_test()
 void FactGroupTest::_factGroupNames_test()
 {
     TestableFactGroup parent;
-    TestableFactGroup *c1 = new TestableFactGroup(&parent);
-    TestableFactGroup *c2 = new TestableFactGroup(&parent);
+    TestableFactGroup* c1 = new TestableFactGroup(&parent);
+    TestableFactGroup* c2 = new TestableFactGroup(&parent);
 
     parent._addFactGroup(c1, QStringLiteral("sub1"));
     parent._addFactGroup(c2, QStringLiteral("sub2"));
