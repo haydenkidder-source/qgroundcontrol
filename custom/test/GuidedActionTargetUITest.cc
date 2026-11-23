@@ -7,12 +7,19 @@
 #include <QtQuick/QQuickWindow>
 #include <QtTest/QTest>
 
+#include "Fact.h"
+#include "GimbalController.h"
+#include "GimbalControllerSettings.h"
 #include "LinkManager.h"
+#include "MAVLinkSigningKeys.h"
 #include "MissionManager.h"
 #include "MockConfiguration.h"
 #include "MultiVehicleManager.h"
 #include "QmlObjectListModel.h"
+#include "SettingsManager.h"
 #include "Vehicle.h"
+#include "VehicleLinkManager.h"
+#include "VehicleSigningController.h"
 
 UT_REGISTER_TEST(GuidedActionTargetUITest, TestLabel::Integration, TestLabel::Vehicle)
 
@@ -44,7 +51,8 @@ void GuidedActionTargetUITest::cleanup()
     QmlUITestBase::cleanup();
 }
 
-MockLink* GuidedActionTargetUITest::_startVehicle(int index, MAV_AUTOPILOT firmware, MAV_TYPE type, bool takeoff)
+MockLink* GuidedActionTargetUITest::_startVehicle(int index, MAV_AUTOPILOT firmware, MAV_TYPE type, bool takeoff,
+                                                  bool gimbal, bool preloadMission)
 {
     if (_links.isEmpty()) {
         auto* manager = MultiVehicleManager::instance();
@@ -63,6 +71,8 @@ MockLink* GuidedActionTargetUITest::_startVehicle(int index, MAV_AUTOPILOT firmw
     config->setDynamic(true);
     config->setFirmwareType(firmware);
     config->setVehicleType(type);
+    config->setEnableGimbal(gimbal);
+    config->setPreloadMission(preloadMission);
     config->setIncrementVehicleId(true);
     SharedLinkConfigurationPtr sharedConfig = config;
     _configs.append(sharedConfig);
@@ -289,6 +299,259 @@ void GuidedActionTargetUITest::_planRemovalConfirmationStaysWithItsVehicle()
     QVERIFY(acceptDialog());
     QVERIFY_TRUE_WAIT(secondRemovals > 0, TestTimeout::mediumMs());
     QCOMPARE(firstRemovals, 0);
+}
+
+void GuidedActionTargetUITest::_missionCompleteDialogStaysWithItsVehicle()
+{
+    startUI();
+    QVERIFY(!QTest::currentTestFailed());
+    LinkManager::instance()->setConnectionsAllowed();
+
+    ignoreLogMessage("Utilities.QGCSensors", QtWarningMsg,
+                     QRegularExpression(QStringLiteral("Failed to connect to pressure backend")));
+    ignoreLogMessage("Utilities.QGCSensors", QtWarningMsg,
+                     QRegularExpression(QStringLiteral("Error Initializing Pressure Sensor")));
+    QPointer<MockLink> firstLink = _startVehicle(0, MAV_AUTOPILOT_PX4, MAV_TYPE_QUADROTOR, true, false, true);
+    QVERIFY(firstLink);
+    QPointer<MockLink> secondLink = _startVehicle(1, MAV_AUTOPILOT_PX4, MAV_TYPE_QUADROTOR, false);
+    QVERIFY(secondLink);
+
+    auto* manager = MultiVehicleManager::instance();
+    Vehicle* const first = manager->getVehicleById(firstLink->vehicleId());
+    Vehicle* const second = manager->getVehicleById(secondLink->vehicleId());
+    QVERIFY(first && second && first != second);
+    manager->setActiveVehicle(first);
+    QVERIFY_TRUE_WAIT(manager->activeVehicle() == first, TestTimeout::longMs());
+    QVERIFY_TRUE_WAIT(first->initialPlanRequestComplete(), TestTimeout::longMs());
+    first->setFlightMode(first->missionFlightMode());
+    QTRY_COMPARE_WITH_TIMEOUT(first->flightMode(), first->missionFlightMode(), TestTimeout::longMs());
+    first->setArmed(false, false);
+    QVERIFY_TRUE_WAIT(!first->armed(), TestTimeout::longMs());
+
+    QQuickItem* const factory = findItem(_rootItem, QStringLiteral("missionCompleteDialogFactory"));
+    QVERIFY(factory);
+    const auto openDialog = [factory, first] {
+        QVariantMap properties;
+        properties.insert(QStringLiteral("activeVehicleCopy"), QVariant::fromValue(first));
+        QVariant result;
+        return QMetaObject::invokeMethod(factory, "open", Q_RETURN_ARG(QVariant, result),
+                                         Q_ARG(QVariant, QVariant(properties)));
+    };
+
+    firstLink->clearReceivedMavlinkMessageCounts();
+    QVERIFY(waitForDialog(QStringLiteral("Flight Plan complete"), TestTimeout::longMs()));
+    QVERIFY(clickButton(QStringLiteral("missionCompleteRemoveButton")));
+    QVERIFY_TRUE_WAIT(firstLink->receivedMavlinkMessageCount(MAVLINK_MSG_ID_MISSION_CLEAR_ALL) > 0,
+                      TestTimeout::longMs());
+    QVERIFY_TRUE_WAIT(!first->missionManager()->inProgress(), TestTimeout::longMs());
+
+    QVERIFY(openDialog());
+    QVERIFY(findVisibleItem(_rootItem, QStringLiteral("missionCompleteRemoveButton"), TestTimeout::longMs()));
+    secondLink->clearReceivedMavlinkMessageCounts();
+    manager->setActiveVehicle(second);
+    QVERIFY_TRUE_WAIT(manager->activeVehicle() == second, TestTimeout::longMs());
+    QVERIFY_TRUE_WAIT(!dialogVisible(QStringLiteral("Flight Plan complete")), TestTimeout::longMs());
+    QVERIFY(
+        !QTest::qWaitFor([&] { return secondLink->receivedMavlinkMessageCount(MAVLINK_MSG_ID_MISSION_CLEAR_ALL) > 0; },
+                         TestTimeout::shortMs()));
+    QCOMPARE(secondLink->receivedMavlinkMessageCount(MAVLINK_MSG_ID_MISSION_CLEAR_ALL), 0);
+}
+
+void GuidedActionTargetUITest::_gimbalDragStaysWithItsVehicle()
+{
+    startUI();
+    QVERIFY(!QTest::currentTestFailed());
+    LinkManager::instance()->setConnectionsAllowed();
+    auto* settings = SettingsManager::instance()->gimbalControllerSettings();
+    const QVariant oldEnabled = settings->enableOnScreenControl()->rawValue();
+    const QVariant oldDrag = settings->clickAndDrag()->rawValue();
+    const auto restoreSettings = qScopeGuard([settings, oldEnabled, oldDrag] {
+        settings->enableOnScreenControl()->setRawValue(oldEnabled);
+        settings->clickAndDrag()->setRawValue(oldDrag);
+    });
+    settings->enableOnScreenControl()->setRawValue(true);
+    settings->clickAndDrag()->setRawValue(true);
+
+    QPointer<MockLink> firstLink = _startVehicle(0, MAV_AUTOPILOT_PX4, MAV_TYPE_QUADROTOR, false, true);
+    QVERIFY(firstLink);
+    QPointer<MockLink> secondLink = _startVehicle(1, MAV_AUTOPILOT_PX4, MAV_TYPE_QUADROTOR, false, true);
+    QVERIFY(secondLink);
+    auto* manager = MultiVehicleManager::instance();
+    Vehicle* const first = manager->getVehicleById(firstLink->vehicleId());
+    Vehicle* const second = manager->getVehicleById(secondLink->vehicleId());
+    QVERIFY(first && second && first != second);
+    QVERIFY_TRUE_WAIT(first->gimbalController()->activeGimbal() && second->gimbalController()->activeGimbal(),
+                      TestTimeout::longMs());
+    manager->setActiveVehicle(first);
+    QVERIFY_TRUE_WAIT(manager->activeVehicle() == first, TestTimeout::longMs());
+
+    QQuickItem* const controller = findItem(_rootItem, QStringLiteral("onScreenGimbalController"));
+    QVERIFY(controller);
+    QObject* const timer = controller->findChild<QObject*>(QStringLiteral("gimbalSendRateTimer"));
+    QVERIFY(timer);
+    const auto drag = [controller] {
+        return QMetaObject::invokeMethod(controller, "mouseDragStart", Q_ARG(QVariant, QVariant(20)),
+                                         Q_ARG(QVariant, QVariant(20))) &&
+               QMetaObject::invokeMethod(controller, "mouseDragPositionChanged", Q_ARG(QVariant, QVariant(40)),
+                                         Q_ARG(QVariant, QVariant(40)));
+    };
+    firstLink->clearReceivedMavCommandCounts();
+    QVERIFY(drag());
+    QVERIFY_TRUE_WAIT(firstLink->receivedMavCommandCount(MAV_CMD_DO_GIMBAL_MANAGER_PITCHYAW) > 0,
+                      TestTimeout::longMs());
+    QVERIFY(timer->property("running").toBool());
+    secondLink->clearReceivedMavCommandCounts();
+    firstLink->disconnect();
+    QVERIFY_TRUE_WAIT(manager->activeVehicle() == second, TestTimeout::longMs());
+    QVERIFY_TRUE_WAIT(!timer->property("running").toBool(), TestTimeout::longMs());
+    QVERIFY(
+        !QTest::qWaitFor([&] { return secondLink->receivedMavCommandCount(MAV_CMD_DO_GIMBAL_MANAGER_PITCHYAW) > 0; },
+                         TestTimeout::shortMs()));
+    QCOMPARE(secondLink->receivedMavCommandCount(MAV_CMD_DO_GIMBAL_MANAGER_PITCHYAW), 0);
+    QVERIFY(drag());
+    QVERIFY_TRUE_WAIT(secondLink->receivedMavCommandCount(MAV_CMD_DO_GIMBAL_MANAGER_PITCHYAW) > 0,
+                      TestTimeout::longMs());
+    QVERIFY(QMetaObject::invokeMethod(controller, "mouseDragEnd"));
+}
+
+void GuidedActionTargetUITest::_signingKeyConfirmationStaysWithItsVehicle()
+{
+    startUI();
+    QVERIFY(!QTest::currentTestFailed());
+    LinkManager::instance()->setConnectionsAllowed();
+    QPointer<MockLink> firstLink = _startVehicle(0, MAV_AUTOPILOT_PX4, MAV_TYPE_QUADROTOR, false);
+    QVERIFY(firstLink);
+    QPointer<MockLink> secondLink = _startVehicle(1, MAV_AUTOPILOT_PX4, MAV_TYPE_QUADROTOR, false);
+    QVERIFY(secondLink);
+    auto* manager = MultiVehicleManager::instance();
+    Vehicle* const first = manager->getVehicleById(firstLink->vehicleId());
+    Vehicle* const second = manager->getVehicleById(secondLink->vehicleId());
+    QVERIFY(first && second && first != second);
+
+    auto* keys = MAVLinkSigningKeys::instance();
+    const QString keyName = QStringLiteral("target-test-key");
+    QVERIFY(keys->addRawKey(keyName, QString(64, QLatin1Char('1'))));
+    const auto removeKey = qScopeGuard([keys, keyName] { keys->removeKey(keyName); });
+    manager->setActiveVehicle(first);
+    QVERIFY_TRUE_WAIT(manager->activeVehicle() == first, TestTimeout::longMs());
+    QVERIFY(clickToolSelectDropdownButton(QStringLiteral("toolbar_viewSettings")));
+    QQuickItem* const pageButton = findVisibleItem(_rootItem, QStringLiteral("settingsButton_Telemetry"));
+    QVERIFY(pageButton);
+    QVERIFY(scrollIntoView(pageButton, QStringLiteral("settings_buttonList")));
+    QVERIFY(_clickItemAt(pageButton, 0.5, 0.5, QStringLiteral("settingsButton_Telemetry")));
+    QVERIFY(findVisibleItem(_rootItem, QStringLiteral("settingsPage_Telemetry"), TestTimeout::longMs()));
+    QQuickItem* enable = findItem(_rootItem, QStringLiteral("signingKeyEnable_") + keyName);
+    QVERIFY(enable);
+    QVERIFY(scrollIntoView(enable, QStringLiteral("settingsPageFlickable")));
+    QVERIFY(_clickItemAt(enable, 0.5, 0.5, QStringLiteral("signing key enable")));
+    QVERIFY(waitForDialog(QStringLiteral("Send Signing Key"), TestTimeout::longMs()));
+    manager->setActiveVehicle(second);
+    QVERIFY_TRUE_WAIT(manager->activeVehicle() == second, TestTimeout::longMs());
+    secondLink->clearReceivedMavlinkMessageCounts();
+    QVERIFY(acceptDialog());
+    QVERIFY(!QTest::qWaitFor([&] { return secondLink->receivedMavlinkMessageCount(MAVLINK_MSG_ID_SETUP_SIGNING) > 0; },
+                             TestTimeout::shortMs()));
+    QVERIFY(waitForDialog(QStringLiteral("Send Signing Key"), TestTimeout::longMs()));
+    QVERIFY(acceptDialog());
+    QCOMPARE(secondLink->receivedMavlinkMessageCount(MAVLINK_MSG_ID_SETUP_SIGNING), 0);
+
+    enable = findItem(_rootItem, QStringLiteral("signingKeyEnable_") + keyName);
+    QVERIFY(enable);
+    QVERIFY(scrollIntoView(enable, QStringLiteral("settingsPageFlickable")));
+    QVERIFY(_clickItemAt(enable, 0.5, 0.5, QStringLiteral("signing key enable")));
+    QVERIFY(waitForDialog(QStringLiteral("Send Signing Key"), TestTimeout::longMs()));
+    QVERIFY(acceptDialog());
+    QVERIFY_TRUE_WAIT(secondLink->receivedMavlinkMessageCount(MAVLINK_MSG_ID_SETUP_SIGNING) > 0, TestTimeout::longMs());
+    secondLink->disconnect();
+    QVERIFY_TRUE_WAIT(manager->getVehicleById(secondLink ? secondLink->vehicleId() : -1) == nullptr,
+                      TestTimeout::longMs());
+}
+
+void GuidedActionTargetUITest::_signingKeyConfirmationStaysWithItsLink()
+{
+    startUI();
+    QVERIFY(!QTest::currentTestFailed());
+    LinkManager::instance()->setConnectionsAllowed();
+    QPointer<MockLink> firstLink = _startVehicle(0, MAV_AUTOPILOT_PX4, MAV_TYPE_QUADROTOR, false);
+    QVERIFY(firstLink);
+    auto* manager = MultiVehicleManager::instance();
+    Vehicle* const vehicle = manager->getVehicleById(firstLink->vehicleId());
+    QVERIFY(vehicle);
+
+    const QString secondName = QStringLiteral("Guided target second link");
+    auto config = std::make_shared<MockConfiguration>(secondName);
+    config->setDynamic(true);
+    config->setFirmwareType(MAV_AUTOPILOT_PX4);
+    config->setVehicleType(MAV_TYPE_QUADROTOR);
+    config->setIncrementVehicleId(false);
+    config->setSystemId(firstLink->vehicleId());
+    SharedLinkConfigurationPtr sharedConfig = config;
+    _configs.append(sharedConfig);
+    QVERIFY(LinkManager::instance()->createConnectedLink(sharedConfig));
+    QPointer<MockLink> secondLink = qobject_cast<MockLink*>(config->link());
+    QVERIFY(secondLink);
+    _links.append(secondLink);
+    auto* links = vehicle->vehicleLinkManager();
+    QTRY_COMPARE_WITH_TIMEOUT(links->linkNames().size(), 2, TestTimeout::longMs());
+    links->setPrimaryLinkByName(QStringLiteral("Guided target 0"));
+    QCOMPARE(links->primaryLinkName(), QStringLiteral("Guided target 0"));
+
+    auto* keys = MAVLinkSigningKeys::instance();
+    const QString keyName = QStringLiteral("target-link-test-key");
+    QVERIFY(keys->addRawKey(keyName, QString(64, QLatin1Char('1'))));
+    const auto removeKey = qScopeGuard([keys, keyName] { keys->removeKey(keyName); });
+    manager->setActiveVehicle(vehicle);
+    QVERIFY_TRUE_WAIT(manager->activeVehicle() == vehicle, TestTimeout::longMs());
+    QVERIFY(clickToolSelectDropdownButton(QStringLiteral("toolbar_viewSettings")));
+    QQuickItem* const pageButton = findVisibleItem(_rootItem, QStringLiteral("settingsButton_Telemetry"));
+    QVERIFY(pageButton);
+    QVERIFY(scrollIntoView(pageButton, QStringLiteral("settings_buttonList")));
+    QVERIFY(_clickItemAt(pageButton, 0.5, 0.5, QStringLiteral("settingsButton_Telemetry")));
+    QVERIFY(findVisibleItem(_rootItem, QStringLiteral("settingsPage_Telemetry"), TestTimeout::longMs()));
+    const auto openConfirmation = [this, &keyName] {
+        QQuickItem* const enable = findItem(_rootItem, QStringLiteral("signingKeyEnable_") + keyName);
+        return enable && scrollIntoView(enable, QStringLiteral("settingsPageFlickable")) &&
+               _clickItemAt(enable, 0.5, 0.5, QStringLiteral("signing key enable")) &&
+               waitForDialog(QStringLiteral("Send Signing Key"), TestTimeout::longMs());
+    };
+    QVERIFY(openConfirmation());
+    links->setPrimaryLinkByName(secondName);
+    QCOMPARE(links->primaryLinkName(), secondName);
+    firstLink->clearReceivedMavlinkMessageCounts();
+    secondLink->clearReceivedMavlinkMessageCounts();
+    QVERIFY(acceptDialog());
+    QVERIFY(!QTest::qWaitFor(
+        [&] {
+            return firstLink->receivedMavlinkMessageCount(MAVLINK_MSG_ID_SETUP_SIGNING) > 0 ||
+                   secondLink->receivedMavlinkMessageCount(MAVLINK_MSG_ID_SETUP_SIGNING) > 0;
+        },
+        TestTimeout::shortMs()));
+    QVERIFY(waitForDialog(QStringLiteral("Send Signing Key"), TestTimeout::longMs()));
+    const auto containsNotice = [](const auto& self, QQuickItem* item) -> bool {
+        if (!item || !item->isVisible()) {
+            return false;
+        }
+        if (item->property("text").toString() ==
+            QStringLiteral("The active vehicle or its link changed. The signing key was not sent.")) {
+            return true;
+        }
+        for (QQuickItem* child : item->childItems()) {
+            if (self(self, child)) {
+                return true;
+            }
+        }
+        return false;
+    };
+    QVERIFY(containsNotice(containsNotice, _rootItem));
+    QVERIFY(acceptDialog());
+    QVERIFY(openConfirmation());
+    QVERIFY(acceptDialog());
+    QVERIFY_TRUE_WAIT(secondLink->receivedMavlinkMessageCount(MAVLINK_MSG_ID_SETUP_SIGNING) > 0, TestTimeout::longMs());
+    QVERIFY_TRUE_WAIT(vehicle->signingController()->signingStatus().enabled, TestTimeout::longMs());
+    const int vehicleId = vehicle->id();
+    firstLink->disconnect();
+    secondLink->disconnect();
+    QVERIFY_TRUE_WAIT(manager->getVehicleById(vehicleId) == nullptr, TestTimeout::longMs());
 }
 
 void GuidedActionTargetUITest::_roverTakeoverAndReturnToAuto()

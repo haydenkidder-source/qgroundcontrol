@@ -181,6 +181,7 @@ QGCGroupBox {
             }
 
             QGCButton {
+                objectName: "signingKeyEnable_" + keyDelegate._keyName
                 text:       keyDelegate._signingPending ? qsTr("Configuring…") : qsTr("Enable")
                 visible:    !keyDelegate._anyKeyActive
                 enabled:    _signingKeyManager._activeVehicle && !keyDelegate._signingPending
@@ -188,17 +189,31 @@ QGCGroupBox {
                     if (!_signingKeyManager._activeVehicle) {
                         return
                     }
-                    const linkName = _signingKeyManager._activeVehicle.vehicleLinkManager
-                                        ? _signingKeyManager._activeVehicle.vehicleLinkManager.primaryLinkName
-                                        : qsTr("active link")
+                    const vehicle = _signingKeyManager._activeVehicle
+                    const linkManager = vehicle.vehicleLinkManager
+                    const linkName = linkManager ? linkManager.primaryLinkName : ""
+                    const keyName = keyDelegate._keyName
+                    let linkChanged = false
+                    const onLinkChanged = function () { linkChanged = true }
+                    if (linkManager) {
+                        linkManager.primaryLinkChanged.connect(onLinkChanged)
+                    }
                     QGroundControl.showMessageDialog(
                         _signingKeyManager,
                         qsTr("Send Signing Key"),
-                        qsTr("This will transmit key '%1' to the vehicle over '%2'. Only proceed if this link is secure (USB or trusted local network).").arg(keyDelegate._keyName).arg(linkName),
+                        qsTr("This will transmit key '%1' to the vehicle over '%2'. Only proceed if this link is secure (USB or trusted local network).").arg(keyName).arg(linkName || qsTr("active link")),
                         Dialog.Ok | Dialog.Cancel,
                         function () {
-                            if (_signingKeyManager._activeVehicle) {
-                                _signingKeyManager._activeVehicle.signingController.enable(keyDelegate._keyName)
+                            if (vehicle && vehicle === _signingKeyManager._activeVehicle && !linkChanged) {
+                                vehicle.signingController.enable(keyName)
+                            } else {
+                                QGroundControl.showMessageDialog(_signingKeyManager, qsTr("Send Signing Key"),
+                                    qsTr("The active vehicle or its link changed. The signing key was not sent."), Dialog.Ok)
+                            }
+                        },
+                        function () {
+                            if (linkManager) {
+                                linkManager.primaryLinkChanged.disconnect(onLinkChanged)
                             }
                         })
                 }

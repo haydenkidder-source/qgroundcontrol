@@ -19,11 +19,16 @@ private slots:
     void _emergencyStopConfirmationStaysWithItsVehicle();
     void _cancelledConfirmationCannotBeActivated();
     void _planRemovalConfirmationStaysWithItsVehicle();
+    void _missionCompleteDialogStaysWithItsVehicle();
+    void _gimbalDragStaysWithItsVehicle();
+    void _signingKeyConfirmationStaysWithItsVehicle();
+    void _signingKeyConfirmationStaysWithItsLink();
     void _roverTakeoverAndReturnToAuto();
     void _roverTakeoverConfirmationStaysWithRover();
 
 private:
-    MockLink* _startVehicle(int index, MAV_AUTOPILOT firmware, MAV_TYPE type, bool takeoff);
+    MockLink* _startVehicle(int index, MAV_AUTOPILOT firmware, MAV_TYPE type, bool takeoff, bool gimbal = false,
+                            bool preloadMission = false);
     bool _openEmergencyStopConfirmation();
     QQuickItem* _openToolStripConfirmation(const QString& toolStripButton, const QString& title);
     bool _confirmationHidden();
