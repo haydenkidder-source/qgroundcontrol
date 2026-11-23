@@ -20,6 +20,8 @@ private slots:
     void _testPlanUploadRejectedDuringPush();
     void _pushVerification_data();
     void _pushVerification();
+    void _initialFenceValidation_data();
+    void _initialFenceValidation();
     void _stagedZoneLifetime_data();
     void _stagedZoneLifetime();
 

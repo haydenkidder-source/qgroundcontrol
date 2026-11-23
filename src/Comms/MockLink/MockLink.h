@@ -130,6 +130,11 @@ public:
     /// Test-only: seeds a simple multirotor mission (takeoff, waypoint, RTL) onto the simulated vehicle.
     void loadSimpleMultirotorMission() const { _missionItemHandler->loadSimpleMultirotorMission(); }
 
+    void setFenceItems(const QList<mavlink_mission_item_int_t>& items) const
+    {
+        _missionItemHandler->setFenceItems(items);
+    }
+
     /// Returns the filename for the simulated log file. Only available after a download is requested.
     QString logDownloadFile() const { return _logDownloadFilename; }
 
