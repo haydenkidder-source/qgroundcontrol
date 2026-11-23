@@ -22,6 +22,7 @@
 #include "MockLink.h"
 #include "MultiVehicleManager.h"
 #include "ParameterManager.h"
+#include "QGCPalette.h"
 #include "QmlObjectListModel.h"
 #include "RallyPointManager.h"
 #include "SettingsManager.h"
@@ -30,6 +31,42 @@
 #include "VehicleLinkManager.h"
 #include "VehicleRoleController.h"
 #include "VehicleSystemIdTestData.h"
+
+class VehicleLinksTestTransport : public LinkInterface
+{
+public:
+    explicit VehicleLinksTestTransport(SharedLinkConfigurationPtr& config)
+        : LinkInterface(config)
+    {}
+
+    bool isConnected() const override { return _connected; }
+
+    bool disconnectCalled() const { return _disconnectCalled; }
+
+    void setConnected(bool connected)
+    {
+        _connected = connected;
+        if (connected) {
+            emit this->connected();
+        } else {
+            emit disconnected();
+        }
+    }
+
+    void disconnect() override
+    {
+        _disconnectCalled = true;
+        setConnected(false);
+    }
+
+private:
+    bool _connect() override { return true; }
+
+    void _writeBytes(const QByteArray&) override {}
+
+    bool _connected = false;
+    bool _disconnectCalled = false;
+};
 
 UT_REGISTER_TEST(VehicleLinksPageUITest, TestLabel::Integration, TestLabel::Vehicle)
 
@@ -646,6 +683,182 @@ void VehicleLinksPageUITest::_customLinkEditor()
     auto* const roleLink = qobject_cast<VehicleRoleLinkEntry*>(roles->linksForSysid(211)->get(0));
     QVERIFY(roleLink);
     QCOMPARE(roleLink->linkConfigName(), QStringLiteral("Editor unique"));
+}
+
+void VehicleLinksPageUITest::_connectedTransportStatus()
+{
+    auto* const manager = LinkManager::instance();
+    auto* config = new MockConfiguration(QStringLiteral("Status mock"));
+    config->setSystemId(211);
+    config->setIncrementVehicleId(false);
+    config->setDynamic(true);
+    auto listed = manager->addConfiguration(config);
+    const auto cleanup = qScopeGuard([&] { manager->removeConfiguration(listed.get()); });
+    runWithMockLink(
+        [manager, listed]() mutable -> MockLink* {
+            return manager->createConnectedLink(listed) ? qobject_cast<MockLink*>(listed->link()) : nullptr;
+        },
+        [this, listed](QPointer<MockLink> link, Vehicle* vehicle) {
+            QVERIFY(link && vehicle && link->isConnected());
+            _roles()->addEntry(vehicle->id(), QStringLiteral("Rover"), QString(), 0);
+            _roles()->addLink(0, QStringLiteral("Radio"), listed->name());
+            QVERIFY(_openPage());
+            QQuickItem* const status = findVisibleItemScrolled(QStringLiteral("vehicleLinkStatus_211_0"),
+                                                               QStringLiteral("vehicleLinksFlickable"));
+            QQuickItem* const action = findItem(_rootItem, QStringLiteral("vehicleLinkAction_211_0"));
+            QVERIFY(status && action);
+            QGCPalette palette;
+            QTRY_COMPARE_WITH_TIMEOUT(status->property("text").toString(), QStringLiteral("Connected"),
+                                      TestTimeout::longMs());
+            QCOMPARE(status->property("color").value<QColor>(), palette.colorGreen());
+            QCOMPARE(action->property("text").toString(), QStringLiteral("Disconnect link"));
+        });
+}
+
+void VehicleLinksPageUITest::_connectingTransportStatus()
+{
+    startUI();
+    QVERIFY(!QTest::currentTestFailed());
+    auto* const manager = LinkManager::instance();
+    SharedLinkConfigurationPtr config =
+        manager->addConfiguration(new UDPConfiguration(QStringLiteral("Pending status")));
+    auto link = std::make_shared<VehicleLinksTestTransport>(config);
+    config->setLink(link);
+    const auto cleanup = qScopeGuard([&] {
+        config->setLink(nullptr);
+        manager->removeConfiguration(config.get());
+    });
+    _roles()->addEntry(211, QStringLiteral("Rover"), QString(), 0);
+    _roles()->addLink(0, QStringLiteral("Radio"), config->name());
+    QVERIFY(_openPage());
+    QQuickItem* const status =
+        findVisibleItemScrolled(QStringLiteral("vehicleLinkStatus_211_0"), QStringLiteral("vehicleLinksFlickable"));
+    QQuickItem* const action = findItem(_rootItem, QStringLiteral("vehicleLinkAction_211_0"));
+    QVERIFY(status && action);
+    QGCPalette palette;
+    QCOMPARE(status->property("text").toString(), QStringLiteral("Connecting…"));
+    QCOMPARE(status->property("color").value<QColor>(), palette.warningText());
+    QCOMPARE(action->property("text").toString(), QStringLiteral("Disconnect link"));
+    QVERIFY(clickButtonScrolled(QStringLiteral("vehicleLinkAction_211_0"), QStringLiteral("vehicleLinksFlickable")));
+    QVERIFY(link->disconnectCalled());
+    config->setLink(nullptr);
+    QTRY_COMPARE_WITH_TIMEOUT(status->property("text").toString(), QStringLiteral("Disconnected"),
+                              TestTimeout::shortMs());
+    QCOMPARE(status->property("color").value<QColor>(), palette.colorGrey());
+    QCOMPARE(action->property("text").toString(), QStringLiteral("Connect"));
+}
+
+void VehicleLinksPageUITest::_retryingTransportStatus()
+{
+    startUI();
+    QVERIFY(!QTest::currentTestFailed());
+    auto* const manager = LinkManager::instance();
+    SharedLinkConfigurationPtr config = manager->addConfiguration(new UDPConfiguration(QStringLiteral("Retry status")));
+    const auto cleanup = qScopeGuard([&] { manager->removeConfiguration(config.get()); });
+    _roles()->addEntry(211, QStringLiteral("Rover"), QString(), 0);
+    _roles()->addLink(0, QStringLiteral("Radio"), config->name());
+    QVERIFY(_openPage());
+    QQuickItem* const status =
+        findVisibleItemScrolled(QStringLiteral("vehicleLinkStatus_211_0"), QStringLiteral("vehicleLinksFlickable"));
+    QQuickItem* const action = findItem(_rootItem, QStringLiteral("vehicleLinkAction_211_0"));
+    QVERIFY(status && action);
+    // Leave time to inspect and stop the pending retry before the manager creates a UDP link.
+    for (int i = 0; i < 4; ++i) {
+        config->noteReconnectAttempt();
+    }
+    config->setAutoConnect(true);
+    config->setAutoConnectStarted(true);
+    QVERIFY(!config->link());
+    QGCPalette palette;
+    QTRY_COMPARE_WITH_TIMEOUT(status->property("text").toString(), QStringLiteral("Retrying…"), TestTimeout::shortMs());
+    QCOMPARE(status->property("color").value<QColor>(), palette.warningText());
+    QCOMPARE(action->property("text").toString(), QStringLiteral("Disconnect link"));
+    QVERIFY(clickButtonScrolled(QStringLiteral("vehicleLinkAction_211_0"), QStringLiteral("vehicleLinksFlickable")));
+    QVERIFY(config->suppressAutoReconnect());
+    QTRY_COMPARE_WITH_TIMEOUT(status->property("text").toString(), QStringLiteral("Disconnected"),
+                              TestTimeout::shortMs());
+    QCOMPARE(status->property("color").value<QColor>(), palette.colorGrey());
+    QCOMPARE(action->property("text").toString(), QStringLiteral("Connect"));
+}
+
+void VehicleLinksPageUITest::_transportStatusChangesLive()
+{
+    startUI();
+    QVERIFY(!QTest::currentTestFailed());
+    auto* const manager = LinkManager::instance();
+    SharedLinkConfigurationPtr config = manager->addConfiguration(new UDPConfiguration(QStringLiteral("Live status")));
+    auto link = std::make_shared<VehicleLinksTestTransport>(config);
+    config->setLink(link);
+    const auto cleanup = qScopeGuard([&] {
+        config->setLink(nullptr);
+        manager->removeConfiguration(config.get());
+    });
+    _roles()->addEntry(211, QStringLiteral("Rover"), QString(), 0);
+    _roles()->addLink(0, QStringLiteral("Radio"), config->name());
+    QVERIFY(_openPage());
+    QQuickItem* const status =
+        findVisibleItemScrolled(QStringLiteral("vehicleLinkStatus_211_0"), QStringLiteral("vehicleLinksFlickable"));
+    QVERIFY(status);
+    QCOMPARE(status->property("text").toString(), QStringLiteral("Connecting…"));
+    link->setConnected(true);
+    QTRY_COMPARE_WITH_TIMEOUT(status->property("text").toString(), QStringLiteral("Connected"), TestTimeout::shortMs());
+    link->setConnected(false);
+    QTRY_COMPARE_WITH_TIMEOUT(status->property("text").toString(), QStringLiteral("Connecting…"),
+                              TestTimeout::shortMs());
+    config->setLink(nullptr);
+    QTRY_COMPARE_WITH_TIMEOUT(status->property("text").toString(), QStringLiteral("Disconnected"),
+                              TestTimeout::shortMs());
+}
+
+void VehicleLinksPageUITest::_vehicleCommunicationLossChangesLive()
+{
+    ignoreLogMessage("Vehicle.MavCommandQueue", QtWarningMsg,
+                     QRegularExpression("Giving up sending command after max retries:"));
+    ignoreLogMessage("Vehicle.StandardModes", QtWarningMsg, QRegularExpression("Failed to retrieve available modes"));
+    auto config = std::make_shared<MockConfiguration>(QStringLiteral("Comm loss status"));
+    config->setSystemId(211);
+    config->setIncrementVehicleId(false);
+    runWithMockLink(
+        [config]() -> MockLink* {
+            SharedLinkConfigurationPtr shared = config;
+            return LinkManager::instance()->createConnectedLink(shared) ? qobject_cast<MockLink*>(config->link())
+                                                                        : nullptr;
+        },
+        [this](QPointer<MockLink> link, Vehicle* vehicle) {
+            QVERIFY(link && vehicle);
+            _roles()->addEntry(vehicle->id(), QStringLiteral("Rover"), QString(), 0);
+            QVERIFY(_openPage());
+            QQuickItem* const status = findVisibleItemScrolled(QStringLiteral("vehicleConnection_211"),
+                                                               QStringLiteral("vehicleLinksFlickable"));
+            QVERIFY(status);
+            QGCPalette palette;
+            QCOMPARE(status->property("text").toString(), QStringLiteral("Vehicle connected"));
+            QCOMPARE(status->property("color").value<QColor>(), palette.colorGreen());
+            link->setCommLost(true);
+            link->waitForWorkerIdle();
+            QCoreApplication::sendPostedEvents();
+            QTRY_COMPARE_WITH_TIMEOUT(status->property("text").toString(), QStringLiteral("Communication lost"),
+                                      VehicleLinkManager::kTestCommLostDetectionTimeoutMs);
+            QCOMPARE(status->property("color").value<QColor>(), palette.warningText());
+            link->setCommLost(false);
+            QTRY_COMPARE_WITH_TIMEOUT(status->property("text").toString(), QStringLiteral("Vehicle connected"),
+                                      VehicleLinkManager::kTestCommLostDetectionTimeoutMs);
+            QCOMPARE(status->property("color").value<QColor>(), palette.colorGreen());
+        });
+}
+
+void VehicleLinksPageUITest::_absentVehicleStatus()
+{
+    startUI();
+    QVERIFY(!QTest::currentTestFailed());
+    _roles()->addEntry(211, QStringLiteral("Rover"), QString(), 0);
+    QVERIFY(_openPage());
+    QQuickItem* const status =
+        findVisibleItemScrolled(QStringLiteral("vehicleConnection_211"), QStringLiteral("vehicleLinksFlickable"));
+    QVERIFY(status);
+    QGCPalette palette;
+    QCOMPARE(status->property("text").toString(), QStringLiteral("Vehicle not connected"));
+    QCOMPARE(status->property("color").value<QColor>(), palette.colorGrey());
 }
 
 void VehicleLinksPageUITest::_singleVehicleDisconnectsImmediately()

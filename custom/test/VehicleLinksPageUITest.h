@@ -29,6 +29,12 @@ private slots:
     void _stockLinkEditor();
     void _customLinkEditor_data();
     void _customLinkEditor();
+    void _connectedTransportStatus();
+    void _connectingTransportStatus();
+    void _retryingTransportStatus();
+    void _transportStatusChangesLive();
+    void _vehicleCommunicationLossChangesLive();
+    void _absentVehicleStatus();
     void _singleVehicleDisconnectsImmediately();
     void _sharedLinkDisconnectAsksFirst();
     void _linksBelongToTheirVehicle();

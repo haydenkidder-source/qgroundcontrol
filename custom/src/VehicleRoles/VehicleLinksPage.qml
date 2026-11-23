@@ -112,15 +112,6 @@ AnalyzePage {
         return null
     }
 
-    function _isVehicleConnected(sysid) {
-        for (let i = 0; i < _vehicles.count; i++) {
-            if (_vehicles.get(i).id === sysid) {
-                return true
-            }
-        }
-        return false
-    }
-
     function _openCreateLinkDialog(entryIndex, linkIndex, entryLabel, linkLabel) {
         const suggestedName = (entryLabel + " " + linkLabel).trim()
         const editingConfig = _linkManager.createConfiguration(
@@ -317,10 +308,11 @@ AnalyzePage {
                             }
 
                             QGCLabel {
-                                color:  vehicleLinksPage._isVehicleConnected(_entry.sysid) ? qgcPal.colorGreen
-                                                                                           : qgcPal.colorGrey
-                                text:   vehicleLinksPage._isVehicleConnected(_entry.sysid) ? qsTr("Vehicle connected")
-                                                                                           : qsTr("Vehicle not connected")
+                                objectName: "vehicleConnection_" + _entry.sysid
+                                color:      !_vehicle ? qgcPal.colorGrey :
+                                                (_vehicleLinks && _vehicleLinks.communicationLost ? qgcPal.warningText : qgcPal.colorGreen)
+                                text:       !_vehicle ? qsTr("Vehicle not connected") :
+                                                (_vehicleLinks && _vehicleLinks.communicationLost ? qsTr("Communication lost") : qsTr("Vehicle connected"))
                             }
 
                             Item { Layout.fillWidth: true }
@@ -358,9 +350,14 @@ AnalyzePage {
                                     property bool _ambiguous: vehicleLinksPage._configCount(_linkObject.linkConfigName) > 1 ||
                                                               entrySection._linkState.names.filter(
                                                                   name => name === _linkObject.linkConfigName).length > 1
-                                    property bool _connected:      _resolvedConfig !== null && _resolvedConfig.linkActive
+                                    property bool _linkActive:     linkState.state !== VehicleLinkState.Disconnected
                                     readonly property int _attachedIndex: entrySection._linkState.names.indexOf(
                                                                               _linkObject.linkConfigName)
+
+                                    VehicleLinkState {
+                                        id: linkState
+                                        configuration: _resolvedConfig
+                                    }
 
                                     QGCLabel {
                                         Layout.preferredWidth:  ScreenTools.defaultFontPixelWidth * 16
@@ -393,17 +390,21 @@ AnalyzePage {
                                     QGCLabel {
                                         objectName:             "vehicleLinkStatus_" + _entry.sysid + "_" + _linkIndex
                                         Layout.preferredWidth:  ScreenTools.defaultFontPixelWidth * 12
-                                        color:                  _connected ? qgcPal.colorGreen : qgcPal.colorGrey
+                                        color:                  _ambiguous ? qgcPal.colorGrey :
+                                                                    (linkState.state === VehicleLinkState.Connected ? qgcPal.colorGreen :
+                                                                     linkState.state === VehicleLinkState.Connecting || linkState.state === VehicleLinkState.Retrying ? qgcPal.warningText : qgcPal.colorGrey)
                                         text:                   _ambiguous ? qsTr("Ambiguous name") :
-                                                                    (_connected ? qsTr("Connected") : qsTr("Disconnected"))
+                                                                    (linkState.state === VehicleLinkState.Connected ? qsTr("Connected") :
+                                                                     linkState.state === VehicleLinkState.Connecting ? qsTr("Connecting…") :
+                                                                     linkState.state === VehicleLinkState.Retrying ? qsTr("Retrying…") : qsTr("Disconnected"))
                                     }
 
                                     QGCButton {
                                         objectName: "vehicleLinkAction_" + _entry.sysid + "_" + _linkIndex
-                                        text:       _connected ? qsTr("Disconnect link") : qsTr("Connect")
+                                        text:       _linkActive ? qsTr("Disconnect link") : qsTr("Connect")
                                         enabled:    _resolvedConfig !== null && !_ambiguous
                                         onClicked: {
-                                            if (_connected) {
+                                            if (_linkActive) {
                                                 const vehicles = vehicleLinksPage._vehiclesUsingLink(_linkObject.linkConfigName)
                                                 if (vehicles.length > 1) {
                                                     const config = _resolvedConfig
