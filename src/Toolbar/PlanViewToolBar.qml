@@ -14,7 +14,6 @@ Rectangle {
     property var planMasterController
     property string statusHint: ""
 
-    property var _activeVehicle: QGroundControl.multiVehicleManager.activeVehicle
     property real _controllerProgressPct: planMasterController.missionController.progressPct
 
     signal toolbarButtonClicked()
@@ -44,68 +43,103 @@ Rectangle {
         onClicked: mainWindow.showToolSelectDialog()
     }
 
-    // Makes it painfully obvious which vehicle's plan is being edited - critical in a multi-vehicle
-    // fleet, since PlanView otherwise silently follows whichever vehicle is active.
-    RowLayout {
-        id: activeVehicleIndicator
-        anchors.left: qgcButton.right
-        anchors.top: parent.top
-        anchors.bottom: parent.bottom
-        anchors.leftMargin: ScreenTools.defaultFontPixelWidth
-        spacing: ScreenTools.defaultFontPixelWidth / 2
-        visible: _activeVehicle !== null
-
-        // COPController is this fork's only source of a vehicle's assigned color; falls back to
-        // null (drawn as neutral gray below) until COP has seen this vehicle. It's only registered
-        // when the custom/ plugin is built in, so guard against a stock build where it's undefined.
-        property var _copVehicle: {
-            if (!_activeVehicle || typeof COPController === "undefined") {
-                return null
-            }
-            for (let i = 0; i < COPController.vehicles.count; i++) {
-                const vehicle = COPController.vehicles.get(i)
-                if (vehicle.vehicle === _activeVehicle) {
-                    return vehicle
-                }
-            }
-            return null
-        }
-
-        Rectangle {
-            Layout.alignment: Qt.AlignVCenter
-            Layout.preferredWidth: ScreenTools.defaultFontPixelHeight / 2
-            Layout.preferredHeight: ScreenTools.defaultFontPixelHeight / 2
-            radius: width / 2
-            color: activeVehicleIndicator._copVehicle ? activeVehicleIndicator._copVehicle.color : qgcPal.colorGrey
-        }
-        QGCLabel {
-            Layout.alignment: Qt.AlignVCenter
-            font.bold: true
-            // visible: false above doesn't stop this binding from evaluating, so _activeVehicle
-            // must still be null-checked even though the label is hidden once it's gone.
-            text: qsTr("Editing plan for: %1").arg(activeVehicleIndicator._copVehicle
-                                                    ? activeVehicleIndicator._copVehicle.label
-                                                    : (_activeVehicle ? _activeVehicle.vehicleTypeString : ""))
-        }
-    }
-
     QGCFlickable {
         id: toolsFlickable
         anchors.bottomMargin: 1
-        anchors.left: activeVehicleIndicator.right
+        anchors.left: qgcButton.right
         anchors.top: parent.top
         anchors.bottom: parent.bottom
         anchors.right: parent.right
-        contentWidth: toolIndicators.width
+        contentWidth: toolbarContents.width
         flickableDirection: Flickable.HorizontalFlick
 
-        PlanToolBarIndicators {
-            id: toolIndicators
-            anchors.top: parent.top
-            anchors.bottom: parent.bottom
-            planMasterController: _root.planMasterController
-            statusHint: _root.statusHint
-            onToolbarButtonClicked: _root.toolbarButtonClicked()
+        Row {
+            id: toolbarContents
+            height: toolsFlickable.height
+
+            Row {
+                id: planIndicator
+                height: parent.height
+                spacing: ScreenTools.defaultFontPixelWidth / 2
+                leftPadding: ScreenTools.defaultFontPixelWidth
+                visible: _planId !== 0 || _target !== null
+
+                readonly property real _planId: planMasterController ? planMasterController.planVehicleId : 0
+                readonly property var _target: planMasterController && !planMasterController.offline
+                                               ? planMasterController.managerVehicle : null
+                readonly property real _targetId: _target ? _target.id : 0
+                readonly property bool _compact: !!_target && _planId === _targetId
+                readonly property var _policy: QGroundControl.corePlugin ? QGroundControl.corePlugin.planStyle : null
+                readonly property int _revision: _policy ? _policy.revision : 0
+
+                function vehicleName(id) {
+                    const revision = _revision
+                    if (typeof COPController !== "undefined" && COPController && COPController.vehicles) {
+                        for (let i = 0; i < COPController.vehicles.count; i++) {
+                            const entry = COPController.vehicles.get(i)
+                            if (entry && entry.sysid === id) {
+                                return entry.label
+                            }
+                        }
+                    }
+                    return qsTr("Vehicle %1").arg(id)
+                }
+
+                function vehicleColor(id) {
+                    const revision = _revision
+                    const vehicleColor = _policy ? _policy.vehicleColor(id) : undefined
+                    return vehicleColor && vehicleColor.valid ? vehicleColor : QGroundControl.globalPalette.mapMissionTrajectory
+                }
+
+                Rectangle {
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: ScreenTools.defaultFontPixelHeight / 2
+                    height: width
+                    radius: width / 2
+                    color: planSource.cueColor
+                }
+                QGCLabel {
+                    id: planSource
+                    objectName: "planToolbarPlanSource"
+                    property color cueColor: planIndicator.vehicleColor(planIndicator._planId)
+                    anchors.verticalCenter: parent.verticalCenter
+                    font.bold: true
+                    text: planIndicator._compact
+                          ? qsTr("Editing plan for: %1").arg(planIndicator.vehicleName(planIndicator._planId))
+                          : planIndicator._planId ? qsTr("Plan: %1").arg(planIndicator.vehicleName(planIndicator._planId))
+                                                  : qsTr("Plan: not from a vehicle")
+                }
+                QGCLabel {
+                    anchors.verticalCenter: parent.verticalCenter
+                    visible: uploadTarget.visible
+                    text: "·"
+                }
+                Rectangle {
+                    anchors.verticalCenter: parent.verticalCenter
+                    visible: uploadTarget.visible
+                    width: ScreenTools.defaultFontPixelHeight / 2
+                    height: width
+                    radius: width / 2
+                    color: uploadTarget.cueColor
+                }
+                QGCLabel {
+                    id: uploadTarget
+                    objectName: "planToolbarUploadTarget"
+                    property color cueColor: planIndicator.vehicleColor(planIndicator._targetId)
+                    anchors.verticalCenter: parent.verticalCenter
+                    visible: !!planIndicator._target && !planIndicator._compact
+                    font.bold: true
+                    text: planIndicator._target ? qsTr("Upload to: %1").arg(planIndicator.vehicleName(planIndicator._targetId)) : ""
+                }
+            }
+
+            PlanToolBarIndicators {
+                id: toolIndicators
+                height: parent.height
+                planMasterController: _root.planMasterController
+                statusHint: _root.statusHint
+                onToolbarButtonClicked: _root.toolbarButtonClicked()
+            }
         }
     }
 

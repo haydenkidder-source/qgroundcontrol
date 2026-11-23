@@ -36,4 +36,5 @@ class COPVehicleLifecycleTest : public VehicleTestManualConnect
 private slots:
     void _disconnectAndReconnect_data();
     void _disconnectAndReconnect();
+    void _heartbeatTime();
 };

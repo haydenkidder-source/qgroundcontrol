@@ -116,14 +116,24 @@ Rectangle {
         anchors.fill: parent
         anchors.margins: ScreenTools.defaultFontPixelWidth
         QGCLabel {
+            objectName: "copSnapshotTime"
             Layout.fillWidth: true
             wrapMode: Text.WordWrap
             text: root.overview ? qsTr("Common Operating Picture")
-                  : root.selected ? qsTr("%1 · Last update: %2 · Flight mode: %3")
+                  : root.selected ? qsTr("%1 · Position and mode as of: %2 · Flight mode: %3")
                     .arg(root.selected.label)
                     .arg(isNaN(root.selected.lastSeen.getTime()) ? qsTr("No telemetry received this session")
                                                               : Qt.formatDateTime(root.selected.lastSeen))
                     .arg(root.selected.flightMode || qsTr("Unknown")) : qsTr("No vehicle selected")
+        }
+        QGCLabel {
+            objectName: "copLastHeartbeat"
+            Layout.fillWidth: true
+            wrapMode: Text.WordWrap
+            visible: !root.overview && root.selected
+            text: root.selected && !isNaN(root.selected.lastHeartbeat.getTime())
+                  ? qsTr("Last heartbeat: %1").arg(Qt.formatDateTime(root.selected.lastHeartbeat))
+                  : qsTr("Last heartbeat: not received this session")
         }
         RowLayout {
             Layout.fillWidth: true

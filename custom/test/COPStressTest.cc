@@ -1,6 +1,7 @@
 #include "COPStressTest.h"
 
 #include <QtCore/QDir>
+#include <QtCore/QLocale>
 #include <QtCore/QRegularExpression>
 #include <QtCore/QSettings>
 #include <QtCore/QStringList>
@@ -400,6 +401,73 @@ void COPStressUITest::_disconnectOtherPreservesControl()
     stallion->disconnect();
     QTRY_VERIFY_WITH_TIMEOUT(removed.isNull(), TestTimeout::longMs());
     QTRY_COMPARE_WITH_TIMEOUT(manager->activeVehicle(), selected->vehicle(), TestTimeout::mediumMs());
+}
+
+void COPStressUITest::_heartbeatHeader()
+{
+    startUI();
+    QVERIFY(!QTest::currentTestFailed());
+    QVERIFY(_selectTab(0));
+    auto* controller = _controller();
+    QVERIFY(controller);
+    auto* roles = _engine->singletonInstance<VehicleRoleController*>("QGC", "VehicleRoleController");
+    QVERIFY(roles);
+    constexpr quint32 rememberedSysid = 127;
+    roles->addEntry(rememberedSysid, QStringLiteral("Plane"), QString(), 0);
+    controller->selectVehicle(rememberedSysid);
+    auto* heartbeat = findItem(_rootItem, QStringLiteral("copLastHeartbeat"));
+    auto* snapshot = findItem(_rootItem, QStringLiteral("copSnapshotTime"));
+    QVERIFY(heartbeat);
+    QVERIFY(snapshot);
+    QCOMPARE(heartbeat->property("text").toString(), QStringLiteral("Last heartbeat: not received this session"));
+    QVERIFY(snapshot->property("text").toString().contains(QStringLiteral("Position and mode as of")));
+    auto* remembered = controller->selected();
+    QVERIFY(remembered);
+    const QDateTime heartbeatTime = QDateTime::fromString(QStringLiteral("2001-02-03T04:05:06Z"), Qt::ISODate);
+    const QDateTime snapshotTime = QDateTime::fromString(QStringLiteral("2002-03-04T05:06:07Z"), Qt::ISODate);
+    const QString formattedHeartbeat = QLocale().toString(heartbeatTime.toLocalTime(), QLocale::ShortFormat);
+    const QString formattedSnapshot = QLocale().toString(snapshotTime.toLocalTime(), QLocale::ShortFormat);
+    QVERIFY(formattedHeartbeat != formattedSnapshot);
+
+    remembered->_lastSeen = snapshotTime;
+    emit remembered->stateChanged();
+    QCOMPARE(heartbeat->property("text").toString(), QStringLiteral("Last heartbeat: not received this session"));
+    QVERIFY(snapshot->property("text").toString().contains(formattedSnapshot));
+
+    remembered->_lastHeartbeat = heartbeatTime;
+    emit remembered->lastHeartbeatChanged();
+    QCOMPARE(heartbeat->property("text").toString(), QStringLiteral("Last heartbeat: ") + formattedHeartbeat);
+    QVERIFY(snapshot->property("text").toString().contains(formattedSnapshot));
+    QVERIFY(!snapshot->property("text").toString().contains(formattedHeartbeat));
+
+    remembered->_lastSeen = QDateTime();
+    emit remembered->stateChanged();
+    QCOMPARE(heartbeat->property("text").toString(), QStringLiteral("Last heartbeat: ") + formattedHeartbeat);
+    QVERIFY(snapshot->property("text").toString().contains(QStringLiteral("No telemetry received this session")));
+    QVERIFY(!snapshot->property("text").toString().contains(formattedHeartbeat));
+
+    LinkManager::instance()->setConnectionsAllowed();
+    QPointer<MockLink> first = _start(MAV_TYPE_GROUND_ROVER);
+    QPointer<MockLink> second = _start(MAV_TYPE_QUADROTOR);
+    QVERIFY(first && second);
+    QTRY_VERIFY_WITH_TIMEOUT(_entryFor(first->vehicleId()) && _entryFor(first->vehicleId())->vehicle(),
+                             TestTimeout::longMs());
+    QTRY_VERIFY_WITH_TIMEOUT(_entryFor(second->vehicleId()) && _entryFor(second->vehicleId())->vehicle(),
+                             TestTimeout::longMs());
+    Vehicle* firstVehicle = _entryFor(first->vehicleId())->vehicle();
+    Vehicle* secondVehicle = _entryFor(second->vehicleId())->vehicle();
+    QVERIFY(firstVehicle && secondVehicle);
+    MultiVehicleManager::instance()->setActiveVehicle(secondVehicle);
+    QTRY_COMPARE_WITH_TIMEOUT(MultiVehicleManager::instance()->activeVehicle(), secondVehicle, TestTimeout::longMs());
+    controller->selectVehicle(first->vehicleId());
+    mavlink_message_t message{};
+    message.sysid = static_cast<uint8_t>(firstVehicle->id());
+    message.msgid = MAVLINK_MSG_ID_HEARTBEAT;
+    emit firstVehicle->mavlinkMessageReceived(message);
+    QVERIFY(heartbeat->isVisible());
+    QVERIFY(heartbeat->property("text").toString().startsWith(QStringLiteral("Last heartbeat: ")));
+    QVERIFY(heartbeat->property("text").toString() != QStringLiteral("Last heartbeat: not received this session"));
+    QVERIFY(heartbeat->property("text").toString().contains(QRegularExpression(QStringLiteral("[0-9]"))));
 }
 
 void COPStressUITest::_navigationAndLayout()

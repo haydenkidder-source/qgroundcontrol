@@ -3833,6 +3833,16 @@ void PlanStyleUITest::_planEditor()
     QVERIFY(master);
     QTRY_COMPARE_WITH_TIMEOUT(master->managerVehicle(), a, TestTimeout::longMs());
     QTRY_VERIFY_WITH_TIMEOUT(!master->syncInProgress(), TestTimeout::longMs());
+    master->removeAll();
+    QCOMPARE(master->planVehicleId(), 0U);
+    auto* source = findVisibleItem(_rootItem, QStringLiteral("planToolbarPlanSource"), TestTimeout::longMs());
+    auto* target = findItem(_rootItem, QStringLiteral("planToolbarUploadTarget"));
+    QVERIFY(source && target);
+    QCOMPARE(source->property("text").toString(), QStringLiteral("Plan: not from a vehicle"));
+    QVERIFY(target->property("visible").toBool());
+    QCOMPARE(target->property("text").toString(),
+             QStringLiteral("Upload to: %1")
+                 .arg(_entryFor(aId) ? _entryFor(aId)->label() : QStringLiteral("Vehicle %1").arg(aId)));
     QSignalSpy loaded(master->rallyPointController(), &RallyPointController::loadComplete);
     QVERIFY(loaded.isValid());
     master->loadFromVehicle();
@@ -3862,6 +3872,8 @@ void PlanStyleUITest::_planEditor()
         QVERIFY(!registry->colorForSysid(bId).isValid());
         aColor = context->property("lineColor").value<QColor>();
         QCOMPARE(aColor, QColor(QStringLiteral("#ffa000")));
+        QCOMPARE(source->property("text").toString(), QStringLiteral("Editing plan for: Vehicle %1").arg(aId));
+        QCOMPARE(source->property("cueColor").value<QColor>(), aColor);
         _checkPlan(view, aId, aColor, 4, 3);
         QVERIFY(!QTest::currentTestFailed());
         auto* segments = mission->simpleFlightPathSegments();
@@ -3915,6 +3927,10 @@ void PlanStyleUITest::_planEditor()
                                   TestTimeout::shortMs());
         aColor = registry->colorForSysid(aId);
         QVERIFY(aColor != QColor(QStringLiteral("#ffa000")));
+        QVERIFY(_entryFor(aId));
+        QCOMPARE(source->property("text").toString(),
+                 QStringLiteral("Editing plan for: %1").arg(_entryFor(aId)->label()));
+        QCOMPARE(source->property("cueColor").value<QColor>(), aColor);
         _checkPlan(view, aId, aColor, 4, 3);
         QVERIFY(!QTest::currentTestFailed());
         QCOMPARE(mission->visualItems(), retainedModel.data());
@@ -3939,6 +3955,7 @@ void PlanStyleUITest::_planEditor()
     QVERIFY(aColor.isValid());
     const QColor bColor = registry->colorForSysid(bId);
     QVERIFY(bColor.isValid() && aColor != bColor);
+    QVERIFY(_entryFor(aId) && _entryFor(bId));
     mission->setCurrentPlanViewSeqNum(1, true);
     rally->setCurrentRallyPoint(rally->points()->get(0));
     for (int layer : {1, 2, 3, 1, 2, 3, 1}) {
@@ -4016,6 +4033,11 @@ void PlanStyleUITest::_planEditor()
     QCOMPARE(master->planVehicleId(), aId);
     choosePrompt(true);
     QVERIFY(!QTest::currentTestFailed());
+    QCOMPARE(source->property("text").toString(), QStringLiteral("Plan: %1").arg(_entryFor(aId)->label()));
+    QCOMPARE(source->property("cueColor").value<QColor>(), aColor);
+    QVERIFY(target->property("visible").toBool());
+    QCOMPARE(target->property("text").toString(), QStringLiteral("Upload to: %1").arg(_entryFor(bId)->label()));
+    QCOMPARE(target->property("cueColor").value<QColor>(), bColor);
     _setPlanLayer(view, 1);
     QVERIFY(!QTest::currentTestFailed());
     _checkPlan(view, aId, aColor, 4, 3);
@@ -4046,6 +4068,8 @@ void PlanStyleUITest::_planEditor()
     choosePrompt(false);
     QVERIFY(!QTest::currentTestFailed());
     QTRY_COMPARE_WITH_TIMEOUT(master->planVehicleId(), bId, TestTimeout::longMs());
+    QCOMPARE(source->property("text").toString(), QStringLiteral("Editing plan for: %1").arg(_entryFor(bId)->label()));
+    QVERIFY(!target->property("visible").toBool());
     _checkPlan(view, bId, bColor, 6, 5);
     QVERIFY(!QTest::currentTestFailed());
     for (int i = 0; i < 2; ++i) {
@@ -4076,6 +4100,9 @@ void PlanStyleUITest::_planEditor()
     choosePrompt(true);
     QVERIFY(!QTest::currentTestFailed());
     QCOMPARE(master->planVehicleId(), aId);
+    QCOMPARE(source->property("text").toString(), QStringLiteral("Plan: %1").arg(_entryFor(aId)->label()));
+    QCOMPARE(source->property("cueColor").value<QColor>(), aColor);
+    QVERIFY(!target->property("visible").toBool());
     QCOMPARE(waypoint->coordinate(), dirtyCoordinate);
     _checkPlan(view, aId, aColor, 4, 3);
     QVERIFY(!QTest::currentTestFailed());
@@ -4092,6 +4119,8 @@ void PlanStyleUITest::_planEditor()
     }
     master->removeAll();
     QCOMPARE(master->planVehicleId(), 0U);
+    QVERIFY(!source->property("visible").toBool());
+    QVERIFY(!target->property("visible").toBool());
     for (const auto& item : removed) {
         QTRY_VERIFY_WITH_TIMEOUT(item.isNull(), TestTimeout::shortMs());
     }

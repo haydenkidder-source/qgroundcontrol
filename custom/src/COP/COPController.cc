@@ -249,6 +249,12 @@ void COPVehicle::setVehicle(Vehicle* vehicle)
         connect(vehicle, &QObject::destroyed, this, [this]() { emit stateChanged(); });
         connect(vehicle, &Vehicle::coordinateChanged, this, &COPVehicle::_snapshot);
         connect(vehicle, &Vehicle::flightModeChanged, this, &COPVehicle::_snapshot);
+        connect(vehicle, &Vehicle::mavlinkMessageReceived, this, [this](const mavlink_message_t& message) {
+            if (message.msgid == MAVLINK_MSG_ID_HEARTBEAT && message.sysid == _sysid) {
+                _lastHeartbeat = QDateTime::currentDateTimeUtc();
+                emit lastHeartbeatChanged();
+            }
+        });
         // Mission/geofence/rally data QGC already downloads for PlanView - just re-snapshot it for
         // the COP overlay whenever any of it (re)loads.
         connect(vehicle->missionManager(), &PlanManager::newMissionItemsAvailable, this, &COPVehicle::_refreshPlanData);
