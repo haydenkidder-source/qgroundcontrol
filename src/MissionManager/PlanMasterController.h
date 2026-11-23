@@ -59,6 +59,13 @@ public:
         bool reloadRequired = false;
     };
 
+    /// True when both coordinates encode to the same MAVLink 1e7 wire integers.
+    static bool sameWirePosition(const QGeoCoordinate& first, const QGeoCoordinate& second);
+
+    /// True when the rings have the same vertex count and equal wire positions from some start vertex in either
+    /// direction. Empty rings never match.
+    static bool sameWireRing(const QList<QGeoCoordinate>& first, const QList<QGeoCoordinate>& second);
+
     static ExternalFenceResult applyVerifiedFence(Vehicle* vehicle, const VerifiedFence& fence);
 #ifdef QGC_UNITTEST_BUILD
     static ExternalFenceResult applyVerifiedFenceForTest(Vehicle* vehicle, const VerifiedFence& fence,

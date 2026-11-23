@@ -1,7 +1,10 @@
 #pragma once
 
+#include <cstdint>
+
 #include <QtCore/QObject>
 #include <QtCore/QTimer>
+
 #include "MissionItem.h"
 #include "QGCMAVLink.h"
 
@@ -17,6 +20,11 @@ class PlanManager : public QObject
 public:
     PlanManager(Vehicle* vehicle, MAV_MISSION_TYPE planType);
     ~PlanManager();
+
+    /// Converts degrees to the MAVLink 1e7 integer sent on the wire. Rounds because the decoder's `* 1e-7` returns
+    /// `n` as `n * 1e-7`, which truncation can take back to `n - 1`. Non-finite input gives 0; out-of-range input
+    /// is clamped to the int32 range.
+    static int32_t degreesToWire(double degrees);
 
     bool inProgress(void) const;
     const QList<MissionItem*>& missionItems(void) { return _missionItems; }

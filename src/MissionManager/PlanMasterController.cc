@@ -13,6 +13,7 @@
 #include "MissionManager.h"
 #include "MultiVehicleManager.h"
 #include "PlanCreator.h"
+#include "PlanManager.h"
 #include "QGCCorePlugin.h"
 #include "QGCLoggingCategory.h"
 #include "QmlObjectListModel.h"
@@ -90,6 +91,35 @@ PlanMasterController::~PlanMasterController()
     }
 }
 
+bool PlanMasterController::sameWirePosition(const QGeoCoordinate& first, const QGeoCoordinate& second)
+{
+    return PlanManager::degreesToWire(first.latitude()) == PlanManager::degreesToWire(second.latitude()) &&
+           PlanManager::degreesToWire(first.longitude()) == PlanManager::degreesToWire(second.longitude());
+}
+
+bool PlanMasterController::sameWireRing(const QList<QGeoCoordinate>& first, const QList<QGeoCoordinate>& second)
+{
+    const qsizetype count = first.count();
+    if (count != second.count()) {
+        return false;
+    }
+    for (qsizetype offset = 0; offset < count; ++offset) {
+        for (const int direction : {1, -1}) {
+            bool matches = true;
+            for (qsizetype j = 0; j < count; ++j) {
+                if (!sameWirePosition(first[j], second[(offset + direction * j + count) % count])) {
+                    matches = false;
+                    break;
+                }
+            }
+            if (matches) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
 PlanMasterController::ExternalFenceResult PlanMasterController::applyVerifiedFence(Vehicle* vehicle,
                                                                                    const VerifiedFence& fence)
 {
@@ -113,14 +143,6 @@ PlanMasterController::ExternalFenceResult PlanMasterController::_applyVerifiedFe
     if (!vehicle || vehicle->isOfflineEditingVehicle()) {
         return result;
     }
-    const auto samePosition = [](const QGeoCoordinate& first, const QGeoCoordinate& second) {
-        const auto transmitted = [](double value) {
-            const double scaled = value * 1e7;
-            return static_cast<qint32>(scaled + (scaled < 0 ? -1e-6 : 1e-6));
-        };
-        return transmitted(first.latitude()) == transmitted(second.latitude()) &&
-               transmitted(first.longitude()) == transmitted(second.longitude());
-    };
     for (PlanMasterController* editor : std::as_const(_liveControllers)) {
         if (editor->_flyView || editor->_managerVehicle != vehicle) {
             continue;
@@ -146,27 +168,11 @@ PlanMasterController::ExternalFenceResult PlanMasterController::_applyVerifiedFe
                 for (int i = 0; i < usedPolygons.count() && !found; ++i) {
                     auto* polygon = controller->polygons()->value<QGCFencePolygon*>(i);
                     if (usedPolygons[i] || !polygon || polygon->inclusion() != shape.inclusion ||
-                        polygon->count() != shape.vertices.count()) {
+                        !sameWireRing(shape.vertices, polygon->coordinateList())) {
                         continue;
                     }
-                    const qsizetype count = shape.vertices.count();
-                    for (qsizetype offset = 0; offset < count && !found; ++offset) {
-                        for (int direction : {1, -1}) {
-                            bool matches = true;
-                            for (qsizetype j = 0; j < count; ++j) {
-                                if (!samePosition(shape.vertices[j], polygon->vertexCoordinate(static_cast<int>(
-                                                                         (offset + direction * j + count) % count)))) {
-                                    matches = false;
-                                    break;
-                                }
-                            }
-                            if (matches) {
-                                found = true;
-                                usedPolygons[i] = true;
-                                break;
-                            }
-                        }
-                    }
+                    usedPolygons[i] = true;
+                    found = true;
                 }
                 if (!found) {
                     auto* polygon = new QGCFencePolygon(shape.inclusion, controller);
@@ -178,7 +184,7 @@ PlanMasterController::ExternalFenceResult PlanMasterController::_applyVerifiedFe
                 for (int i = 0; i < usedCircles.count() && !found; ++i) {
                     auto* circle = controller->circles()->value<QGCFenceCircle*>(i);
                     if (!usedCircles[i] && circle && circle->inclusion() == shape.inclusion &&
-                        samePosition(circle->center(), shape.vertices.first()) &&
+                        sameWirePosition(circle->center(), shape.vertices.first()) &&
                         static_cast<float>(circle->radius()->rawValue().toDouble()) ==
                             static_cast<float>(shape.radius)) {
                         usedCircles[i] = true;
@@ -199,7 +205,7 @@ PlanMasterController::ExternalFenceResult PlanMasterController::_applyVerifiedFe
                 controller->setBreachReturnPoint(fence.returnPoint);
                 controller->breachReturnAltitude()->setRawValue(fence.returnPoint.altitude());
                 changed = true;
-            } else if (!samePosition(planReturn, fence.returnPoint) ||
+            } else if (!sameWirePosition(planReturn, fence.returnPoint) ||
                        (!(qIsNaN(planReturn.altitude()) && qIsNaN(fence.returnPoint.altitude())) &&
                         static_cast<float>(planReturn.altitude()) !=
                             static_cast<float>(fence.returnPoint.altitude()))) {

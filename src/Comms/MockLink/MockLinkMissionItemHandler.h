@@ -102,6 +102,9 @@ public:
         }
     }
 
+    /// The fence items as stored, in sequence order.
+    QList<mavlink_mission_item_int_t> fenceItems() const { return _fenceItems.values(); }
+
     void setSendHomePositionOnEmptyList(bool sendHomePositionOnEmptyList) { _sendHomePositionOnEmptyList = sendHomePositionOnEmptyList; }
 
     int requestListCount(MAV_MISSION_TYPE type) const { return _requestListCounts.value(type, 0); }

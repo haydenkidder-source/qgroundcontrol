@@ -50,6 +50,16 @@ private slots:
     void _testVerifiedFenceMerge();
     void _testVerifiedFenceRequireReload();
     void _testVerifiedFenceVehicleIsolation();
+    void _testVerifiedFenceMergeUsesWireIdentity_data();
+    void _testVerifiedFenceMergeUsesWireIdentity();
+    void _testDegreesToWire_data();
+    void _testDegreesToWire();
+    void _testDegreesToWireRecoversEveryWireInteger();
+    void _testSameWirePosition_data();
+    void _testSameWirePosition();
+    void _testSameWireRing_data();
+    void _testSameWireRing();
+    void _testFenceRoundTripKeepsWireIntegers();
     void _testStaleInitialPlanLoadRallyCompletePreservesPlan();
     void _testShowPlanFromVehicleClearsFileAssociation();
 
@@ -105,6 +115,9 @@ private:
     /// Connects an additional PX4 MockLink vehicle (tracked in _extraLinks) and waits for its initial connect
     Vehicle* _connectExtraVehicle(bool withMission = false);
     void _populatePlanForIdentityTransfer();
+
+    /// The first `count` integers from `first` whose 1e-7 decode does not truncate back to themselves.
+    static QList<int32_t> _driftingWireIntegers(int32_t first, int count);
 
     enum DirtyScenario
     {
