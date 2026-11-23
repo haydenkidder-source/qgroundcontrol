@@ -10,6 +10,7 @@ qt_add_library(
     KMLSchemaValidator.h
     ShapeFileHelper.cc
     ShapeFileHelper.h
+    StrictPolygon.h
     SHPFileHelper.cc
     SHPFileHelper.h
 )

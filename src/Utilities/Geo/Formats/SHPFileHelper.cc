@@ -1,6 +1,6 @@
 #include "SHPFileHelper.h"
-#include "QGCGeo.h"
-#include "QGCLoggingCategory.h"
+
+#include <utility>
 
 #include <QtCore/QCoreApplication>
 #include <QtCore/QFile>
@@ -8,6 +8,9 @@
 #include <QtCore/QScopeGuard>
 #include <QtCore/QTextStream>
 
+#include "QGCGeo.h"
+#include "QGCLoggingCategory.h"
+#include "StrictPolygon.h"
 #include "shapefil.h"
 
 QGC_LOGGING_CATEGORY(SHPFileHelperLog, "Utilities.SHPFileHelper")
@@ -290,6 +293,106 @@ int SHPFileHelper::getEntityCount(const QString &shpFile, QString &errorString)
     SHPClose(shpHandle);
 
     return cEntities;
+}
+
+bool SHPFileHelper::loadStrictPolygonsFromFile(const QString& file, QList<QList<QGeoCoordinate>>& polygons,
+                                               QString& errorString)
+{
+    polygons.clear();
+    errorString.clear();
+    int utmZone = 0;
+    bool southern = false;
+    if (!_validateSHPFiles(file, &utmZone, &southern, errorString)) {
+        return false;
+    }
+    SAHooks hooks{};
+    setupQFileHooks(&hooks);
+    hooks.FOpen = [](const char* filename, const char* access, void*) -> SAFile {
+        if (!filename || !access || access[0] != 'r') {
+            return nullptr;
+        }
+        auto* input = new QFile(QString::fromUtf8(filename));
+        if (!input->open(QIODevice::ReadOnly)) {
+            delete input;
+            return nullptr;
+        }
+        return reinterpret_cast<SAFile>(input);
+    };
+    hooks.Error = [](const char*) {};
+    SHPHandle handle = SHPOpenLL(file.toUtf8().constData(), "rb", &hooks);
+    if (!handle) {
+        errorString = QStringLiteral("Unable to open SHP file");
+        return false;
+    }
+    auto close = qScopeGuard([handle]() { SHPClose(handle); });
+    int count = 0;
+    int type = 0;
+    SHPGetInfo(handle, &count, &type, nullptr, nullptr);
+    if (count == 0) {
+        errorString = QStringLiteral("No polygon geometry found");
+        return false;
+    }
+    QList<QList<QGeoCoordinate>> staged;
+    for (int entity = 0; entity < count; ++entity) {
+        SHPObject* object = SHPReadObject(handle, entity);
+        if (!object) {
+            errorString = QStringLiteral("entity %1: failed to read object").arg(entity + 1);
+            return false;
+        }
+        auto destroy = qScopeGuard([object]() { SHPDestroyObject(object); });
+        if (object->nSHPType != SHPT_POLYGON && object->nSHPType != SHPT_POLYGONZ &&
+            object->nSHPType != SHPT_POLYGONM) {
+            errorString = QStringLiteral("entity %1: unsupported shape type %2")
+                              .arg(entity + 1)
+                              .arg(QString::fromLatin1(SHPTypeName(object->nSHPType)));
+            return false;
+        }
+        if (object->nParts > 1) {
+            errorString =
+                QStringLiteral(
+                    "multipart polygon entity %1 needs conversion (holes and multi-polygons are not imported)")
+                    .arg(entity + 1);
+            return false;
+        }
+        QList<QGeoCoordinate> ring;
+        for (int vertex = 0; vertex < object->nVertices; ++vertex) {
+            QGeoCoordinate coordinate;
+            // Match the permissive reader's PRJ-driven WGS84/UTM conversion.
+            if (utmZone) {
+                if (!std::isfinite(object->padfX[vertex]) || !std::isfinite(object->padfY[vertex]) ||
+                    !QGCGeo::convertUTMToGeo(object->padfX[vertex], object->padfY[vertex], utmZone, southern,
+                                             coordinate)) {
+                    errorString = QStringLiteral("entity %1 vertex %2: coordinate conversion failed")
+                                      .arg(entity + 1)
+                                      .arg(vertex + 1);
+                    return false;
+                }
+            } else {
+                const double lat = object->padfY[vertex];
+                const double lon = object->padfX[vertex];
+                if (!StrictPolygon::validPosition(lat, lon)) {
+                    errorString =
+                        QStringLiteral("entity %1 vertex %2: invalid coordinate").arg(entity + 1).arg(vertex + 1);
+                    return false;
+                }
+                coordinate = QGeoCoordinate(lat, lon);
+            }
+            if (!StrictPolygon::validPosition(coordinate.latitude(), coordinate.longitude())) {
+                errorString = QStringLiteral("entity %1 vertex %2: invalid coordinate").arg(entity + 1).arg(vertex + 1);
+                return false;
+            }
+            ring.append(coordinate);
+        }
+        QString reason;
+        if (!StrictPolygon::normalize(ring, reason)) {
+            errorString =
+                QStringLiteral("entity %1 ring (vertices 1-%2): %3").arg(entity + 1).arg(object->nVertices).arg(reason);
+            return false;
+        }
+        staged.append(ring);
+    }
+    polygons = std::move(staged);
+    return true;
 }
 
 bool SHPFileHelper::loadPolygonsFromFile(const QString &shpFile, QList<QList<QGeoCoordinate>> &polygons, QString &errorString, double filterMeters)

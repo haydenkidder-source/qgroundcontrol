@@ -12,6 +12,8 @@ namespace SHPFileHelper
     /// Get the number of entities in the shapefile
     int getEntityCount(const QString &shpFile, QString &errorString);
 
+    bool loadStrictPolygonsFromFile(const QString& file, QList<QList<QGeoCoordinate>>& polygons, QString& errorString);
+
     /// Load all polygon entities
     /// @param filterMeters Filter vertices closer than this distance (0 to disable)
     bool loadPolygonsFromFile(const QString &shpFile, QList<QList<QGeoCoordinate>> &polygons, QString &errorString,

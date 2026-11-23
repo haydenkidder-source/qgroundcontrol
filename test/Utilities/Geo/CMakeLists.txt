@@ -18,6 +18,8 @@ target_sources(
         ShapeTest.h
 )
 
+target_link_libraries(QGCUnitTests PRIVATE shp)
+
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
 # ----------------------------------------------------------------------------

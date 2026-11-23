@@ -1,12 +1,16 @@
 #include "KMLHelper.h"
-#include "KMLSchemaValidator.h"
-#include "QGCLoggingCategory.h"
+
+#include <algorithm>
+#include <functional>
+#include <utility>
 
 #include <QtCore/QCoreApplication>
 #include <QtCore/QFile>
 #include <QtXml/QDomDocument>
 
-#include <algorithm>
+#include "KMLSchemaValidator.h"
+#include "QGCLoggingCategory.h"
+#include "StrictPolygon.h"
 
 QGC_LOGGING_CATEGORY(KMLHelperLog, "Utilities.KMLHelper")
 
@@ -171,6 +175,159 @@ int KMLHelper::getEntityCount(const QString &kmlFile, QString &errorString)
     count += domDocument.elementsByTagName("LineString").count();
     count += domDocument.elementsByTagName("Point").count();
     return count;
+}
+
+bool KMLHelper::loadStrictPolygonsFromFile(const QString& fileName, QList<QList<QGeoCoordinate>>& polygons,
+                                           QString& errorString)
+{
+    polygons.clear();
+    errorString.clear();
+    QFile file(fileName);
+    if (!file.open(QIODevice::ReadOnly)) {
+        errorString = QStringLiteral("Unable to open KML file: %1").arg(file.errorString());
+        return false;
+    }
+    if (file.size() == 0) {
+        errorString = QStringLiteral("No polygon geometry found");
+        return false;
+    }
+    QDomDocument document;
+    const auto result = document.setContent(&file, QDomDocument::ParseOption::Default);
+    if (!result) {
+        errorString = QStringLiteral("Unable to parse KML: %1 line %2").arg(result.errorMessage).arg(result.errorLine);
+        return false;
+    }
+
+    QList<QList<QGeoCoordinate>> staged;
+    int placemarkNumber = 0;
+    int polygonNumber = 0;
+    const QStringList otherGeometry = {QStringLiteral("Point"),
+                                       QStringLiteral("LineString"),
+                                       QStringLiteral("LinearRing"),
+                                       QStringLiteral("Model"),
+                                       QStringLiteral("Track"),
+                                       QStringLiteral("MultiTrack"),
+                                       QStringLiteral("GeometryCollection"),
+                                       QStringLiteral("MultiPoint"),
+                                       QStringLiteral("MultiLineString"),
+                                       QStringLiteral("MultiPolygon")};
+    std::function<bool(const QDomNode&, QString)> visit;
+    visit = [&](const QDomNode& node, QString placemark) {
+        if (!node.isElement()) {
+            return true;
+        }
+        const QString tag = node.nodeName().section(QLatin1Char(':'), -1);
+        if (tag == QLatin1String("Placemark")) {
+            ++placemarkNumber;
+            placemark = QStringLiteral("placemark %1").arg(placemarkNumber);
+            const QString name = node.namedItem(QStringLiteral("name")).toElement().text();
+            if (!name.isEmpty()) {
+                placemark += QStringLiteral(" (%1)").arg(name);
+            }
+        }
+        if (tag == QLatin1String("Polygon")) {
+            ++polygonNumber;
+            const QString location = QStringLiteral("%1 polygon %2 line %3")
+                                         .arg(placemark.isEmpty() ? QStringLiteral("KML") : placemark)
+                                         .arg(polygonNumber)
+                                         .arg(node.lineNumber());
+            const auto childNamed = [](const QDomNode& parent, const QString& name) {
+                for (QDomNode child = parent.firstChild(); !child.isNull(); child = child.nextSibling()) {
+                    if (child.isElement() && child.nodeName().section(QLatin1Char(':'), -1) == name) {
+                        return child;
+                    }
+                }
+                return QDomNode();
+            };
+            std::function<bool(const QDomNode&)> checkPolygonChildren;
+            checkPolygonChildren = [&](const QDomNode& parent) {
+                for (QDomNode child = parent.firstChild(); !child.isNull(); child = child.nextSibling()) {
+                    if (!child.isElement()) {
+                        continue;
+                    }
+                    const QString childTag = child.nodeName().section(QLatin1Char(':'), -1);
+                    if (childTag == QLatin1String("innerBoundaryIs")) {
+                        errorString = location + QStringLiteral(": innerBoundaryIs hole is not supported");
+                        return false;
+                    }
+                    if (childTag != QLatin1String("LinearRing") && otherGeometry.contains(childTag)) {
+                        errorString = QStringLiteral("%1 line %2: unsupported geometry %3")
+                                          .arg(location)
+                                          .arg(child.lineNumber())
+                                          .arg(childTag);
+                        return false;
+                    }
+                    if (!checkPolygonChildren(child)) {
+                        return false;
+                    }
+                }
+                return true;
+            };
+            if (!checkPolygonChildren(node)) {
+                return false;
+            }
+            const QDomNode outer = childNamed(node, QStringLiteral("outerBoundaryIs"));
+            const QDomNode linearRing = childNamed(outer, QStringLiteral("LinearRing"));
+            const QDomNode coordinates = childNamed(linearRing, QStringLiteral("coordinates"));
+            const QString contents = coordinates.toElement().text().simplified();
+            if (coordinates.isNull() || contents.isEmpty()) {
+                errorString = location + QStringLiteral(": polygon has no coordinates");
+                return false;
+            }
+            QList<QGeoCoordinate> ring;
+            const QStringList tuples = contents.split(QLatin1Char(' '));
+            for (qsizetype i = 0; i < tuples.size(); ++i) {
+                const QStringList values = tuples[i].split(QLatin1Char(','));
+                bool lonOk = false;
+                bool latOk = false;
+                bool altOk = true;
+                const double lon = values.value(0).toDouble(&lonOk);
+                const double lat = values.value(1).toDouble(&latOk);
+                double altitude = 0;
+                if (values.size() == 3) {
+                    altitude = values[2].toDouble(&altOk);
+                }
+                if (values.size() < 2 || values.size() > 3 || !lonOk || !latOk || !altOk || !std::isfinite(altitude) ||
+                    !StrictPolygon::validPosition(lat, lon)) {
+                    errorString = QStringLiteral("%1 coordinates line %2 vertex %3: invalid coordinate tuple %4")
+                                      .arg(location)
+                                      .arg(coordinates.lineNumber())
+                                      .arg(i + 1)
+                                      .arg(tuples[i]);
+                    return false;
+                }
+                // The polygon model stores horizontal positions; altitude is validated but discarded.
+                ring.append(QGeoCoordinate(lat, lon));
+            }
+            QString reason;
+            if (!StrictPolygon::normalize(ring, reason)) {
+                errorString = QStringLiteral("%1 ring: %2").arg(location, reason);
+                return false;
+            }
+            staged.append(ring);
+            return true;
+        }
+        if (!placemark.isEmpty() && otherGeometry.contains(tag)) {
+            errorString =
+                QStringLiteral("%1 line %2: unsupported geometry %3").arg(placemark).arg(node.lineNumber()).arg(tag);
+            return false;
+        }
+        for (QDomNode child = node.firstChild(); !child.isNull(); child = child.nextSibling()) {
+            if (!visit(child, placemark)) {
+                return false;
+            }
+        }
+        return true;
+    };
+    if (!visit(document.documentElement(), QString())) {
+        return false;
+    }
+    if (staged.isEmpty()) {
+        errorString = QStringLiteral("No polygon geometry found");
+        return false;
+    }
+    polygons = std::move(staged);
+    return true;
 }
 
 bool KMLHelper::loadPolygonsFromFile(const QString &kmlFile, QList<QList<QGeoCoordinate>> &polygons, QString &errorString, double filterMeters)

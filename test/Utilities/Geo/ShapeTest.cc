@@ -1,13 +1,15 @@
 #include "ShapeTest.h"
 
 #include <QtCore/QDir>
+#include <QtCore/QFileInfo>
 #include <QtCore/QRegularExpression>
+#include <QtCore/QTemporaryDir>
 #include <QtCore/QTextStream>
 
 #include "KMLDomDocument.h"
 #include "KMLSchemaValidator.h"
 #include "ShapeFileHelper.h"
-#include <QtCore/QTemporaryDir>
+#include "shapefil.h"
 
 namespace {
 
@@ -452,6 +454,200 @@ void ShapeTest::_testKMLExportSchemaValidation()
     const auto badCoordsResult = validator->validateFile(badCoordsPath);
     QVERIFY(!badCoordsResult.isValid);
     QVERIFY(badCoordsResult.errors.size() >= 2);  // lat and lon both out of range
+}
+
+void ShapeTest::_testStrictKML_data()
+{
+    QTest::addColumn<QString>("geometry");
+    QTest::addColumn<bool>("success");
+    QTest::addColumn<QString>("message");
+    const QString good = QStringLiteral(
+        "<Polygon><outerBoundaryIs><LinearRing><coordinates>0,0 0.00001,0 1,0 1,1 "
+        "0,0</coordinates></LinearRing></outerBoundaryIs></Polygon>");
+    const auto polygon = [](const QString& coordinates) {
+        return QStringLiteral(
+                   "<Polygon><outerBoundaryIs><LinearRing><coordinates>%1</coordinates></LinearRing></"
+                   "outerBoundaryIs></Polygon>")
+            .arg(coordinates);
+    };
+    QTest::newRow("preserve") << good << true << QString();
+    QTest::newRow("multi")
+        << QStringLiteral("<MultiGeometry>%1%2</MultiGeometry>").arg(good, polygon(QStringLiteral("2,2 3,2 3,3 2,2")))
+        << true << QString();
+    QTest::newRow("prefixed polygon")
+        << QStringLiteral(
+               "<k:Polygon xmlns:k=\"urn:kml\"><k:outerBoundaryIs><k:LinearRing><k:coordinates>0,0 0.00001,0 1,0 1,1 "
+               "0,0</k:coordinates></k:LinearRing></k:outerBoundaryIs></k:Polygon>")
+        << true << QString();
+    QTest::newRow("hole") << QString(good).replace(QStringLiteral("</Polygon>"),
+                                                   QStringLiteral("<innerBoundaryIs/></Polygon>"))
+                          << false << QStringLiteral("innerBoundaryIs");
+    QTest::newRow("point") << (good + QStringLiteral("<Point/>")) << false
+                           << QStringLiteral("unsupported geometry Point");
+    QTest::newRow("line") << QStringLiteral("<LineString/>") << false
+                          << QStringLiteral("unsupported geometry LineString");
+    QTest::newRow("unclosed") << polygon(QStringLiteral("0,0 1,0 1,1")) << false
+                              << QStringLiteral("ring is not closed");
+    QTest::newRow("distinct") << polygon(QStringLiteral("0,0 1,0 1,0 0,0")) << false
+                              << QStringLiteral("fewer than three distinct");
+    QTest::newRow("tuple") << polygon(QStringLiteral("0,0 1,0 broken 0,0")) << false
+                           << QStringLiteral("invalid coordinate tuple");
+    QTest::newRow("longitude range") << polygon(QStringLiteral("0,0 1,0 181,1 0,0")) << false
+                                     << QStringLiteral("invalid coordinate tuple");
+    QTest::newRow("range") << polygon(QStringLiteral("0,0 1,0 1,91 0,0")) << false
+                           << QStringLiteral("invalid coordinate tuple");
+    QTest::newRow("altitude") << polygon(QStringLiteral("0,0 1,0 1,1,bad 0,0")) << false
+                              << QStringLiteral("invalid coordinate tuple");
+    QTest::newRow("atomic") << (good + polygon(QStringLiteral("0,0 1,0 1,1"))) << false
+                            << QStringLiteral("ring is not closed");
+    QTest::newRow("empty polygon") << QStringLiteral("<Polygon/>") << false << QStringLiteral("no coordinates");
+    QTest::newRow("no geometry") << QStringLiteral("<name>label</name>") << false
+                                 << QStringLiteral("No polygon geometry found");
+}
+
+void ShapeTest::_testStrictKML()
+{
+    QFETCH(QString, geometry);
+    QFETCH(bool, success);
+    QFETCH(QString, message);
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString content = QStringLiteral(
+                                "<kml><Document><Placemark><name>label</name></Placemark><Folder><Placemark>%1</"
+                                "Placemark></Folder></Document></kml>")
+                                .arg(geometry);
+    const QString file = _writeKmlFile(dir.path(), QStringLiteral("strict.kml"), content);
+    QList<QList<QGeoCoordinate>> polygons = {{QGeoCoordinate(2, 2)}};
+    QString error;
+    QCOMPARE(ShapeFileHelper::loadStrictPolygonsFromFile(file, polygons, error), success);
+    if (!success) {
+        QVERIFY(polygons.isEmpty());
+        QVERIFY2(error.contains(message), qPrintable(error));
+        QVERIFY(error.contains(QStringLiteral("strict.kml")));
+        if (message == QLatin1String("invalid coordinate tuple")) {
+            QVERIFY(error.contains(QStringLiteral("line")));
+            QVERIFY(error.contains(QStringLiteral("vertex")));
+        }
+        return;
+    }
+    QVERIFY(error.isEmpty());
+    const int expectedCount = geometry.startsWith(QStringLiteral("<MultiGeometry>")) ? 2 : 1;
+    QCOMPARE(polygons.size(), expectedCount);
+    const QList<QGeoCoordinate> expected = {QGeoCoordinate(0, 0), QGeoCoordinate(0, 0.00001), QGeoCoordinate(0, 1),
+                                            QGeoCoordinate(1, 1)};
+    QCOMPARE(polygons.first(), expected);
+    if (expectedCount == 2) {
+        const QList<QGeoCoordinate> second = {QGeoCoordinate(2, 2), QGeoCoordinate(2, 3), QGeoCoordinate(3, 3)};
+        QCOMPARE(polygons[1], second);
+    }
+}
+
+void ShapeTest::_testStrictSHP()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const auto create = [&](const QString& name, int type, const QList<QList<int>>& partsByEntity,
+                            const QList<QList<QGeoCoordinate>>& entities) {
+        const QString path = dir.filePath(name + QStringLiteral(".shp"));
+        SHPHandle handle = SHPCreate(path.toUtf8().constData(), type);
+        if (!handle) {
+            return QString();
+        }
+        for (qsizetype entity = 0; entity < entities.size(); ++entity) {
+            QList<double> x, y;
+            for (const auto& coordinate : entities[entity]) {
+                x.append(coordinate.longitude());
+                y.append(coordinate.latitude());
+            }
+            const auto& parts = partsByEntity[entity];
+            SHPObject* object =
+                SHPCreateObject(type, -1, static_cast<int>(parts.size()), parts.constData(), nullptr,
+                                static_cast<int>(x.size()), x.constData(), y.constData(), nullptr, nullptr);
+            if (!object || SHPWriteObject(handle, -1, object) < 0) {
+                if (object) {
+                    SHPDestroyObject(object);
+                }
+                SHPClose(handle);
+                return QString();
+            }
+            SHPDestroyObject(object);
+        }
+        SHPClose(handle);
+        _writePrjFile(dir.filePath(name + QStringLiteral(".prj")), QStringLiteral("GEOGCS[\"GCS_WGS_1984\","));
+        return path;
+    };
+    const QList<QGeoCoordinate> ring = {QGeoCoordinate(0, 0), QGeoCoordinate(0, 0.00001), QGeoCoordinate(0, 1),
+                                        QGeoCoordinate(1, 1), QGeoCoordinate(0, 0)};
+    const QList<QGeoCoordinate> second = {QGeoCoordinate(2, 2), QGeoCoordinate(2, 3), QGeoCoordinate(3, 3),
+                                          QGeoCoordinate(2, 2)};
+    const QList<QGeoCoordinate> hole = {QGeoCoordinate(0.1, 0.1), QGeoCoordinate(0.2, 0.2), QGeoCoordinate(0.1, 0.2),
+                                        QGeoCoordinate(0.1, 0.1)};
+    const QList<QGeoCoordinate> bad = {QGeoCoordinate(0, 0), QGeoCoordinate(0, 1), QGeoCoordinate(0, 1),
+                                       QGeoCoordinate(0, 0)};
+    QList<QList<QGeoCoordinate>> polygons;
+    QString error;
+    const QString valid = create(QStringLiteral("valid"), SHPT_POLYGON, {{0}}, {ring});
+    QVERIFY(!valid.isEmpty());
+    QVERIFY2(ShapeFileHelper::loadStrictPolygonsFromFile(valid, polygons, error), qPrintable(error));
+    QCOMPARE(polygons.size(), 1);
+    QCOMPARE(polygons.first(), ring.mid(0, ring.size() - 1));
+    const auto reject = [&](const QString& file, const QString& expected) {
+        polygons = {{QGeoCoordinate(5, 5)}};
+        const bool loaded = ShapeFileHelper::loadStrictPolygonsFromFile(file, polygons, error);
+        return !file.isEmpty() && !loaded && polygons.isEmpty() && error.contains(expected) &&
+               error.contains(QFileInfo(file).fileName());
+    };
+    const QString multipart = create(QStringLiteral("multipart"), SHPT_POLYGON, {{0, 5}}, {ring + second});
+    QVERIFY(reject(multipart, QStringLiteral("multipart polygon entity 1 needs conversion")));
+    QVERIFY(reject(create(QStringLiteral("hole"), SHPT_POLYGON, {{0, 5}}, {ring + hole}),
+                   QStringLiteral("multipart polygon entity 1")));
+    QVERIFY(
+        reject(create(QStringLiteral("point"), SHPT_POINT, {{}}, {{QGeoCoordinate(0, 0)}}), QStringLiteral("Point")));
+    QVERIFY(reject(create(QStringLiteral("line"), SHPT_ARC, {{0}}, {ring}), QStringLiteral("Arc")));
+    QVERIFY(reject(create(QStringLiteral("distinct"), SHPT_POLYGON, {{0}}, {bad}),
+                   QStringLiteral("fewer than three distinct")));
+    QVERIFY(reject(create(QStringLiteral("unclosed"), SHPT_POLYGON, {{0}}, {ring.mid(0, 4)}),
+                   QStringLiteral("ring is not closed")));
+    QVERIFY(
+        reject(create(QStringLiteral("atomic"), SHPT_POLYGON, {{0}, {0}}, {bad, ring}), QStringLiteral("entity 1")));
+    QVERIFY(
+        reject(create(QStringLiteral("atomic2"), SHPT_POLYGON, {{0}, {0}}, {ring, bad}), QStringLiteral("entity 2")));
+    QVERIFY(reject(create(QStringLiteral("empty"), SHPT_POLYGON, {}, {}), QStringLiteral("No polygon geometry found")));
+    QVERIFY(ShapeFileHelper::loadPolygonsFromFile(multipart, polygons, error, 0));
+    QCOMPARE(polygons.size(), 1);
+    QCOMPARE(polygons.first().size(), ring.size());
+}
+
+void ShapeTest::_testStrictDispatcher()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    QList<QList<QGeoCoordinate>> polygons = {{QGeoCoordinate(0, 0)}};
+    QString error;
+    QVERIFY(!ShapeFileHelper::loadStrictPolygonsFromFile(dir.filePath(QStringLiteral("unknown.txt")), polygons, error));
+    QVERIFY(polygons.isEmpty());
+    QVERIFY(error.contains(QStringLiteral("unknown.txt")));
+    QVERIFY(error.contains(QStringLiteral("Unsupported file type")));
+    QVERIFY(!ShapeFileHelper::loadStrictPolygonsFromFile(dir.filePath(QStringLiteral("missing.kml")), polygons, error));
+    QVERIFY(error.contains(QStringLiteral("Unable to open")));
+    const QString invalid = _writeKmlFile(dir.path(), QStringLiteral("invalid.kml"), QStringLiteral("<kml>"));
+    QVERIFY(!ShapeFileHelper::loadStrictPolygonsFromFile(invalid, polygons, error));
+    QVERIFY(error.contains(QStringLiteral("Unable to parse KML")));
+    const QString empty = _writeKmlFile(dir.path(), QStringLiteral("empty.kml"), QString());
+    QVERIFY(!ShapeFileHelper::loadStrictPolygonsFromFile(empty, polygons, error));
+    QVERIFY(error.contains(QStringLiteral("No polygon geometry found")));
+    const QString hole = _writeKmlFile(
+        dir.path(), QStringLiteral("hole.kml"),
+        QStringLiteral(
+            "<kml><Placemark><Polygon><outerBoundaryIs><LinearRing><coordinates>0,0 1,0 1,1 0,0</coordinates>"
+            "</LinearRing></outerBoundaryIs><innerBoundaryIs><LinearRing><coordinates>0.1,0.1 0.2,0.1 0.2,0.2 0.1,0.1"
+            "</coordinates></LinearRing></innerBoundaryIs></Polygon></Placemark></kml>"));
+    QVERIFY(ShapeFileHelper::loadPolygonsFromFile(hole, polygons, error, 0));
+    QCOMPARE(polygons.size(), 1);
+    QCOMPARE(polygons.first().size(), 3);
+    QVERIFY(!ShapeFileHelper::loadStrictPolygonsFromFile(hole, polygons, error));
+    QVERIFY(polygons.isEmpty());
+    QVERIFY(error.contains(QStringLiteral("innerBoundaryIs")));
 }
 
 UT_REGISTER_TEST(ShapeTest, TestLabel::Unit, TestLabel::Utilities)
