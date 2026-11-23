@@ -68,7 +68,7 @@ runs:
     # Pull request builds aren't released: they skip the SBOM scan and Sigstore attestations.
     - name: Generate SBOM
       if: github.event_name != 'pull_request'
-      uses: anchore/sbom-action@v0
+      uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
       env:
         # A 64 MiB gen0 budget (hex) avoids a PowerShell jump-list heap corruption that intermittently
         # crashes the pwsh extracting syft on windows-11-arm (dotnet/runtime#131636).

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from ..._helpers import get_step, load_workflow
+import re
+
+from ..._helpers import get_step, load_action, load_workflow
 
 
 def test_release_is_manual_on_master_and_publishes_with_semantic_release() -> None:
@@ -48,3 +50,16 @@ def test_ci_scripts_installs_git_cliff_for_the_release_notes_tests() -> None:
     ]
     assert legs
     assert all("release" in leg["groups"].split(",") for leg in legs)
+
+
+def test_release_external_actions_are_pinned_to_commits() -> None:
+    workflow = load_workflow("release.yml")
+    step_groups = [job["steps"] for job in workflow["jobs"].values()]
+    step_groups.append(load_action("attest-and-upload")["runs"]["steps"])
+    for steps in step_groups:
+        for step in steps:
+            uses = step.get("uses", "")
+            if not uses or uses.startswith(("./", "actions/")):
+                continue
+            action, separator, ref = uses.rpartition("@")
+            assert action and separator and re.fullmatch(r"[0-9a-f]{40}", ref), uses

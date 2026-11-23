@@ -94,8 +94,13 @@ def test_executable_jobs_are_bounded_and_hardened() -> None:
             ), f"{path.name}:{job_name} must set a positive timeout-minutes"
             if _runs_only_on_runson(job):
                 continue
-            assert steps[0].get("uses") == HARDEN_RUNNER, (
-                f"{path.name}:{job_name} must run {HARDEN_RUNNER} before other steps"
+            harden_runner = (
+                "step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c"
+                if path.name == "release.yml"
+                else HARDEN_RUNNER
+            )
+            assert steps[0].get("uses") == harden_runner, (
+                f"{path.name}:{job_name} must run {harden_runner} before other steps"
             )
 
 

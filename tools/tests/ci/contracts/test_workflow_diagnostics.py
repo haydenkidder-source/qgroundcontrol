@@ -57,7 +57,11 @@ def test_debug_session_is_actor_only_and_does_not_wait_in_post_cleanup():
 
 def test_unified_attestation_preserves_separate_provenance_and_sbom_subjects():
     steps = get_steps(load_action("attest-and-upload"))
-    scan = next(s for s in steps if s.get("uses") == "anchore/sbom-action@v0")
+    scan = next(
+        s
+        for s in steps
+        if s.get("uses") == "anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610"
+    )
     provenance, sbom, dependency = [s for s in steps if s.get("uses") == "actions/attest@v4"]
     # Pull request builds aren't released: one event condition gates every attestation step.
     not_pr = "github.event_name != 'pull_request'"
