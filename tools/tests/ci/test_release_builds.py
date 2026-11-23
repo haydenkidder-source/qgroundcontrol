@@ -251,7 +251,7 @@ def test_required_test_job_status(platform, job_name, tmp_path):
             {"name": job_name, "status": "completed", "conclusion": "failure"},
         ]
         with pytest.raises(RuntimeError, match=re.escape(job_name)):
-            wait_for_builds("o/r", "abc", "v1", tmp_path / "runs.json", timeout=0.01)
+            wait_for_builds("o/r", "abc", "v1", tmp_path / "runs.json", timeout=1)
 
         list_jobs.return_value = jobs
         with pytest.raises(RuntimeError, match=re.escape(job_name)):
