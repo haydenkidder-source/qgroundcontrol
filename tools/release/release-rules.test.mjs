@@ -2,13 +2,19 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import test from 'node:test'
-import { analyzeCommits } from '@semantic-release/commit-analyzer'
 
 const config = JSON.parse(readFileSync(new URL('../../.releaserc.json', import.meta.url)))
 const options = config.plugins.find(([name]) => name === '@semantic-release/commit-analyzer')[1]
 const cwd = fileURLToPath(new URL('.', import.meta.url))
-const analyze = messages => analyzeCommits(options, {
-  cwd, commits: messages.map(message => ({ hash: '1234567', message })), logger: { log() {} },
+const analyze = async messages => {
+  const { analyzeCommits } = await import('@semantic-release/commit-analyzer')
+  return analyzeCommits(options, {
+    cwd, commits: messages.map(message => ({ hash: '1234567', message })), logger: { log() {} },
+  })
+}
+
+test('excluded types do not suppress breaking releases', () => {
+  assert.deepEqual(options.releaseRules.filter(rule => rule.release === false), [])
 })
 
 for (const [message, expected] of [
@@ -16,11 +22,8 @@ for (const [message, expected] of [
   ...['fix', 'perf', 'revert'].map(type => [`${type}: repair an option`, 'patch']),
   ...['chore', 'ci', 'docs', 'style', 'refactor', 'test', 'build'].flatMap(type => [
     [`${type}: reorganize internals`, null],
-    [`${type}!: remove old configuration`, null],
-    [`${type}: remove old configuration\n\nBREAKING CHANGE: old configuration is unsupported`, null],
-    [`${type}!: remove old configuration\n\nBREAKING CHANGE: old configuration is unsupported`, null],
   ]),
-  ...['feat', 'fix', 'unknown'].flatMap(type => [
+  ...['feat', 'fix', 'perf', 'revert', 'chore', 'ci', 'docs', 'style', 'refactor', 'test', 'build', 'unknown'].flatMap(type => [
     [`${type}!: remove old configuration`, 'minor'],
     [`${type}: remove old configuration\n\nBREAKING CHANGE: old configuration is unsupported`, 'minor'],
     [`${type}!: remove old configuration\n\nBREAKING CHANGE: old configuration is unsupported`, 'minor'],
