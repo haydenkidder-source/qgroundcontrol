@@ -121,6 +121,7 @@ void PlanMasterController::_activeVehicleChanged(Vehicle* activeVehicle)
         disconnect(_managerVehicle->rallyPointManager(),    nullptr, this, nullptr);
     }
 
+    const bool uploadInterrupted = (_sendSequence != SyncSequence::Idle);
     _loadSequence = SyncSequence::Idle;
     _sendSequence = SyncSequence::Idle;
     _loadVehicleId = 0;
@@ -221,6 +222,14 @@ void PlanMasterController::_activeVehicleChanged(Vehicle* activeVehicle)
         }
     }
 
+    if (uploadInterrupted) {
+        QGC::showAppMessage(
+            tr("Plan upload interrupted: the active vehicle changed or disconnected while the plan was "
+               "being sent. The vehicle it was being sent to may hold only part of the plan (mission, "
+               "geofence, rally points). Select that vehicle and upload again."));
+        _setDirtyForUpload(true);
+    }
+
     // Vehicle changed so we need to signal everything
     emit containsItemsChanged();
     emit syncInProgressChanged();
@@ -315,11 +324,14 @@ void PlanMasterController::_loadRallyPointsComplete(void)
     _loadSequence = _loadVehicleId ? SyncSequence::Idle : SyncSequence::FailedLoad;
     _setPlanVehicleId(_loadVehicleId);
     qCDebug(PlanMasterControllerLog) << "PlanMasterController::_loadRallyPointsComplete";
-    // A plan just downloaded from the vehicle reflects exactly what is on the vehicle.
-    // The user has made no edits, so it must not be dirty for save or upload. Any previous
-    // file association no longer describes the editor contents.
+    // A plan just downloaded from the vehicle reflects exactly what is on the vehicle, so it is not dirty for save.
+    // Each element clears its own dirty flag when it adopts its downloaded content, so an element that is dirty now was
+    // edited after that and keeps the plan dirty. A failed download leaves the editor with only part of the vehicle's
+    // plan, so it stays dirty for upload. Any previous file association no longer describes the editor contents.
+    const bool editedAfterAdoption =
+        _missionController.dirty() || _geoFenceController.dirty() || _rallyPointController.dirty();
     _clearCurrentPlanFile();
-    _setDirtyStates(false /* dirtyForSave */, false /* dirtyForUpload */);
+    _setDirtyStates(editedAfterAdoption, editedAfterAdoption || !_loadVehicleId);
 }
 
 void PlanMasterController::_sendMissionComplete(bool error)
@@ -329,6 +341,7 @@ void PlanMasterController::_sendMissionComplete(bool error)
     }
     if (error) {
         _sendVehicleId = 0;
+        _sendFailed = true;
     }
     _sendSequence = SyncSequence::GeoFence;
     if (_geoFenceController.supported()) {
@@ -347,6 +360,7 @@ void PlanMasterController::_sendGeoFenceComplete(bool error)
     }
     if (error) {
         _sendVehicleId = 0;
+        _sendFailed = true;
     }
     _sendSequence = SyncSequence::RallyPoints;
     if (_rallyPointController.supported()) {
@@ -365,6 +379,7 @@ void PlanMasterController::_sendRallyPointsComplete(bool error)
     }
     if (error) {
         _sendVehicleId = 0;
+        _sendFailed = true;
     }
     _sendSequence = SyncSequence::Idle;
     if (_sendVehicleId) {
@@ -375,7 +390,14 @@ void PlanMasterController::_sendRallyPointsComplete(bool error)
         _setPlanVehicleId(_sendVehicleId);
     }
     qCDebug(PlanMasterControllerLog) << "PlanMasterController::sendToVehicle Rally Point send complete";
-    _setDirtyForUpload(false);
+    // Each element clears its own dirty flag when it takes its upload snapshot, so an element that is dirty now was
+    // edited after that and what was sent does not include the edit.
+    const bool editedAfterSnapshot =
+        _missionController.dirty() || _geoFenceController.dirty() || _rallyPointController.dirty();
+    if (editedAfterSnapshot) {
+        _setDirtyForSave(true);
+    }
+    _setDirtyForUpload(_sendFailed || editedAfterSnapshot);
     if (_deleteWhenSendCompleted) {
         this->deleteLater();
     }
@@ -405,6 +427,7 @@ void PlanMasterController::sendToVehicle(void)
         qCDebug(PlanMasterControllerLog) << "PlanMasterController::sendToVehicle start mission sendToVehicle";
         _sendVehicleId = _editingVehicleId();
         _sendSequence = SyncSequence::Mission;
+        _sendFailed = false;
         _missionController.sendToVehicle();
     }
 }

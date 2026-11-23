@@ -21,6 +21,12 @@ private slots:
     void _testTakeoffTextFileLoad_data();
     void _testTakeoffTextFileLoad();
     void _testActiveVehicleChanged();
+    void _testUploadInterruptedByVehicleChange_data();
+    void _testUploadInterruptedByVehicleChange();
+    void _testEditDuringUploadKeepsDirty_data();
+    void _testEditDuringUploadKeepsDirty();
+    void _testEditDuringDownloadKeepsDirty_data();
+    void _testEditDuringDownloadKeepsDirty();
     void _testDirtyFlagsMatrix_data();
     void _testDirtyFlagsMatrix();
 
@@ -87,6 +93,8 @@ private slots:
     void _testPlanVehicleIdFailedDownloadClearsAssociation();
     void _testPlanVehicleIdUpload_data();
     void _testPlanVehicleIdUpload();
+    void _testPlanVehicleIdUploadRetryAfterFailure_data();
+    void _testPlanVehicleIdUploadRetryAfterFailure();
     void _testPlanVehicleIdStaticVehicle();
 
 private:

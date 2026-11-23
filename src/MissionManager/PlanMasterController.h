@@ -219,6 +219,7 @@ private:
     RallyPointController _rallyPointController;
     SyncSequence _loadSequence = SyncSequence::Idle;
     SyncSequence _sendSequence = SyncSequence::Idle;
+    bool _sendFailed = false;
     QString _currentPlanFile;
     bool _deleteWhenSendCompleted = false;
     bool _dirtyForSave = false;
