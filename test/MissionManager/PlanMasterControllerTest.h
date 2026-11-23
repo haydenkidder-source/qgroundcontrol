@@ -23,6 +23,10 @@ private slots:
     void _testActiveVehicleChanged();
     void _testUploadInterruptedByVehicleChange_data();
     void _testUploadInterruptedByVehicleChange();
+    void _testEditDuringUploadKeepsDirty_data();
+    void _testEditDuringUploadKeepsDirty();
+    void _testEditDuringDownloadKeepsDirty_data();
+    void _testEditDuringDownloadKeepsDirty();
     void _testDirtyFlagsMatrix_data();
     void _testDirtyFlagsMatrix();
 

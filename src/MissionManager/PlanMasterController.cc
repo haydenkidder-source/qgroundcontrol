@@ -324,11 +324,14 @@ void PlanMasterController::_loadRallyPointsComplete(void)
     _loadSequence = _loadVehicleId ? SyncSequence::Idle : SyncSequence::FailedLoad;
     _setPlanVehicleId(_loadVehicleId);
     qCDebug(PlanMasterControllerLog) << "PlanMasterController::_loadRallyPointsComplete";
-    // A plan just downloaded from the vehicle reflects exactly what is on the vehicle. The user has made no edits,
-    // so it must not be dirty for save. A failed download leaves the editor with only part of the vehicle's plan,
-    // so that case stays dirty for upload. Any previous file association no longer describes the editor contents.
+    // A plan just downloaded from the vehicle reflects exactly what is on the vehicle, so it is not dirty for save.
+    // Each element clears its own dirty flag when it adopts its downloaded content, so an element that is dirty now was
+    // edited after that and keeps the plan dirty. A failed download leaves the editor with only part of the vehicle's
+    // plan, so it stays dirty for upload. Any previous file association no longer describes the editor contents.
+    const bool editedAfterAdoption =
+        _missionController.dirty() || _geoFenceController.dirty() || _rallyPointController.dirty();
     _clearCurrentPlanFile();
-    _setDirtyStates(false /* dirtyForSave */, !_loadVehicleId /* dirtyForUpload */);
+    _setDirtyStates(editedAfterAdoption, editedAfterAdoption || !_loadVehicleId);
 }
 
 void PlanMasterController::_sendMissionComplete(bool error)
@@ -387,7 +390,14 @@ void PlanMasterController::_sendRallyPointsComplete(bool error)
         _setPlanVehicleId(_sendVehicleId);
     }
     qCDebug(PlanMasterControllerLog) << "PlanMasterController::sendToVehicle Rally Point send complete";
-    _setDirtyForUpload(_sendFailed);
+    // Each element clears its own dirty flag when it takes its upload snapshot, so an element that is dirty now was
+    // edited after that and what was sent does not include the edit.
+    const bool editedAfterSnapshot =
+        _missionController.dirty() || _geoFenceController.dirty() || _rallyPointController.dirty();
+    if (editedAfterSnapshot) {
+        _setDirtyForSave(true);
+    }
+    _setDirtyForUpload(_sendFailed || editedAfterSnapshot);
     if (_deleteWhenSendCompleted) {
         this->deleteLater();
     }

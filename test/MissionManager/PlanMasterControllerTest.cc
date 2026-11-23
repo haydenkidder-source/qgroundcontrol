@@ -229,6 +229,109 @@ void PlanMasterControllerTest::_testUploadInterruptedByVehicleChange()
     }
 }
 
+void PlanMasterControllerTest::_testEditDuringUploadKeepsDirty_data()
+{
+    QTest::addColumn<int>("editElement");
+    QTest::addColumn<bool>("initialSaveDirty");
+    QTest::newRow("no edit") << -1 << false;
+    QTest::newRow("mission") << 0 << false;
+    QTest::newRow("fence") << 1 << false;
+    QTest::newRow("rally") << 2 << false;
+    QTest::newRow("mission with unsaved plan") << 0 << true;
+}
+
+void PlanMasterControllerTest::_testEditDuringUploadKeepsDirty()
+{
+    QFETCH(int, editElement);
+    QFETCH(bool, initialSaveDirty);
+    _connectMockLink(MAV_AUTOPILOT_PX4);
+    QVERIFY(_vehicle);
+    QTRY_VERIFY_WITH_TIMEOUT(_vehicle->initialPlanRequestComplete(), TestTimeout::longMs());
+    _populatePlanForIdentityTransfer();
+    expectLogMessage("API.QGCApplication.AppMessage", QtDebugMsg,
+                     QRegularExpression(QStringLiteral("Connected to Vehicle [0-9]+")));
+    Vehicle* const target = _connectExtraVehicle();
+    verifyExpectedLogMessage();
+    QVERIFY(target);
+    QTRY_VERIFY_WITH_TIMEOUT(target->initialPlanRequestComplete(), TestTimeout::longMs());
+    _masterController->_activeVehicleChanged(target);
+    _masterController->_setDirtyForSave(initialSaveDirty);
+
+    const QGeoCoordinate coordinate =
+        _masterController->missionController()->plannedHomePosition().atDistanceAndAzimuth(200, 45);
+    bool started = false;
+    bool editApplied = false;
+    QObject observer;
+    connect(target->rallyPointManager(), &PlanManager::inProgressChanged, &observer, [&](bool inProgress) {
+        if (!inProgress) {
+            return;
+        }
+        started = true;
+        if (editElement == 0) {
+            editApplied = _masterController->missionController()->insertSimpleMissionItem(coordinate, -1);
+        } else if (editElement == 1) {
+            _masterController->geoFenceController()->addInclusionCircle(coordinate,
+                                                                        coordinate.atDistanceAndAzimuth(100, 135));
+            editApplied = true;
+        } else if (editElement == 2) {
+            RallyPointController* const rally = _masterController->rallyPointController();
+            rally->points()->append(new RallyPoint(coordinate, QGroundControlQmlGlobal::AltitudeFrameRelative, rally));
+            editApplied = true;
+        }
+    });
+    QSignalSpy complete(target->rallyPointManager(), &RallyPointManager::sendComplete);
+    _masterController->sendToVehicle();
+    QTRY_COMPARE_WITH_TIMEOUT(complete.count(), 1, TestTimeout::longMs());
+    QCOMPARE(started, true);
+    QCOMPARE(editApplied, editElement >= 0);
+    QCOMPARE(_masterController->dirtyForUpload(), editElement >= 0);
+    QCOMPARE(_masterController->dirtyForSave(), initialSaveDirty || editElement >= 0);
+}
+
+void PlanMasterControllerTest::_testEditDuringDownloadKeepsDirty_data()
+{
+    QTest::addColumn<bool>("editMission");
+    QTest::newRow("no edit") << false;
+    QTest::newRow("mission") << true;
+}
+
+void PlanMasterControllerTest::_testEditDuringDownloadKeepsDirty()
+{
+    QFETCH(bool, editMission);
+    _connectMockLink(MAV_AUTOPILOT_PX4);
+    QVERIFY(_vehicle);
+    QTRY_VERIFY_WITH_TIMEOUT(_vehicle->initialPlanRequestComplete(), TestTimeout::longMs());
+    expectLogMessage("API.QGCApplication.AppMessage", QtDebugMsg,
+                     QRegularExpression(QStringLiteral("Connected to Vehicle [0-9]+")));
+    Vehicle* const target = _connectExtraVehicle(true);
+    verifyExpectedLogMessage();
+    QVERIFY(target);
+    QTRY_VERIFY_WITH_TIMEOUT(target->initialPlanRequestComplete(), TestTimeout::longMs());
+    _masterController->_activeVehicleChanged(target);
+
+    bool started = false;
+    bool editApplied = false;
+    QObject observer;
+    connect(target->geoFenceManager(), &PlanManager::inProgressChanged, &observer, [&](bool inProgress) {
+        if (inProgress) {
+            started = true;
+            if (editMission) {
+                MissionController* const mission = _masterController->missionController();
+                editApplied =
+                    mission->insertSimpleMissionItem(mission->plannedHomePosition().atDistanceAndAzimuth(200, 45), -1);
+            }
+        }
+    });
+    QSignalSpy complete(target->rallyPointManager(), &RallyPointManager::loadComplete);
+    _masterController->loadFromVehicle();
+    QTRY_COMPARE_WITH_TIMEOUT(complete.count(), 1, TestTimeout::longMs());
+    QCOMPARE(started, true);
+    QCOMPARE(editApplied, editMission);
+    QCOMPARE(_masterController->dirtyForUpload(), editMission);
+    QCOMPARE(_masterController->dirtyForSave(), editMission);
+    QCOMPARE(_masterController->missionController()->dirty(), editMission);
+}
+
 void PlanMasterControllerTest::_testDirtyFlagsMatrix_data()
 {
     // Dirty-state transition matrix ("unchanged" means preserve prior value):
