@@ -18,6 +18,43 @@ LinkPreferencePolicy::Input input()
 }
 }  // namespace
 
+void LinkPreferencePolicyTest::_singleAttachedAmbiguousConfiguration()
+{
+    auto state = input();
+    state.linkNames = {state.preferredName};
+    state.linkStatuses = {QString()};
+    state.primaryName.clear();
+    state.configurationAmbiguous = true;
+    LinkPreferencePolicy policy(timing());
+    policy.observe(state, 0);
+    QCOMPARE(policy.status(state, 0).gate, LinkPreferencePolicy::Gate::Ambiguous);
+    QVERIFY(!LinkPreferencePolicy::preferredHealthy(state));
+    QVERIFY(policy.evaluate(state, 100000).isEmpty());
+}
+
+void LinkPreferencePolicyTest::_ambiguousConfigurationBlocksReturn()
+{
+    auto state = input();
+    state.configurationAmbiguous = true;
+    state.primaryName = state.preferredName;
+    LinkPreferencePolicy policy;
+    policy.observe(state, 0);
+    QCOMPARE(policy.status(state, 0).gate, LinkPreferencePolicy::Gate::Ambiguous);
+    state.primaryName.clear();
+    QVERIFY(policy.evaluate(state, 100000).isEmpty());
+}
+
+void LinkPreferencePolicyTest::_ambiguousPreferredIsNotOnPreferred()
+{
+    auto state = input();
+    state.linkNames.append(state.preferredName);
+    state.linkStatuses.append(QString());
+    state.primaryName = state.preferredName;
+    LinkPreferencePolicy policy(timing());
+    policy.observe(state, 0);
+    QVERIFY(policy.status(state, 0).gate != LinkPreferencePolicy::Gate::OnPreferred);
+}
+
 void LinkPreferencePolicyTest::_initialSettleOutlastsLossDetection()
 {
     QCOMPARE(LinkPreferencePolicy::Timing{}.baseHoldMs, qint64(60000));

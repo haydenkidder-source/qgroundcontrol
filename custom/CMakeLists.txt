@@ -306,6 +306,8 @@ set(CUSTOM_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/MissionManager/PerimeterScanPlanCreator.h
     ${CMAKE_CURRENT_SOURCE_DIR}/src/Settings/CustomSettings.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/src/Settings/CustomSettings.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/VehicleRoles/VehicleLinkState.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/VehicleRoles/VehicleLinkState.h
     ${CMAKE_CURRENT_SOURCE_DIR}/src/VehicleRoles/LinkPreferenceController.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/src/VehicleRoles/LinkPreferenceController.h
     ${CMAKE_CURRENT_SOURCE_DIR}/src/VehicleRoles/LinkPreferencePolicy.cc
@@ -422,6 +424,8 @@ if(QGC_BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/test/COPStressTest.h
             ${CMAKE_CURRENT_SOURCE_DIR}/test/GuidedActionTargetUITest.cc
             ${CMAKE_CURRENT_SOURCE_DIR}/test/GuidedActionTargetUITest.h
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/VehicleLinkStateTest.cc
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/VehicleLinkStateTest.h
             ${CMAKE_CURRENT_SOURCE_DIR}/test/VehicleLinksPageUITest.cc
             ${CMAKE_CURRENT_SOURCE_DIR}/test/VehicleLinksPageUITest.h
             ${CMAKE_CURRENT_SOURCE_DIR}/test/VehicleRoleControllerTest.cc
@@ -545,11 +549,24 @@ if(QGC_BUILD_TESTING)
         "${CMAKE_SOURCE_DIR}"
         CALL
         add_qgc_test
+        VehicleLinkStateTest
+        LABELS
+        Unit
+        Comms
+    )
+    cmake_language(
+        DEFER
+        DIRECTORY
+        "${CMAKE_SOURCE_DIR}"
+        CALL
+        add_qgc_test
         VehicleLinksPageUITest
         LABELS
         Integration
         NoSanitizer
         Vehicle
+        SHARDS
+        2
     )
     cmake_language(
         DEFER

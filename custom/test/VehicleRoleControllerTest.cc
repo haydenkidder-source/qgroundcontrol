@@ -6,10 +6,15 @@
 #include <QtCore/QJsonDocument>
 #include <QtCore/QJsonObject>
 #include <QtCore/QRegularExpression>
+#include <QtCore/qscopeguard.h>
+#include <QtTest/QSignalSpy>
 
 #include "AppSettings.h"
+#include "LinkManager.h"
+#include "QGCCorePlugin.h"
 #include "QmlObjectListModel.h"
 #include "SettingsManager.h"
+#include "UDPLink.h"
 #include "VehicleRoleController.h"
 #include "VehicleSystemIdTestData.h"
 
@@ -30,6 +35,26 @@ void VehicleRoleControllerTest::cleanup()
 {
     SettingsManager::instance()->appSettings()->savePath()->setRawValue(_savePath);
     UnitTest::cleanup();
+}
+
+void VehicleRoleControllerTest::_ambiguousConnectedConfiguration()
+{
+    auto* const manager = LinkManager::instance();
+    auto first = manager->addConfiguration(new UDPConfiguration(QStringLiteral("Controller ambiguity")));
+    SharedLinkConfigurationPtr second;
+    const auto cleanup = qScopeGuard([&] {
+        manager->disconnectLinkConfiguration(first.get());
+        manager->removeConfiguration(first.get());
+        if (second) {
+            manager->removeConfiguration(second.get());
+        }
+    });
+    QVERIFY(manager->createConnectedLink(first));
+    QTRY_VERIFY_WITH_TIMEOUT(first->link() && first->link()->isConnected(), TestTimeout::longMs());
+    VehicleRoleController controller;
+    QVERIFY(controller.isLinkConfigConnected(QStringLiteral("Controller ambiguity")));
+    second = manager->addConfiguration(new UDPConfiguration(QStringLiteral("Controller ambiguity")));
+    QVERIFY(!controller.isLinkConfigConnected(QStringLiteral("Controller ambiguity")));
 }
 
 void VehicleRoleControllerTest::_systemIdRoundTrip_data()
@@ -156,6 +181,18 @@ void VehicleRoleControllerTest::_suggestedRoleFollowsVehicleType()
     QVERIFY(VehicleRoleController().suggestedRole(nullptr).isEmpty());
 }
 
+void VehicleRoleControllerTest::_addEntryIfNewDoesNotReplace()
+{
+    VehicleRoleController controller;
+    controller.addEntry(211, QStringLiteral("Rover"), QStringLiteral("Scout"), 14550);
+    QVERIFY(!controller.addEntryIfNew(211, QStringLiteral("Plane"), QStringLiteral("Other"), 14551));
+    QCOMPARE(controller.roleForSysid(211), QStringLiteral("Rover"));
+    QCOMPARE(controller.nameForSysid(211), QStringLiteral("Scout"));
+    QCOMPARE(controller.portForSysid(211), 14550);
+    QVERIFY(controller.addEntryIfNew(212, QStringLiteral("Plane"), QStringLiteral("Other"), 14551));
+    QCOMPARE(controller.roleEntries()->count(), 2);
+}
+
 void VehicleRoleControllerTest::_addEntryRejectsUnrecognizedRole()
 {
     VehicleRoleController controller;
@@ -248,6 +285,222 @@ void VehicleRoleControllerTest::_savedDuplicateNicknamesStillLoad()
     // The operator can fix it by renaming either one.
     controller.setName(1, QStringLiteral("Other"));
     QCOMPARE(controller.nameForSysid(6), QStringLiteral("Other"));
+}
+
+void VehicleRoleControllerTest::_newerFormatIsReadOnly()
+{
+    const QString path =
+        SettingsManager::instance()->appSettings()->settingsSavePath() + QStringLiteral("/VehicleRoles.json");
+    const QByteArray original("{\"version\": 2}");
+    QFile file(path);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    QCOMPARE(file.write(original), qint64(original.size()));
+    file.close();
+
+    for (int i = 0; i < 2; ++i) {
+        expectLogMessage("Custom.VehicleRoles", QtWarningMsg,
+                         QRegularExpression(QStringLiteral("^Ignoring .* roles file:")));
+        VehicleRoleController controller;
+        verifyExpectedLogMessage();
+        controller.addEntry(1, QStringLiteral("Rover"), QString(), 0);
+        QVERIFY(file.open(QIODevice::ReadOnly));
+        QVERIFY(file.readAll() == original);
+        file.close();
+        QVERIFY(!controller.property("persistenceError").toString().isEmpty());
+    }
+}
+
+void VehicleRoleControllerTest::_roundTripKeepsMeaning()
+{
+    QFile file(SettingsManager::instance()->appSettings()->settingsSavePath() + QStringLiteral("/VehicleRoles.json"));
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    file.write(
+        R"([{"sysid":7,"role":"Rover","name":"Alpha","port":14550,"links":[{"label":"Radio","linkConfigName":"Config","preferred":true}]}])");
+    file.close();
+    VehicleRoleController controller;
+    controller.setName(0, QStringLiteral("Beta"));
+    VehicleRoleController reloaded;
+    QCOMPARE(reloaded.roleForSysid(7), QStringLiteral("Rover"));
+    QCOMPARE(reloaded.nameForSysid(7), QStringLiteral("Beta"));
+    QCOMPARE(reloaded.portForSysid(7), 14550);
+    auto* link = reloaded.linksForSysid(7)->value<VehicleRoleLinkEntry*>(0);
+    QCOMPARE(link->label(), QStringLiteral("Radio"));
+    QCOMPARE(link->linkConfigName(), QStringLiteral("Config"));
+    QVERIFY(link->preferred());
+}
+
+void VehicleRoleControllerTest::_unknownDataSurvivesEdit()
+{
+    QFile file(SettingsManager::instance()->appSettings()->settingsSavePath() + QStringLiteral("/VehicleRoles.json"));
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    file.write(
+        R"([42,{"sysid":7,"role":"Rover","future":{"value":3},"links":[false,{"label":"Radio","futureLink":"kept"}]}])");
+    file.close();
+    VehicleRoleController controller;
+    controller.setName(0, QStringLiteral("Beta"));
+    QVERIFY(file.open(QIODevice::ReadOnly));
+    const QJsonArray array = QJsonDocument::fromJson(file.readAll()).array();
+    QCOMPARE(array.size(), 2);
+    QCOMPARE(array.at(0).toInt(), 42);
+    const QJsonObject role = array.at(1).toObject();
+    QCOMPARE(role.value(QStringLiteral("future")).toObject().value(QStringLiteral("value")).toInt(), 3);
+    const QJsonArray links = role.value(QStringLiteral("links")).toArray();
+    QCOMPARE(links.size(), 2);
+    QCOMPARE(links.at(0).toBool(), false);
+    QCOMPARE(links.at(1).toObject().value(QStringLiteral("futureLink")).toString(), QStringLiteral("kept"));
+}
+
+void VehicleRoleControllerTest::_writeFailureKeepsOriginal_data()
+{
+    QTest::addColumn<QString>("failure");
+    QTest::newRow("open") << QStringLiteral("open");
+    QTest::newRow("short write") << QStringLiteral("short write");
+    QTest::newRow("commit") << QStringLiteral("commit");
+}
+
+void VehicleRoleControllerTest::_writeFailureKeepsOriginal()
+{
+    QFETCH(QString, failure);
+    QFile file(SettingsManager::instance()->appSettings()->settingsSavePath() + QStringLiteral("/VehicleRoles.json"));
+    const QByteArray original("[]");
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    QCOMPARE(file.write(original), qint64(original.size()));
+    file.close();
+    VehicleRoleController controller;
+    controller._writeForTesting = [failure](const QString&, const QByteArray&, QString* error) {
+        *error = failure;
+        return false;
+    };
+    expectLogMessage("Custom.VehicleRoles", QtWarningMsg,
+                     QRegularExpression(QStringLiteral("^Failed to save roles file:")));
+    controller.addEntry(7, QStringLiteral("Rover"), QStringLiteral("Alpha"), 0);
+    verifyExpectedLogMessage();
+    QVERIFY(file.open(QIODevice::ReadOnly));
+    QCOMPARE(file.readAll(), original);
+    file.close();
+    QVERIFY(!controller.persistenceError().isEmpty());
+    QVERIFY(controller._dirty);
+    controller._writeForTesting = {};
+    controller.setName(0, QStringLiteral("Beta"));
+    QVERIFY(!controller._dirty);
+    QVERIFY(controller.persistenceError().isEmpty());
+    VehicleRoleController reloaded;
+    QCOMPARE(reloaded.nameForSysid(7), QStringLiteral("Beta"));
+}
+
+void VehicleRoleControllerTest::_realOpenFailureKeepsStateUnsaved()
+{
+    const QString settingsPath = SettingsManager::instance()->appSettings()->settingsSavePath();
+    const QString path = settingsPath + QStringLiteral("/VehicleRoles.json");
+    const QByteArray original(R"([{"sysid":7,"role":"Rover","name":"Alpha"}])");
+    QFile file(path);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    QCOMPARE(file.write(original), qint64(original.size()));
+    file.close();
+
+    VehicleRoleController controller;
+    QCOMPARE(controller.nameForSysid(7), QStringLiteral("Alpha"));
+    QDir settingsDir(settingsPath);
+    QVERIFY(settingsDir.removeRecursively());
+    expectLogMessage("Custom.VehicleRoles", QtWarningMsg,
+                     QRegularExpression(QStringLiteral("^Failed to save roles file:")));
+    controller.setName(0, QStringLiteral("Beta"));
+    verifyExpectedLogMessage();
+    QVERIFY(!controller.persistenceError().isEmpty());
+    QVERIFY(controller._dirty);
+    QCOMPARE(controller.nameForSysid(7), QStringLiteral("Beta"));
+    QVERIFY(!file.exists());
+
+    QVERIFY(QDir().mkpath(settingsPath));
+    controller.setName(0, QStringLiteral("Gamma"));
+    QVERIFY(controller.persistenceError().isEmpty());
+    QVERIFY(!controller._dirty);
+    QVERIFY(file.open(QIODevice::ReadOnly));
+    const QJsonArray saved = QJsonDocument::fromJson(file.readAll()).array();
+    QCOMPARE(saved.size(), 1);
+    QCOMPARE(saved.at(0).toObject().value(QStringLiteral("name")).toString(), QStringLiteral("Gamma"));
+}
+
+void VehicleRoleControllerTest::_malformedFileIsQuarantined()
+{
+    const QString path =
+        SettingsManager::instance()->appSettings()->settingsSavePath() + QStringLiteral("/VehicleRoles.json");
+    const QByteArray bad("not json");
+    const QDir settingsDir(SettingsManager::instance()->appSettings()->settingsSavePath());
+    QStringList quarantined;
+    QString previousPath;
+    for (int i = 0; i < 2; ++i) {
+        QFile file(path);
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        QCOMPARE(file.write(bad), qint64(bad.size()));
+        file.close();
+        QSignalSpy noticeSpy(QGCCorePlugin::instance(), &QGCCorePlugin::operatorNotification);
+        VehicleRoleController controller;
+        QCOMPARE(noticeSpy.count(), 1);
+        QCOMPARE(noticeSpy.at(0).at(0).toString(), controller.persistenceNotice());
+        QCOMPARE(controller.roleEntries()->count(), 0);
+        quarantined = settingsDir.entryList({QStringLiteral("VehicleRoles.json.invalid-*")}, QDir::Files);
+        QCOMPARE(quarantined.size(), i + 1);
+        for (const QString& name : quarantined) {
+            QFile saved(settingsDir.filePath(name));
+            QVERIFY(saved.open(QIODevice::ReadOnly));
+            QCOMPARE(saved.readAll(), bad);
+        }
+        QString currentPath;
+        for (const QString& name : quarantined) {
+            const QString candidate = settingsDir.filePath(name);
+            if (controller.persistenceNotice().contains(candidate)) {
+                currentPath = candidate;
+            }
+        }
+        QVERIFY(!currentPath.isEmpty());
+        QVERIFY(currentPath != previousPath);
+        previousPath = currentPath;
+        controller.addEntry(7, QStringLiteral("Rover"), QString(), 0);
+        QVERIFY(file.open(QIODevice::ReadOnly));
+        QVERIFY(QJsonDocument::fromJson(file.readAll()).isArray());
+    }
+    QFile file(path);
+    QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Truncate));
+    QCOMPARE(file.write(bad), qint64(bad.size()));
+    file.close();
+    QVERIFY(QFile::remove(path));
+    VehicleRoleController controller;
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    QCOMPARE(file.write(bad), qint64(bad.size()));
+    file.close();
+    controller._renameForTesting = [](const QString&, const QString&) { return false; };
+    expectLogMessage("Custom.VehicleRoles", QtWarningMsg,
+                     QRegularExpression(QStringLiteral("^Failed to quarantine roles file:")));
+    controller._load();
+    verifyExpectedLogMessage();
+    controller.addEntry(7, QStringLiteral("Rover"), QString(), 0);
+    QVERIFY(!controller.persistenceError().isEmpty());
+    QVERIFY(file.open(QIODevice::ReadOnly));
+    QCOMPARE(file.readAll(), bad);
+}
+
+void VehicleRoleControllerTest::_unreadableFileBlocksWrites()
+{
+    const QString path =
+        SettingsManager::instance()->appSettings()->settingsSavePath() + QStringLiteral("/VehicleRoles.json");
+    VehicleRoleController controller;
+    QFile file(path);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    QCOMPARE(file.write("[]"), qint64(2));
+    file.close();
+    controller._readForTesting = [](const QString&, QByteArray*, QString* error) {
+        *error = QStringLiteral("denied");
+        return false;
+    };
+    expectLogMessage("Custom.VehicleRoles", QtWarningMsg,
+                     QRegularExpression(QStringLiteral("^Failed to read roles file:")));
+    controller._load();
+    verifyExpectedLogMessage();
+    controller.addEntry(7, QStringLiteral("Rover"), QString(), 0);
+    QVERIFY(!controller.persistenceError().isEmpty());
+    QVERIFY(file.open(QIODevice::ReadOnly));
+    QCOMPARE(file.readAll(), QByteArray("[]"));
 }
 
 UT_REGISTER_TEST(VehicleRoleControllerTest, TestLabel::Unit)
