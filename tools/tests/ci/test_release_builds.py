@@ -1,10 +1,17 @@
 """Release dispatch identity must not silently select another build at the same SHA."""
 
 import json
+import re
 from unittest.mock import patch
 
 import pytest
-from ci.publish.release_builds import REQUIRED_JOBS, WORKFLOWS, identify_runs, wait_for_builds
+from ci.publish.release_builds import (
+    REQUIRED_JOBS,
+    WORKFLOWS,
+    _required_jobs_status,
+    identify_runs,
+    wait_for_builds,
+)
 
 
 def run(name="Linux", **kwargs):
@@ -69,9 +76,7 @@ def test_completed_dispatches_save_exact_ids(tmp_path):
 
 
 def test_run_with_failed_conclusion_but_successful_required_jobs_counts_as_done(tmp_path):
-    """A workflow run's aggregate conclusion is failure if ANY job in it fails - e.g.
-    linux.yml's own unrelated flaky test job - but that must not block a release whose
-    actual release-relevant jobs succeeded."""
+    """Only the explicitly required jobs determine whether the run is accepted."""
     from subprocess import CompletedProcess
 
     runs = [
@@ -184,3 +189,79 @@ def test_dispatches_only_expected_platforms_on_the_exact_tag(tmp_path):
         (("workflow", "run", filename, "--repo", "o/r", "--ref", "v1.12.0"),)
         for filename in WORKFLOWS.values()
     ]
+
+
+@pytest.mark.parametrize(
+    ("platform", "job_name"),
+    [
+        ("Linux", "Release linux_gcc_64"),
+        ("Linux", "Release linux_gcc_arm64"),
+        ("Linux", "Custom Plugin"),
+        ("Linux", "Test + Coverage linux_gcc_64 Debug"),
+        ("Linux", "Sanitizers linux_gcc_64 Debug (ASan+UBSan)"),
+        ("Linux", "AppImage on Ubuntu 24.04"),
+        ("Linux", "AppImage on Debian 13"),
+        ("Windows", "Build win64_msvc2022_64 Release"),
+        ("Windows", "Build win64_msvc2022_arm64 Release"),
+        ("Windows", "Build win64_msvc2022_arm64_cross_compiled Release"),
+        ("Windows", "GStreamer tests win64_msvc2022_64 Debug"),
+    ],
+)
+def test_each_expected_job_failure_is_rejected(platform, job_name):
+    current = run(platform, html_url="https://example.test/run")
+    jobs = [job for job in _jobs_for(platform) if job["name"] != job_name]
+    jobs.append({"name": job_name, "status": "completed", "conclusion": "failure"})
+
+    with (
+        patch("ci.publish.release_builds.list_run_jobs", return_value=jobs),
+        pytest.raises(RuntimeError, match=re.escape(job_name)),
+    ):
+        _required_jobs_status("o/r", current, REQUIRED_JOBS[platform])
+
+
+@pytest.mark.parametrize(
+    ("platform", "job_name"),
+    [
+        ("Linux", "Custom Plugin"),
+        ("Linux", "Test + Coverage linux_gcc_64 Debug"),
+        ("Linux", "Sanitizers linux_gcc_64 Debug (ASan+UBSan)"),
+        ("Linux", "AppImage on Ubuntu 24.04"),
+        ("Linux", "AppImage on Debian 13"),
+        ("Windows", "GStreamer tests win64_msvc2022_64 Debug"),
+    ],
+)
+def test_required_test_job_status(platform, job_name, tmp_path):
+    from subprocess import CompletedProcess
+
+    current = run(platform, html_url="https://example.test/run")
+    jobs = _jobs_for(platform)
+    jobs = [job for job in jobs if job["name"] != job_name]
+    with (
+        patch("ci.publish.release_builds.identify_runs", return_value={platform: current}),
+        patch("ci.publish.release_builds.list_workflow_runs_for_sha", return_value=[]),
+        patch(
+            "ci.publish.release_builds.gh",
+            return_value=CompletedProcess([], 0, json.dumps(current)),
+        ),
+        patch("ci.publish.release_builds.list_run_jobs") as list_jobs,
+        patch("ci.publish.release_builds.time.sleep"),
+    ):
+        list_jobs.return_value = [
+            *jobs,
+            {"name": job_name, "status": "completed", "conclusion": "failure"},
+        ]
+        with pytest.raises(RuntimeError, match=re.escape(job_name)):
+            wait_for_builds("o/r", "abc", "v1", tmp_path / "runs.json", timeout=1)
+
+        list_jobs.return_value = jobs
+        with pytest.raises(RuntimeError, match=re.escape(job_name)):
+            _required_jobs_status("o/r", current, REQUIRED_JOBS[platform])
+
+        list_jobs.return_value = [
+            *jobs,
+            {"name": job_name, "status": "in_progress", "conclusion": None},
+        ]
+        assert _required_jobs_status("o/r", current, REQUIRED_JOBS[platform]) == "pending"
+
+        list_jobs.return_value[-1].update(status="completed", conclusion="success")
+        assert _required_jobs_status("o/r", current, REQUIRED_JOBS[platform]) == "success"
