@@ -144,3 +144,9 @@ set_tests_properties(
         LABELS "CMake;Unit"
         SKIP_REGULAR_EXPRESSION "QGC_TEST_SKIPPED"
 )
+
+add_test(
+    NAME CMake.PinnedGitCommit COMMAND "${CMAKE_COMMAND}" "-DQGC_MODULE_DIR=${PROJECT_SOURCE_DIR}/cmake" -P
+                                       "${CMAKE_CURRENT_SOURCE_DIR}/test_pinned_git_commit.cmake"
+)
+set_tests_properties(CMake.PinnedGitCommit PROPERTIES LABELS "CMake;Unit")

@@ -43,19 +43,32 @@ qt_add_resources(
 
 #===========================================================================#
 
-CPMAddPackage(
-    NAME ArduPilotParams
-    GITHUB_REPOSITORY ArduPilot/ParameterRepository
-    GIT_TAG main
-    GIT_SHALLOW TRUE
-    DOWNLOAD_ONLY TRUE
+option(
+    QGC_TRACK_ARDUPILOT_PARAMS "Track the head of ArduPilot/ParameterRepository main instead of the reviewed commit"
+    OFF
 )
-qgc_track_git_head(
-    REPO_PATH "${ArduPilotParams_SOURCE_DIR}"
-    GIT_REF main
-    INTERVAL 3600
-    OFFLINE_OK
-)
+if(QGC_TRACK_ARDUPILOT_PARAMS)
+    CPMAddPackage(
+        NAME ArduPilotParams
+        GITHUB_REPOSITORY ArduPilot/ParameterRepository
+        GIT_TAG main
+        GIT_SHALLOW TRUE
+        DOWNLOAD_ONLY TRUE
+    )
+    qgc_track_git_head(
+        REPO_PATH "${ArduPilotParams_SOURCE_DIR}"
+        GIT_REF main
+        INTERVAL 3600
+        OFFLINE_OK
+    )
+else()
+    include(CPMPinnedGitCommit)
+    # Update the reviewed commit below to bump the pinned metadata, then run the tests.
+    qgc_cpm_add_pinned_git_commit(
+        NAME ArduPilotParams GITHUB_REPOSITORY ArduPilot/ParameterRepository COMMIT
+        edf22e09a8cc1a509558bc46f021f7fb849f5725
+    )
+endif()
 
 # Filters applied to discovered ArduPilot parameter dirs (e.g. "Copter-4.7").
 # Regex (CMake syntax) — match against the dir name; matches are dropped.
