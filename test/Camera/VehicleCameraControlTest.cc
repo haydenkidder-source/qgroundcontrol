@@ -14,6 +14,7 @@
 #include "MavlinkCameraControlInterface.h"
 #include "MockConfiguration.h"
 #include "MockLink.h"
+#include "MockLinkFTP.h"
 #include "MultiVehicleManager.h"
 #include "QGCCameraManager.h"
 #include "SettingsManager.h"
@@ -32,6 +33,20 @@ public:
     bool paramComplete() const { return _paramComplete; }
 };
 
+class FtpFailureCameraProbe : public CameraControlProbe
+{
+public:
+    using CameraControlProbe::CameraControlProbe;
+
+    int settingsRequests = 0;
+    int streamChecks = 0;
+
+protected:
+    void _requestCameraSettings() override { ++settingsRequests; }
+
+    void _checkForVideoStreams() override { ++streamChecks; }
+};
+
 MockConfiguration* newMockConfiguration(const QString& name)
 {
     auto* mockConfig = new MockConfiguration(name);
@@ -48,6 +63,29 @@ MockConfiguration* newMockConfiguration(const QString& name)
     const QVariant originalSavePath = savePathFact->rawValue();
     savePathFact->setRawValue(rootPath);
     return qScopeGuard([savePathFact, originalSavePath]() { savePathFact->setRawValue(originalSavePath); });
+}
+
+QByteArray cameraRangeDefinition(bool includeUnknownTarget = false)
+{
+    QByteArray xml = QByteArrayLiteral(R"(<mavlinkcamera>
+        <definition version="1"><model>Test</model><vendor>Test</vendor></definition>
+        <parameters>
+          <parameter name="SOURCE" type="uint32" default="0"><description>Source</description><options>
+            <option name="Off" value="0"/>
+            <option name="On" value="1"><parameterranges>
+              <parameterrange parameter="TARGET"><roption name="One" value="1"/></parameterrange>
+            </parameterranges></option>
+          </options></parameter>
+          <parameter name="TARGET" type="uint32" default="0"><description>Target</description><options>
+            <option name="Zero" value="0"/><option name="One" value="1"/>
+          </options></parameter>
+        </parameters></mavlinkcamera>)");
+    if (includeUnknownTarget) {
+        xml.replace("<parameterrange parameter=\"TARGET\">",
+                    "<parameterrange parameter=\"MISSING\"><roption name=\"One\" value=\"1\"/></parameterrange>"
+                    "<parameterrange parameter=\"TARGET\">");
+    }
+    return xml;
 }
 
 }  // namespace
@@ -261,6 +299,244 @@ void VehicleCameraControlTest::_testFtpDefinitionDownloadRefusedFallsBack()
 
     // The refused download must not leave the camera waiting forever for a definition.
     QVERIFY(camera->paramComplete());
+}
+
+void VehicleCameraControlTest::_testFtpFailureFallsBack_data()
+{
+    QTest::addColumn<int>("errorMode");
+    QTest::newRow("nak") << static_cast<int>(MockLinkFTP::errModeNakResponse);
+    QTest::newRow("timeout") << static_cast<int>(MockLinkFTP::errModeNoResponse);
+}
+
+void VehicleCameraControlTest::_testFtpFailureFallsBack()
+{
+    QFETCH(int, errorMode);
+    _connectVehicle(newMockConfiguration(QStringLiteral("CameraFtpFailureTest")));
+    if (QTest::currentTestFailed()) {
+        return;
+    }
+
+    QTemporaryDir saveRoot;
+    QVERIFY(saveRoot.isValid());
+    const auto restoreSavePath = overrideSavePath(saveRoot.path());
+    QVERIFY(!SettingsManager::instance()->appSettings()->parameterSavePath().isEmpty());
+    _mockLink->mockLinkFTP()->setErrorMode(static_cast<MockLinkFTP::ErrorMode_t>(errorMode));
+    const auto restoreErrorMode =
+        qScopeGuard([this]() { _mockLink->mockLinkFTP()->setErrorMode(MockLinkFTP::errModeNone); });
+
+    mavlink_camera_information_t info{};
+    memcpy(info.vendor_name, "Acme", 5);
+    memcpy(info.model_name, "Cam", 4);
+    const QByteArray uri = QByteArrayLiteral("mftp://[;comp=1]/missing.xml");
+    memcpy(info.cam_definition_uri, uri.constData(), static_cast<size_t>(uri.size()));
+    auto camera = std::make_unique<FtpFailureCameraProbe>(&info, _vehicle, MAV_COMP_ID_CAMERA6);
+    QSignalSpy readySpy(camera.get(), &VehicleCameraControl::parametersReady);
+    QVERIFY(readySpy.isValid());
+
+    QTRY_VERIFY_WITH_TIMEOUT(camera->paramComplete(), TestTimeout::longMs());
+    QCOMPARE(readySpy.count(), 1);
+    QVERIFY(camera->isBasic());
+    QTRY_COMPARE_WITH_TIMEOUT(camera->settingsRequests, 1, TestTimeout::longMs());
+    QTRY_COMPARE_WITH_TIMEOUT(camera->streamChecks, 1, TestTimeout::longMs());
+    QCOMPARE(readySpy.count(), 1);
+}
+
+void VehicleCameraControlTest::_testFtpInvalidCompressedDefinitionFallsBack()
+{
+    _connectVehicle(newMockConfiguration(QStringLiteral("CameraInvalidCompressedTest")));
+    if (QTest::currentTestFailed()) {
+        return;
+    }
+    QTemporaryDir tempDir;
+    QVERIFY(tempDir.isValid());
+    const QString path = QDir(tempDir.path()).filePath(QStringLiteral("definition.xml.xz"));
+    QFile file(path);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    const QByteArray invalidData = QByteArray::fromHex("fd377a585a00");
+    QCOMPARE(file.write(invalidData), static_cast<qint64>(invalidData.size()));
+    file.close();
+
+    mavlink_camera_information_t info{};
+    CameraControlProbe camera(&info, _vehicle, MAV_COMP_ID_CAMERA6);
+    camera._paramComplete = false;
+    QSignalSpy dataSpy(&camera, &VehicleCameraControl::dataReady);
+    QSignalSpy readySpy(&camera, &VehicleCameraControl::parametersReady);
+    expectLogMessage("Utilities.QGClibarchive", QtWarningMsg,
+                     QRegularExpression(QStringLiteral("Failed to open file:")));
+    expectLogMessage("Utilities.QGCCompression", QtWarningMsg,
+                     QRegularExpression(QStringLiteral("Decompression failed:")));
+    expectLogMessage("Camera.VehicleCameraControl", QtWarningMsg,
+                     QRegularExpression(QStringLiteral("Inflate of compressed xml failed")));
+    camera._ftpDownloadComplete(path, QString());
+    verifyExpectedLogMessage();
+    verifyExpectedLogMessage();
+    verifyExpectedLogMessage();
+    QCOMPARE(dataSpy.count(), 1);
+    QVERIFY(dataSpy.takeFirst().at(0).toByteArray().isEmpty());
+    QCOMPARE(readySpy.count(), 1);
+    QVERIFY(camera.paramComplete());
+    QVERIFY(!camera._cached);
+}
+
+void VehicleCameraControlTest::_testFtpStaleDefinitionIsIgnored()
+{
+    _connectVehicle(newMockConfiguration(QStringLiteral("CameraStaleDefinitionTest")));
+    if (QTest::currentTestFailed()) {
+        return;
+    }
+    QTemporaryDir tempDir;
+    QVERIFY(tempDir.isValid());
+    const QString path = QDir(tempDir.path()).filePath(QStringLiteral("definition.xml"));
+    QFile file(path);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    const QByteArray staleData = QByteArrayLiteral("stale definition");
+    QCOMPARE(file.write(staleData), static_cast<qint64>(staleData.size()));
+    file.close();
+
+    mavlink_camera_information_t info{};
+    CameraControlProbe camera(&info, _vehicle, MAV_COMP_ID_CAMERA6);
+    camera._paramComplete = false;
+    QSignalSpy dataSpy(&camera, &VehicleCameraControl::dataReady);
+    QSignalSpy readySpy(&camera, &VehicleCameraControl::parametersReady);
+    camera._ftpDownloadComplete(path, QStringLiteral("download failed"));
+    QCOMPARE(dataSpy.count(), 1);
+    QVERIFY(dataSpy.takeFirst().at(0).toByteArray().isEmpty());
+    QCOMPARE(readySpy.count(), 1);
+    QVERIFY(camera.paramComplete());
+    QVERIFY(!camera._cached);
+    QVERIFY(file.open(QIODevice::ReadOnly));
+    QCOMPARE(file.readAll(), staleData);
+}
+
+void VehicleCameraControlTest::_testFtpUnreadableDefinitionFallsBack()
+{
+    _connectVehicle(newMockConfiguration(QStringLiteral("CameraUnreadableDefinitionTest")));
+    if (QTest::currentTestFailed()) {
+        return;
+    }
+    QTemporaryDir tempDir;
+    QVERIFY(tempDir.isValid());
+    const QString path = QDir(tempDir.path()).filePath(QStringLiteral("definition.xml"));
+    QVERIFY(QDir().mkdir(path));
+
+    mavlink_camera_information_t info{};
+    CameraControlProbe camera(&info, _vehicle, MAV_COMP_ID_CAMERA6);
+    camera._paramComplete = false;
+    QSignalSpy dataSpy(&camera, &VehicleCameraControl::dataReady);
+    QSignalSpy readySpy(&camera, &VehicleCameraControl::parametersReady);
+    expectLogMessage("default", QtWarningMsg,
+                     QRegularExpression(QStringLiteral("Could not read downloaded camera definition file:")));
+    camera._ftpDownloadComplete(path, QString());
+    verifyExpectedLogMessage();
+    QCOMPARE(dataSpy.count(), 1);
+    QVERIFY(dataSpy.takeFirst().at(0).toByteArray().isEmpty());
+    QCOMPARE(readySpy.count(), 1);
+    QVERIFY(camera.paramComplete());
+    QVERIFY(!camera._cached);
+}
+
+void VehicleCameraControlTest::_testFtpMissingDefinitionFallsBack()
+{
+    _connectVehicle(newMockConfiguration(QStringLiteral("CameraMissingDefinitionTest")));
+    if (QTest::currentTestFailed()) {
+        return;
+    }
+    QTemporaryDir tempDir;
+    QVERIFY(tempDir.isValid());
+    const QString path = QDir(tempDir.path()).filePath(QStringLiteral("missing.xml"));
+    mavlink_camera_information_t info{};
+    CameraControlProbe camera(&info, _vehicle, MAV_COMP_ID_CAMERA6);
+    camera._paramComplete = false;
+    QSignalSpy dataSpy(&camera, &VehicleCameraControl::dataReady);
+    QSignalSpy readySpy(&camera, &VehicleCameraControl::parametersReady);
+    camera._ftpDownloadComplete(path, QString());
+    QCOMPARE(dataSpy.count(), 1);
+    QVERIFY(dataSpy.takeFirst().at(0).toByteArray().isEmpty());
+    QCOMPARE(readySpy.count(), 1);
+    QVERIFY(camera.paramComplete());
+    QVERIFY(!camera._cached);
+}
+
+void VehicleCameraControlTest::_testFtpGoodDefinitionIsCached()
+{
+    _connectVehicle(newMockConfiguration(QStringLiteral("CameraGoodDefinitionTest")));
+    if (QTest::currentTestFailed()) {
+        return;
+    }
+    QTemporaryDir tempDir;
+    QVERIFY(tempDir.isValid());
+    const auto restoreSavePath = overrideSavePath(tempDir.path());
+    const QString path = QDir(tempDir.path()).filePath(QStringLiteral("definition.xml"));
+    QFile file(path);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    const QByteArray xml = cameraRangeDefinition();
+    QCOMPARE(file.write(xml), static_cast<qint64>(xml.size()));
+    file.close();
+
+    mavlink_camera_information_t info{};
+    CameraControlProbe camera(&info, _vehicle, MAV_COMP_ID_CAMERA6);
+    camera._paramComplete = false;
+    QSignalSpy dataSpy(&camera, &VehicleCameraControl::dataReady);
+    camera._ftpDownloadComplete(path, QString());
+    QCOMPARE(dataSpy.count(), 1);
+    QCOMPARE(dataSpy.takeFirst().at(0).toByteArray(), xml);
+    QVERIFY(camera._cached);
+}
+
+void VehicleCameraControlTest::_testUnknownRangeTarget()
+{
+    _connectVehicle(newMockConfiguration(QStringLiteral("CameraUnknownRangeTest")));
+    if (QTest::currentTestFailed()) {
+        return;
+    }
+    mavlink_camera_information_t info{};
+    CameraControlProbe camera(&info, _vehicle, MAV_COMP_ID_CAMERA6);
+    camera._cached = true;
+    QByteArray xml = cameraRangeDefinition(true);
+    QVERIFY(camera._loadCameraDefinitionFile(xml));
+    Fact* source = camera.getFact(QStringLiteral("SOURCE"));
+    Fact* target = camera.getFact(QStringLiteral("TARGET"));
+    QVERIFY(source);
+    QVERIFY(target);
+    source->containerSetRawValue(1);
+    camera.factChanged(source);
+    QCOMPARE(target->enumStrings(), QStringList({QStringLiteral("One")}));
+    source->containerSetRawValue(0);
+    camera.factChanged(source);
+    QCOMPARE(target->enumStrings(), QStringList({QStringLiteral("Zero"), QStringLiteral("One")}));
+}
+
+void VehicleCameraControlTest::_testResetPassIgnoresUnknownTarget()
+{
+    ignoreLogMessage("FactSystem.FactGroup", QtWarningMsg, QRegularExpression(QStringLiteral("Unknown Fact.*MISSING")));
+    _connectVehicle(newMockConfiguration(QStringLiteral("CameraResetUnknownRangeTest")));
+    if (QTest::currentTestFailed()) {
+        return;
+    }
+    mavlink_camera_information_t info{};
+    CameraControlProbe camera(&info, _vehicle, MAV_COMP_ID_CAMERA6);
+    camera._cached = true;
+    QByteArray xml = cameraRangeDefinition();
+    QVERIFY(camera._loadCameraDefinitionFile(xml));
+    Fact* source = camera.getFact(QStringLiteral("SOURCE"));
+    Fact* target = camera.getFact(QStringLiteral("TARGET"));
+    QVERIFY(source);
+    QVERIFY(target);
+    auto* unknownRange =
+        new QGCCameraOptionRange(&camera, source->name(), QStringLiteral("1"), QStringLiteral("MISSING"), QString(),
+                                 {QStringLiteral("One")}, {QStringLiteral("1")});
+    unknownRange->optVariants.append(QVariant::fromValue<quint32>(1));
+    camera._optionRanges.append(unknownRange);
+    const auto factCount = camera.factNames().size();
+
+    for (int value : {1, 0}) {
+        source->containerSetRawValue(value);
+        camera.factChanged(source);
+        const QStringList expected = value == 1 ? QStringList{QStringLiteral("One")}
+                                                : QStringList{QStringLiteral("Zero"), QStringLiteral("One")};
+        QCOMPARE(target->enumStrings(), expected);
+    }
+    QCOMPARE(camera.factNames().size(), factCount);
 }
 
 void VehicleCameraControlTest::_testFtpDefinitionDownloadIsSavedAsCacheFile_data()

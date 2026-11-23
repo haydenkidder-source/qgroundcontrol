@@ -42,6 +42,9 @@ public:
 class VehicleCameraControl : public MavlinkCameraControlInterface
 {
     Q_OBJECT
+#ifdef QGC_UNITTEST_BUILD
+    friend class VehicleCameraControlTest;
+#endif
 public:
     VehicleCameraControl(const mavlink_camera_information_t* info, Vehicle* vehicle, int compID, QObject* parent = nullptr);
     ~VehicleCameraControl() override;
