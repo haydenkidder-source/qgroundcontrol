@@ -1317,6 +1317,17 @@ void PlanStyleUITest::_perimeterVisuals()
     QTRY_COMPARE_WITH_TIMEOUT(named(QStringLiteral("planPerimeterFill")).size(), 1, TestTimeout::mediumMs());
     QTRY_COMPARE_WITH_TIMEOUT(named(QStringLiteral("planPerimeterTraversal")).size(), 1, TestTimeout::mediumMs());
     QTRY_COMPARE_WITH_TIMEOUT(named(QStringLiteral("planPerimeterMarker")).size(), 1, TestTimeout::mediumMs());
+    for (int i = 0; i < perimeter.perimeterPolygon()->count(); ++i) {
+        const QString name = QStringLiteral("perimeterDirectionArrow_%1").arg(i);
+        QTRY_COMPARE_WITH_TIMEOUT(named(name).size(), 1, TestTimeout::mediumMs());
+        auto* arrow = named(name).first();
+        QCOMPARE(arrow->property("fromCoord").value<QGeoCoordinate>(),
+                 perimeter.perimeterPolygon()->vertexCoordinate(i));
+        QCOMPARE(arrow->property("toCoord").value<QGeoCoordinate>(),
+                 perimeter.perimeterPolygon()->vertexCoordinate((i + 1) % perimeter.perimeterPolygon()->count()));
+        QCOMPARE(arrow->property("arrowPosition").toInt(), 2);
+    }
+    QCOMPARE(named(QStringLiteral("perimeterDirectionArrow_4")).size(), 0);
     auto* fill = named(QStringLiteral("planPerimeterFill")).first();
     auto* traversal = named(QStringLiteral("planPerimeterTraversal")).first();
     auto* marker = named(QStringLiteral("planPerimeterMarker")).first();
@@ -1392,7 +1403,19 @@ void PlanStyleUITest::_perimeterVisuals()
         QCOMPARE(named(QStringLiteral("planPatternOutline")).first()->property("vertices").toList(),
                  perimeter.perimeterPolygon()->path());
     }
+    auto* firstArrow = named(QStringLiteral("perimeterDirectionArrow_0")).first();
+    QTRY_COMPARE_WITH_TIMEOUT(firstArrow->property("fromCoord").value<QGeoCoordinate>(),
+                              perimeter.perimeterPolygon()->vertexCoordinate(0), TestTimeout::shortMs());
+    QCOMPARE(firstArrow->property("toCoord").value<QGeoCoordinate>(),
+             perimeter.perimeterPolygon()->vertexCoordinate(1));
     perimeter.perimeterPolygon()->setVertexDrag(false);
+    perimeter.perimeterPolygon()->appendVertex(QGeoCoordinate(47.001, 8.001));
+    QTRY_COMPARE_WITH_TIMEOUT(named(QStringLiteral("perimeterDirectionArrow_4")).size(), 1, TestTimeout::shortMs());
+    auto* closingArrow = named(QStringLiteral("perimeterDirectionArrow_4")).first();
+    QTRY_COMPARE_WITH_TIMEOUT(closingArrow->property("toCoord").value<QGeoCoordinate>(),
+                              perimeter.perimeterPolygon()->vertexCoordinate(0), TestTimeout::shortMs());
+    perimeter.perimeterPolygon()->removeVertex(4);
+    QTRY_COMPARE_WITH_TIMEOUT(named(QStringLiteral("perimeterDirectionArrow_4")).size(), 0, TestTimeout::shortMs());
     perimeter.perimeterPolygon()->clear();
     QTRY_VERIFY_WITH_TIMEOUT(!markerMapItem->isVisible(), TestTimeout::shortMs());
     QVERIFY(traversal->property("path").toList().isEmpty());
