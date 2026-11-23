@@ -135,6 +135,9 @@ public:
         _missionItemHandler->setFenceItems(items);
     }
 
+    /// The fence items the simulated vehicle currently stores, as sent over the wire.
+    QList<mavlink_mission_item_int_t> fenceItems() const { return _missionItemHandler->fenceItems(); }
+
     /// Returns the filename for the simulated log file. Only available after a download is requested.
     QString logDownloadFile() const { return _logDownloadFilename; }
 

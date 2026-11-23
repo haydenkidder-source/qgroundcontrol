@@ -1,5 +1,9 @@
 #include "PlanManager.h"
 
+#include <algorithm>
+#include <cmath>
+#include <limits>
+
 #include "AppMessages.h"
 #include "FirmwarePlugin.h"
 #include "MAVLinkLib.h"
@@ -10,6 +14,18 @@
 #include "VehicleLinkManager.h"
 
 QGC_LOGGING_CATEGORY(PlanManagerLog, "PlanManager.PlanManager")
+
+int32_t PlanManager::degreesToWire(double degrees)
+{
+    if (!qIsFinite(degrees)) {
+        return 0;
+    }
+    // Clamp as a double before converting so an out-of-range value never reaches the integer conversion.
+    const double scaled =
+        std::clamp(std::round(degrees * 1e7), static_cast<double>(std::numeric_limits<int32_t>::min()),
+                   static_cast<double>(std::numeric_limits<int32_t>::max()));
+    return static_cast<int32_t>(scaled);
+}
 
 PlanManager::PlanManager(Vehicle* vehicle, MAV_MISSION_TYPE planType)
     : QObject                   (vehicle)
@@ -592,8 +608,9 @@ void PlanManager::_sendMissionItem(int seq)
             MAVLinkProtocol::instance()->getSystemId(), MAVLinkProtocol::getComponentId(), sharedLink->mavlinkChannel(),
             &messageOut, _vehicle->id(), MAV_COMP_ID_AUTOPILOT1, seq, item->frame(), item->command(), seq == 0,
             item->autoContinue(), item->param1(), item->param2(), item->param3(), item->param4(),
-            item->frame() == MAV_FRAME_MISSION ? item->param5() : item->param5() * 1e7,
-            item->frame() == MAV_FRAME_MISSION ? item->param6() : item->param6() * 1e7, item->param7(), _planType);
+            item->frame() == MAV_FRAME_MISSION ? static_cast<int32_t>(item->param5()) : degreesToWire(item->param5()),
+            item->frame() == MAV_FRAME_MISSION ? static_cast<int32_t>(item->param6()) : degreesToWire(item->param6()),
+            item->param7(), _planType);
         _vehicle->sendMessageOnLinkThreadSafe(sharedLink.get(), messageOut);
     }
     _startAckTimeout(AckMissionRequest);

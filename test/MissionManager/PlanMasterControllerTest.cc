@@ -1,5 +1,6 @@
 #include "PlanMasterControllerTest.h"
 
+#include <algorithm>
 #include <limits>
 
 #include <QtCore/QDateTime>
@@ -23,6 +24,7 @@
 #include "MultiSignalSpy.h"
 #include "MultiVehicleManager.h"
 #include "PlanCreator.h"
+#include "PlanManager.h"
 #include "PlanMasterController.h"
 #include "QGCFenceCircle.h"
 #include "QGCFencePolygon.h"
@@ -722,6 +724,294 @@ void PlanMasterControllerTest::_testVerifiedFenceVehicleIsolation()
     QCOMPARE(second.geoFenceController()->circles()->count(), 1);
     QCOMPARE(unrelated.geoFenceController()->circles()->count(), 0);
     QCOMPARE(offline.geoFenceController()->circles()->count(), 0);
+}
+
+QList<int32_t> PlanMasterControllerTest::_driftingWireIntegers(int32_t first, int count)
+{
+    QList<int32_t> wire;
+    for (int32_t n = first; n < first + 1000 && wire.count() < count; ++n) {
+        if (static_cast<int32_t>((n * 1e-7) * 1e7) != n) {
+            wire.append(n);
+        }
+    }
+    return wire;
+}
+
+void PlanMasterControllerTest::_testVerifiedFenceMergeUsesWireIdentity_data()
+{
+    QTest::addColumn<QString>("kind");
+    QTest::addColumn<double>("planSteps");
+    QTest::addColumn<double>("fenceSteps");
+    QTest::addColumn<bool>("different");
+
+    for (const QString& kind : {QStringLiteral("polygon"), QStringLiteral("circle"), QStringLiteral("return point")}) {
+        const auto row = [&kind](const char* name, double planSteps, double fenceSteps, bool different) {
+            QTest::newRow(qPrintable(QStringLiteral("%1: %2").arg(kind, QString::fromLatin1(name))))
+                << kind << planSteps << fenceSteps << different;
+        };
+        row("same wire integers", 0, 0, false);
+        row("plan digits below half a step", 0.4, 0, false);
+        row("plan digits above half a step round up", 0.6, 1, false);
+        row("one step apart", 0, 1, true);
+        row("plan digits above half a step against the lower integer", 0.6, 0, true);
+    }
+}
+
+void PlanMasterControllerTest::_testVerifiedFenceMergeUsesWireIdentity()
+{
+    QFETCH(QString, kind);
+    QFETCH(double, planSteps);
+    QFETCH(double, fenceSteps);
+    QFETCH(bool, different);
+
+    _connectMockLink(MAV_AUTOPILOT_PX4);
+    QVERIFY(vehicle());
+    QTRY_VERIFY_WITH_TIMEOUT(vehicle()->initialPlanRequestComplete(), TestTimeout::longMs());
+    GeoFenceController* const fence = _masterController->geoFenceController();
+    const QList<int32_t> latitudes = _driftingWireIntegers(470000000, 3);
+    const QList<int32_t> longitudes = _driftingWireIntegers(85000000, 3);
+    QCOMPARE(latitudes.count(), 3);
+    QCOMPARE(longitudes.count(), 3);
+    const auto ring = [&](double steps) {
+        QList<QGeoCoordinate> vertices;
+        for (int i = 0; i < 3; ++i) {
+            vertices.append(QGeoCoordinate((latitudes[i] + steps) * 1e-7, (longitudes[i] + steps) * 1e-7, 30));
+        }
+        return vertices;
+    };
+
+    PlanMasterController::VerifiedFence snapshot;
+    if (kind == QLatin1String("polygon")) {
+        auto* polygon = new QGCFencePolygon(false, fence);
+        polygon->appendVertices(ring(planSteps));
+        fence->polygons()->append(polygon);
+        snapshot.shapes.append({true, false, ring(fenceSteps), 0});
+    } else if (kind == QLatin1String("circle")) {
+        fence->circles()->append(new QGCFenceCircle(ring(planSteps).first(), 50, false, fence));
+        snapshot.shapes.append({false, false, {ring(fenceSteps).first()}, 50});
+    } else {
+        fence->setBreachReturnPoint(ring(planSteps).first());
+        snapshot.returnPoint = ring(fenceSteps).first();
+    }
+    const auto result = PlanMasterController::applyVerifiedFenceForTest(
+        vehicle(), snapshot, PlanMasterController::ExternalFencePolicy::Merge);
+    QCOMPARE(result.editors, 1);
+    if (kind == QLatin1String("return point")) {
+        QCOMPARE(result.shapesAdded, 0);
+        QCOMPARE(result.returnPointConflict, different);
+    } else {
+        QCOMPARE(result.shapesAdded, different ? 1 : 0);
+        QVERIFY(!result.returnPointConflict);
+    }
+}
+
+void PlanMasterControllerTest::_testDegreesToWire_data()
+{
+    QTest::addColumn<double>("degrees");
+    QTest::addColumn<int>("expected");
+
+    QTest::newRow("zero") << 0.0 << 0;
+    QTest::newRow("exact positive") << 47.5 << 475000000;
+    QTest::newRow("exact negative") << -122.25 << -1222500000;
+    QTest::newRow("below half a step rounds down") << 4e-8 << 0;
+    QTest::newRow("above half a step rounds up") << 6e-8 << 1;
+    QTest::newRow("negative above half a step rounds away from zero") << -6e-8 << -1;
+    // 1/256 degree is exactly 39062.5 steps, so these are true halves.
+    QTest::newRow("half rounds away from zero") << 1.0 / 256 << 39063;
+    QTest::newRow("negative half rounds away from zero") << -1.0 / 256 << -39063;
+    QTest::newRow("another half") << 3.0 / 256 << 117188;
+    QTest::newRow("NaN") << qQNaN() << 0;
+    QTest::newRow("positive infinity") << qInf() << 0;
+    QTest::newRow("negative infinity") << -qInf() << 0;
+    QTest::newRow("int32 maximum") << 214.7483647 << std::numeric_limits<int32_t>::max();
+    QTest::newRow("just above the maximum clamps") << 214.7483648 << std::numeric_limits<int32_t>::max();
+    QTest::newRow("far above the maximum clamps") << 1000.0 << std::numeric_limits<int32_t>::max();
+    QTest::newRow("int32 minimum") << -214.7483648 << std::numeric_limits<int32_t>::min();
+    QTest::newRow("far below the minimum clamps") << -1000.0 << std::numeric_limits<int32_t>::min();
+}
+
+void PlanMasterControllerTest::_testDegreesToWire()
+{
+    QFETCH(double, degrees);
+    QFETCH(int, expected);
+
+    QCOMPARE(int(PlanManager::degreesToWire(degrees)), expected);
+}
+
+void PlanMasterControllerTest::_testDegreesToWireRecoversEveryWireInteger()
+{
+    // The decoder turns wire integer n into n * 1e-7, so every n must encode back to itself. A prime stride
+    // keeps the sweep from lining up with any decimal pattern.
+    constexpr qint64 kStride = 9973;
+    qint64 checked = 0;
+    qint64 truncationDrifts = 0;
+    QList<int32_t> failures;
+    const auto check = [&](int32_t wire, bool countDrift) {
+        const double decoded = static_cast<double>(wire) * 1e-7;
+        if ((PlanManager::degreesToWire(decoded) != wire || PlanManager::degreesToWire(wire / 1e7) != wire) &&
+            failures.count() < 5) {
+            failures.append(wire);
+        }
+        if (countDrift && static_cast<int32_t>(decoded * 1e7) != wire) {
+            ++truncationDrifts;
+        }
+        ++checked;
+    };
+    for (qint64 n = -1800000000; n <= 1800000000; n += kStride) {
+        check(static_cast<int32_t>(n), true);
+    }
+    for (const int32_t extreme : {std::numeric_limits<int32_t>::min(), std::numeric_limits<int32_t>::max(), -1, 0, 1}) {
+        check(extreme, false);
+    }
+    QVERIFY2(
+        failures.isEmpty(),
+        qPrintable(QStringLiteral("wire integer did not survive a decode and encode, e.g. %1").arg(failures.value(0))));
+    QVERIFY(checked >= 100000);
+    // Precondition: with the old truncating encoder a large share of these integers lost a step.
+    QVERIFY2(truncationDrifts > 1000, qPrintable(QStringLiteral("only %1 drifting integers").arg(truncationDrifts)));
+}
+
+void PlanMasterControllerTest::_testSameWirePosition_data()
+{
+    QTest::addColumn<QGeoCoordinate>("first");
+    QTest::addColumn<QGeoCoordinate>("second");
+    QTest::addColumn<bool>("expected");
+
+    const QList<int32_t> latitudes = _driftingWireIntegers(470000000, 1);
+    const QList<int32_t> longitudes = _driftingWireIntegers(85000000, 1);
+    QVERIFY(!latitudes.isEmpty() && !longitudes.isEmpty());
+    const double lat = latitudes.first();
+    const double lon = longitudes.first();
+    const auto at = [](double latSteps, double lonSteps) { return QGeoCoordinate(latSteps * 1e-7, lonSteps * 1e-7); };
+
+    QTest::newRow("decoded and decimal forms of one wire integer")
+        << at(lat, lon) << QGeoCoordinate(lat / 1e7, lon / 1e7) << true;
+    QTest::newRow("extra digits below half a step") << at(lat + 0.4, lon + 0.4) << at(lat, lon) << true;
+    QTest::newRow("extra digits above half a step round up")
+        << at(lat + 0.6, lon + 0.6) << at(lat + 1, lon + 1) << true;
+    QTest::newRow("extra digits above half a step against the lower integer")
+        << at(lat + 0.6, lon) << at(lat, lon) << false;
+    QTest::newRow("latitude one step apart") << at(lat, lon) << at(lat + 1, lon) << false;
+    QTest::newRow("longitude one step apart") << at(lat, lon) << at(lat, lon + 1) << false;
+    QTest::newRow("southern and western hemispheres")
+        << at(-lat, -lon) << QGeoCoordinate(-lat / 1e7, -lon / 1e7) << true;
+    QTest::newRow("across the sign boundary") << at(1, 0) << at(-1, 0) << false;
+    QTest::newRow("zero against one step") << at(0, 0) << at(1, 0) << false;
+    QTest::newRow("under half a step of zero on either side") << at(0.4, -0.4) << at(0, 0) << true;
+}
+
+void PlanMasterControllerTest::_testSameWirePosition()
+{
+    QFETCH(QGeoCoordinate, first);
+    QFETCH(QGeoCoordinate, second);
+    QFETCH(bool, expected);
+
+    QCOMPARE(PlanMasterController::sameWirePosition(first, second), expected);
+    QCOMPARE(PlanMasterController::sameWirePosition(second, first), expected);
+}
+
+void PlanMasterControllerTest::_testSameWireRing_data()
+{
+    QTest::addColumn<QList<QGeoCoordinate>>("first");
+    QTest::addColumn<QList<QGeoCoordinate>>("second");
+    QTest::addColumn<bool>("expected");
+
+    const QList<int32_t> latitudes = _driftingWireIntegers(470000000, 4);
+    const QList<int32_t> longitudes = _driftingWireIntegers(85000000, 4);
+    QVERIFY(latitudes.count() == 4 && longitudes.count() == 4);
+    QList<QGeoCoordinate> ring;
+    QList<QGeoCoordinate> decimal;
+    for (int i = 0; i < 4; ++i) {
+        ring.append(QGeoCoordinate(latitudes[i] * 1e-7, longitudes[i] * 1e-7));
+        decimal.append(QGeoCoordinate(latitudes[i] / 1e7, longitudes[i] / 1e7));
+    }
+    const auto rotated = [&ring](int by) {
+        QList<QGeoCoordinate> vertices;
+        for (int i = 0; i < ring.count(); ++i) {
+            vertices.append(ring[(i + by) % ring.count()]);
+        }
+        return vertices;
+    };
+    const auto reversed = [](QList<QGeoCoordinate> vertices) {
+        std::reverse(vertices.begin(), vertices.end());
+        return vertices;
+    };
+    QList<QGeoCoordinate> oneStepApart = ring;
+    oneStepApart[2] = QGeoCoordinate((latitudes[2] + 1) * 1e-7, longitudes[2] * 1e-7);
+    const QList<QGeoCoordinate> swapped = {ring[0], ring[2], ring[1], ring[3]};
+    QList<QGeoCoordinate> longer = ring;
+    longer.append(QGeoCoordinate(ring[0].latitude() + 1e-3, ring[0].longitude()));
+
+    QTest::newRow("identical") << ring << ring << true;
+    QTest::newRow("same wire integers written in decimal") << ring << decimal << true;
+    QTest::newRow("rotated by one") << ring << rotated(1) << true;
+    QTest::newRow("rotated by three") << ring << rotated(3) << true;
+    QTest::newRow("reversed") << ring << reversed(ring) << true;
+    QTest::newRow("rotated and reversed") << ring << reversed(rotated(2)) << true;
+    QTest::newRow("one vertex one step apart") << ring << oneStepApart << false;
+    QTest::newRow("two vertices swapped") << ring << swapped << false;
+    QTest::newRow("second has an extra vertex") << ring << longer << false;
+    QTest::newRow("first has an extra vertex") << longer << ring << false;
+    QTest::newRow("both empty") << QList<QGeoCoordinate>() << QList<QGeoCoordinate>() << false;
+    QTest::newRow("empty against a ring") << QList<QGeoCoordinate>() << ring << false;
+}
+
+void PlanMasterControllerTest::_testSameWireRing()
+{
+    QFETCH(QList<QGeoCoordinate>, first);
+    QFETCH(QList<QGeoCoordinate>, second);
+    QFETCH(bool, expected);
+
+    QCOMPARE(PlanMasterController::sameWireRing(first, second), expected);
+    QCOMPARE(PlanMasterController::sameWireRing(second, first), expected);
+}
+
+void PlanMasterControllerTest::_testFenceRoundTripKeepsWireIntegers()
+{
+    _connectMockLink(MAV_AUTOPILOT_PX4);
+    QVERIFY(vehicle());
+    QTRY_VERIFY_WITH_TIMEOUT(vehicle()->initialPlanRequestComplete(), TestTimeout::longMs());
+    GeoFenceManager* const fence = vehicle()->geoFenceManager();
+    QVERIFY(fence);
+
+    const QList<int32_t> latitudes = _driftingWireIntegers(470000000, 4);
+    const QList<int32_t> longitudes = _driftingWireIntegers(85000000, 4);
+    QCOMPARE(latitudes.count(), 4);
+    QCOMPARE(longitudes.count(), 4);
+    QList<QGeoCoordinate> ring;
+    for (int i = 0; i < 4; ++i) {
+        ring.append(QGeoCoordinate(latitudes[i] * 1e-7, longitudes[i] * 1e-7));
+    }
+    const auto storedWire = [this](bool latitude) {
+        QList<int32_t> wire;
+        for (const mavlink_mission_item_int_t& item : mockLink()->fenceItems()) {
+            wire.append(latitude ? item.x : item.y);
+        }
+        return wire;
+    };
+
+    QmlObjectListModel polygons;
+    QmlObjectListModel circles;
+    auto* polygon = new QGCFencePolygon(false, &polygons);
+    polygon->appendVertices(ring);
+    polygons.append(polygon);
+
+    // Upload, download and upload the downloaded fence again: the stored integers must never move.
+    for (int trip = 1; trip <= 3; ++trip) {
+        QSignalSpy sent(fence, &GeoFenceManager::sendComplete);
+        fence->sendToVehicle(QGeoCoordinate(), polygons, circles);
+        QTRY_COMPARE_WITH_TIMEOUT(sent.count(), 1, TestTimeout::longMs());
+        QVERIFY(!sent.first().at(0).toBool());
+        QCOMPARE(storedWire(true), latitudes);
+        QCOMPARE(storedWire(false), longitudes);
+
+        QSignalSpy loaded(fence, &GeoFenceManager::loadComplete);
+        fence->loadFromVehicle();
+        QTRY_COMPARE_WITH_TIMEOUT(loaded.count(), 1, TestTimeout::longMs());
+        QCOMPARE(fence->polygons().count(), 1);
+        polygons.clearAndDeleteContents();
+        polygons.append(new QGCFencePolygon(fence->polygons().first(), &polygons));
+    }
 }
 
 void PlanMasterControllerTest::_testStaleInitialPlanLoadRallyCompletePreservesPlan()
