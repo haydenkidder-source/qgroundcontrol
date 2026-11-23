@@ -401,9 +401,23 @@ if(QGC_BUILD_TESTING)
         Integration
         Vehicle
     )
+    cmake_language(
+        DEFER
+        DIRECTORY
+        "${CMAKE_SOURCE_DIR}"
+        CALL
+        add_qgc_test
+        ExclusionZoneReviewPageUITest
+        LABELS
+        Integration
+        NoSanitizer
+    )
+    target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE shp)
     target_sources(
         ${CMAKE_PROJECT_NAME}
         PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/ExclusionZoneReviewPageUITest.cc
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/ExclusionZoneReviewPageUITest.h
             ${CMAKE_CURRENT_SOURCE_DIR}/test/VehicleSystemIdTestData.h
             ${CMAKE_CURRENT_SOURCE_DIR}/test/COPTestHelpers.h
             ${CMAKE_CURRENT_SOURCE_DIR}/test/AppLogViewerUITest.cc

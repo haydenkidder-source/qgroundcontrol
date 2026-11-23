@@ -1,7 +1,12 @@
 #include "ShapeFileHelper.h"
+
+#include <utility>
+
+#include <QtCore/QFileInfo>
+
 #include "KMLHelper.h"
-#include "SHPFileHelper.h"
 #include "QGCLoggingCategory.h"
+#include "SHPFileHelper.h"
 
 QGC_LOGGING_CATEGORY(ShapeFileHelperLog, "Utilities.ShapeFileHelper")
 
@@ -56,6 +61,31 @@ int ShapeFileHelper::getEntityCount(const QString &file, QString &errorString)
     default:
         return 0;
     }
+}
+
+bool ShapeFileHelper::loadStrictPolygonsFromFile(const QString& file, QList<QList<QGeoCoordinate>>& polygons,
+                                                 QString& errorString)
+{
+    polygons.clear();
+    errorString.clear();
+    QList<QList<QGeoCoordinate>> staged;
+    bool success = false;
+    switch (_getShapeFileType(file, errorString)) {
+        case ShapeFileType::KML:
+            success = KMLHelper::loadStrictPolygonsFromFile(file, staged, errorString);
+            break;
+        case ShapeFileType::SHP:
+            success = SHPFileHelper::loadStrictPolygonsFromFile(file, staged, errorString);
+            break;
+        case ShapeFileType::None:
+            break;
+    }
+    if (!success) {
+        errorString = QStringLiteral("%1: %2").arg(QFileInfo(file).fileName(), errorString);
+        return false;
+    }
+    polygons = std::move(staged);
+    return true;
 }
 
 bool ShapeFileHelper::loadPolygonsFromFile(const QString &file, QList<QList<QGeoCoordinate>> &polygons, QString &errorString, double filterMeters)

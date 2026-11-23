@@ -1,6 +1,7 @@
 #include "ExclusionZoneControllerTest.h"
 
 #include <QtCore/QDir>
+#include <QtCore/QFile>
 #include <QtCore/QRegularExpression>
 #include <QtTest/QSignalSpy>
 
@@ -20,6 +21,138 @@
 #include "SettingsManager.h"
 #include "StagedExclusionZone.h"
 #include "Vehicle.h"
+#include "shapefil.h"
+
+namespace {
+
+QString writeExclusionKml(const QString& path, bool hole)
+{
+    QFile file(path);
+    if (!file.open(QIODevice::WriteOnly)) {
+        return {};
+    }
+    const QByteArray first =
+        "<Polygon><outerBoundaryIs><LinearRing><coordinates>"
+        "0,0 0.00001,0 1,0 1,1 0,0"
+        "</coordinates></LinearRing></outerBoundaryIs></Polygon>";
+    const QByteArray second =
+        "<Polygon><outerBoundaryIs><LinearRing><coordinates>"
+        "2,2 3,2 3,3 2,2"
+        "</coordinates></LinearRing></outerBoundaryIs>" +
+        (hole ? QByteArray("<innerBoundaryIs/>") : QByteArray()) + "</Polygon>";
+    const QByteArray content =
+        "<kml><Document><Placemark><MultiGeometry>" + first + second + "</MultiGeometry></Placemark></Document></kml>";
+    return file.write(content) == content.size() ? path : QString();
+}
+
+QString writeExclusionShp(const QString& path, bool multipart)
+{
+    SHPHandle handle = SHPCreate(path.toUtf8().constData(), SHPT_POLYGON);
+    if (!handle) {
+        return {};
+    }
+    const double x[] = {0, 1, 1, 0, 2, 3, 3, 2};
+    const double y[] = {0, 0, 1, 0, 2, 2, 3, 2};
+    const int parts[] = {0, 4};
+    SHPObject* object =
+        SHPCreateObject(SHPT_POLYGON, -1, multipart ? 2 : 1, parts, nullptr, multipart ? 8 : 4, x, y, nullptr, nullptr);
+    const bool written = object && SHPWriteObject(handle, -1, object) >= 0;
+    if (object) {
+        SHPDestroyObject(object);
+    }
+    SHPClose(handle);
+    QFile prj(path.left(path.size() - 4) + QStringLiteral(".prj"));
+    const QByteArray projection("GEOGCS[\"GCS_WGS_1984\",");
+    return written && prj.open(QIODevice::WriteOnly) && prj.write(projection) == projection.size() ? path : QString();
+}
+
+}  // namespace
+
+void ExclusionZoneControllerTest::_importKml()
+{
+    ExclusionZoneController controller;
+    const QString good = writeExclusionKml(_directory.filePath(QStringLiteral("good.kml")), false);
+    const QString hole = writeExclusionKml(_directory.filePath(QStringLiteral("hole.kml")), true);
+    QVERIFY(!good.isEmpty() && !hole.isEmpty());
+    QSignalSpy errors(&controller, &ExclusionZoneController::importErrorChanged);
+    QSignalSpy summaries(&controller, &ExclusionZoneController::importSummaryChanged);
+    QVERIFY(!controller.importFromFile(hole));
+    QCOMPARE(controller.stagedZones()->count(), 0);
+    QVERIFY(controller.importError().contains(QStringLiteral("hole.kml")));
+    QVERIFY(controller.importError().contains(QStringLiteral("innerBoundaryIs")));
+    QVERIFY(controller.importSummary().isEmpty());
+    QVERIFY(controller.importFromFile(good));
+    QVERIFY(controller.importError().isEmpty());
+    QCOMPARE(controller.importSummary(), QStringLiteral("Imported 2 zone(s) from good.kml"));
+    QCOMPARE(controller.stagedZones()->count(), 2);
+    const QList<QGeoCoordinate> first = {QGeoCoordinate(0, 0), QGeoCoordinate(0, 0.00001), QGeoCoordinate(0, 1),
+                                         QGeoCoordinate(1, 1)};
+    const QList<QGeoCoordinate> second = {QGeoCoordinate(2, 2), QGeoCoordinate(2, 3), QGeoCoordinate(3, 3)};
+    auto* zone0 = controller.stagedZones()->value<StagedExclusionZone*>(0);
+    auto* zone1 = controller.stagedZones()->value<StagedExclusionZone*>(1);
+    QVERIFY(zone0 && zone1);
+    QCOMPARE(zone0->polygon()->coordinateList(), first);
+    QCOMPARE(zone1->polygon()->coordinateList(), second);
+    QVERIFY(!zone0->approved() && !zone1->approved());
+    QCOMPARE(controller.approvedCount(), 0);
+    QVERIFY(!controller.importFromFile(hole));
+    QVERIFY(controller.importSummary().isEmpty());
+    QVERIFY(controller.importError().contains(QStringLiteral("innerBoundaryIs")));
+    QCOMPARE(controller.stagedZones()->count(), 2);
+    QCOMPARE(errors.count(), 3);
+    QCOMPARE(summaries.count(), 2);
+}
+
+void ExclusionZoneControllerTest::_importFailurePreservesZones()
+{
+    ExclusionZoneController controller;
+    const QString good = writeExclusionKml(_directory.filePath(QStringLiteral("preserve.kml")), false);
+    const QString hole = writeExclusionKml(_directory.filePath(QStringLiteral("preserve-hole.kml")), true);
+    QVERIFY(!good.isEmpty() && !hole.isEmpty());
+    QVERIFY(controller.importFromFile(good));
+    auto* first = controller.stagedZones()->value<StagedExclusionZone*>(0);
+    auto* second = controller.stagedZones()->value<StagedExclusionZone*>(1);
+    QVERIFY(first && second);
+    controller.setApproved(0, true);
+    QCOMPARE(controller.approvedCount(), 1);
+    QVERIFY(!controller.importFromFile(hole));
+    QCOMPARE(controller.stagedZones()->count(), 2);
+    QCOMPARE(controller.stagedZones()->get(0), first);
+    QCOMPARE(controller.stagedZones()->get(1), second);
+    QVERIFY(first->approved());
+    QVERIFY(!second->approved());
+    QCOMPARE(controller.approvedCount(), 1);
+}
+
+void ExclusionZoneControllerTest::_importShp()
+{
+    ExclusionZoneController controller;
+    const QString multipart = writeExclusionShp(_directory.filePath(QStringLiteral("multipart.shp")), true);
+    const QString single = writeExclusionShp(_directory.filePath(QStringLiteral("single.shp")), false);
+    QVERIFY(!multipart.isEmpty() && !single.isEmpty());
+    QVERIFY(!controller.importFromFile(multipart));
+    QVERIFY(controller.importError().contains(QStringLiteral("multipart.shp")));
+    QVERIFY(controller.importError().contains(QStringLiteral("multipart polygon entity 1 needs conversion")));
+    QCOMPARE(controller.stagedZones()->count(), 0);
+    QVERIFY(controller.importFromFile(single));
+    QCOMPARE(controller.stagedZones()->count(), 1);
+    const QList<QGeoCoordinate> expected = {QGeoCoordinate(0, 0), QGeoCoordinate(0, 1), QGeoCoordinate(1, 1)};
+    auto* zone = controller.stagedZones()->value<StagedExclusionZone*>(0);
+    QVERIFY(zone);
+    QCOMPARE(zone->polygon()->coordinateList(), expected);
+}
+
+void ExclusionZoneControllerTest::_importMissingAndUnsupported()
+{
+    ExclusionZoneController controller;
+    for (const QString& name : {QStringLiteral("missing.kml"), QStringLiteral("unsupported.txt")}) {
+        QVERIFY(!controller.importFromFile(_directory.filePath(name)));
+        QVERIFY(controller.importError().contains(name));
+        QVERIFY(controller.importError().size() > name.size());
+        QVERIFY(controller.importSummary().isEmpty());
+        QCOMPARE(controller.stagedZones()->count(), 0);
+    }
+}
 
 void ExclusionZoneControllerTest::init()
 {

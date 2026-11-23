@@ -14,6 +14,10 @@ class ExclusionZoneControllerTest : public VehicleTestManualConnect
 private slots:
     void init() override;
     void cleanup() override;
+    void _importKml();
+    void _importFailurePreservesZones();
+    void _importShp();
+    void _importMissingAndUnsupported();
     void _exclusiveToken();
     void _pushRejectedWhileExclusive();
     void _testPushRejectedDuringPlanUpload();

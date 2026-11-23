@@ -24,6 +24,10 @@ private slots:
     void _testKMLAltitudeParsing();
     void _testKMLCoordinateValidation();
     void _testKMLExportSchemaValidation();
+    void _testStrictKML_data();
+    void _testStrictKML();
+    void _testStrictSHP();
+    void _testStrictDispatcher();
 
 private:
     static QString _copyRes(const QString& dirPath, const QString& name);
