@@ -37,12 +37,14 @@ public:
         QString primaryName;
         bool initialConnectDone = false;
         bool transferActive = false;
+        bool configurationAmbiguous = false;
     };
 
     enum class Gate
     {
         Off,
         NotAttached,
+        Ambiguous,
         OnPreferred,
         PreferredDown,
         Waiting,

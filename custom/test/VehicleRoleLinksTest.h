@@ -20,6 +20,8 @@ private slots:
     void _addRemoveAndPersistLinks_data();
     void _addRemoveAndPersistLinks();
     void _oldFormatFileLoadsWithoutLinks();
+    void _removingRoleDeletesLinks_data();
+    void _removingRoleDeletesLinks();
     void _isLinkConfigConnectedTracksLiveLink();
     void _preferredLinksPersistAndStayUnique_data();
     void _preferredLinksPersistAndStayUnique();

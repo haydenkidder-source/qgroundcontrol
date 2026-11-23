@@ -30,6 +30,40 @@ class PlanMasterController : public QObject
 #endif
 
 public:
+    enum class ExternalFencePolicy
+    {
+        Merge,
+        RequireReload
+    };
+
+    struct VerifiedFenceShape
+    {
+        bool polygon;
+        bool inclusion;
+        QList<QGeoCoordinate> vertices;
+        double radius = 0;
+    };
+
+    struct VerifiedFence
+    {
+        QList<VerifiedFenceShape> shapes;
+        QGeoCoordinate returnPoint;
+    };
+
+    struct ExternalFenceResult
+    {
+        int editors = 0;
+        int shapesAdded = 0;
+        int changedEditors = 0;
+        bool returnPointConflict = false;
+        bool reloadRequired = false;
+    };
+
+    static ExternalFenceResult applyVerifiedFence(Vehicle* vehicle, const VerifiedFence& fence);
+#ifdef QGC_UNITTEST_BUILD
+    static ExternalFenceResult applyVerifiedFenceForTest(Vehicle* vehicle, const VerifiedFence& fence,
+                                                         ExternalFencePolicy policy);
+#endif
     PlanMasterController(QObject* parent = nullptr);
 #ifdef QGC_UNITTEST_BUILD
     // Used by test code to create master controller with specific firmware/vehicle type
@@ -202,6 +236,10 @@ private:
     void _finishRemoveAllFromVehicle(bool error);
     bool _acquireExclusive();
     void _releaseExclusive();
+    static ExternalFenceResult _applyVerifiedFence(Vehicle* vehicle, const VerifiedFence& fence,
+                                                   ExternalFencePolicy policy);
+    static constexpr ExternalFencePolicy EXTERNAL_FENCE_POLICY = ExternalFencePolicy::Merge;
+    static QList<PlanMasterController*> _liveControllers;
 
 #ifdef QGC_UNITTEST_BUILD
     // Used by unit tests to set dirty flags for initial state
@@ -214,6 +252,7 @@ private:
     QPointer<Vehicle> _managerVehicle;        ///< Either active vehicle or _controllerVehicle if none
     QPointer<GeoFenceManager> _exclusiveFence;
     QPointer<GeoFenceManager> _removeExclusiveFence;
+    QList<QPointer<Vehicle>> _staleFenceVehicles;
     quint32 _planVehicleId = 0;
     quint32 _loadVehicleId = 0;               ///< Captured at download/adoption start; 0 after a transfer error
     quint32 _sendVehicleId = 0;               ///< Captured at upload start; 0 after a transfer error

@@ -3,15 +3,20 @@
 #include <cmath>
 #include <limits>
 
+#include <QtCore/QDateTime>
 #include <QtCore/QFile>
+#include <QtCore/QFileInfo>
 #include <QtCore/QJsonArray>
 #include <QtCore/QJsonDocument>
 #include <QtCore/QJsonObject>
+#include <QtCore/QSaveFile>
 #include <QtCore/QSettings>
+#include <QtCore/QUuid>
 
 #include "AppSettings.h"
 #include "LinkManager.h"
 #include "LinkPreferenceController.h"
+#include "QGCCorePlugin.h"
 #include "QGCLoggingCategory.h"
 #include "QGCMAVLink.h"
 #include "QmlObjectListModel.h"
@@ -147,9 +152,23 @@ void VehicleRoleController::addEntry(quint32 sysid, const QString& role, const Q
     _save();
 }
 
+bool VehicleRoleController::addEntryIfNew(quint32 sysid, const QString& role, const QString& name, int port)
+{
+    if (hasEntry(sysid)) {
+        return false;
+    }
+    addEntry(sysid, role, name, port);
+    return hasEntry(sysid);
+}
+
 void VehicleRoleController::removeEntry(int index)
 {
     if (auto* entry = qobject_cast<VehicleRoleEntry*>(_roleEntries->get(index))) {
+        for (int i = 0; i < entry->links()->count(); ++i) {
+            _rawObjects.remove(entry->links()->get(i));
+        }
+        _rawObjects.remove(entry);
+        _extraLinks.remove(entry);
         _roleEntries->removeOne(entry);
         entry->deleteLater();
         _save();
@@ -271,7 +290,7 @@ int VehicleRoleController::addLink(int index, const QString& label, const QStrin
         return -1;
     }
 
-    entry->links()->append(new VehicleRoleLinkEntry(label, linkConfigName, this));
+    entry->links()->append(new VehicleRoleLinkEntry(label, linkConfigName, entry));
     _save();
     return entry->links()->count() - 1;
 }
@@ -283,6 +302,7 @@ void VehicleRoleController::removeLink(int index, int linkIndex)
         return;
     }
     if (auto* link = qobject_cast<VehicleRoleLinkEntry*>(entry->links()->removeAt(linkIndex))) {
+        _rawObjects.remove(link);
         link->deleteLater();
         _save();
         emit linkPreferencesChanged();
@@ -361,38 +381,142 @@ bool VehicleRoleController::isLinkConfigConnected(const QString& linkConfigName)
         return false;
     }
 
-    const QList<SharedLinkInterfacePtr> links = LinkManager::instance()->links();
+    auto* manager = LinkManager::instance();
+    if (manager->configurationCount(linkConfigName) > 1) {
+        return false;
+    }
+    int matches = 0;
+    const QList<SharedLinkInterfacePtr> links = manager->links();
     for (const SharedLinkInterfacePtr& link : links) {
         if (link && link->linkConfiguration() && link->linkConfiguration()->name() == linkConfigName) {
-            return true;
+            ++matches;
         }
     }
-    return false;
+    return matches == 1;
+}
+
+bool VehicleRoleController::_writeBytes(const QString& path, const QByteArray& bytes, QString* error)
+{
+#ifdef QGC_UNITTEST_BUILD
+    if (_writeForTesting) {
+        return _writeForTesting(path, bytes, error);
+    }
+#endif
+    QSaveFile file(path);
+    file.setDirectWriteFallback(false);
+    if (!file.open(QIODevice::WriteOnly)) {
+        *error = file.errorString();
+        return false;
+    }
+    if (file.write(bytes) != bytes.size()) {
+        *error = file.errorString();
+        file.cancelWriting();
+        return false;
+    }
+    if (!file.commit()) {
+        *error = file.errorString();
+        return false;
+    }
+    return true;
+}
+
+bool VehicleRoleController::_readBytes(const QString& path, QByteArray* bytes, QString* error)
+{
+#ifdef QGC_UNITTEST_BUILD
+    if (_readForTesting) {
+        return _readForTesting(path, bytes, error);
+    }
+#endif
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly)) {
+        *error = file.errorString();
+        return false;
+    }
+    *bytes = file.readAll();
+    if (file.error() != QFileDevice::NoError) {
+        *error = file.errorString();
+        return false;
+    }
+    return true;
+}
+
+bool VehicleRoleController::_renameFile(const QString& from, const QString& to)
+{
+#ifdef QGC_UNITTEST_BUILD
+    if (_renameForTesting) {
+        return _renameForTesting(from, to);
+    }
+#endif
+    return QFile::rename(from, to);
+}
+
+void VehicleRoleController::_setPersistenceError(const QString& error)
+{
+    if (_persistenceError != error) {
+        _persistenceError = error;
+        emit persistenceErrorChanged();
+    }
 }
 
 void VehicleRoleController::_load()
 {
     const QString filePath =
         SettingsManager::instance()->appSettings()->settingsSavePath() + QStringLiteral("/") + kRolesFileName;
-    QFile file(filePath);
-    if (!file.open(QIODevice::ReadOnly)) {
+    if (!QFileInfo::exists(filePath)) {
         return;
     }
-
-    const QJsonDocument doc = QJsonDocument::fromJson(file.readAll());
-    file.close();
+    QByteArray bytes;
+    QString error;
+    if (!_readBytes(filePath, &bytes, &error)) {
+        _persistenceReadOnly = true;
+        _setPersistenceError(
+            tr("Unable to read vehicle roles file %1: %2. Changes will not be saved.").arg(filePath, error));
+        qCWarning(VehicleRoleLog) << "Failed to read roles file:" << filePath << error;
+        return;
+    }
+    const QJsonDocument doc = QJsonDocument::fromJson(bytes);
+    if (doc.isObject()) {
+        qCWarning(VehicleRoleLog) << "Ignoring newer roles file:" << filePath;
+        _persistenceReadOnly = true;
+        _setPersistenceError(
+            tr("Vehicle roles file %1 needs a newer application version. Changes will not be saved.").arg(filePath));
+        return;
+    }
     if (!doc.isArray()) {
-        qCWarning(VehicleRoleLog) << "Ignoring malformed roles file:" << filePath;
+        const QString prefix = filePath + QStringLiteral(".invalid-") +
+                               QDateTime::currentDateTimeUtc().toString(QStringLiteral("yyyyMMddTHHmmss")) +
+                               QStringLiteral("-");
+        QString quarantinePath;
+        do {
+            quarantinePath = prefix + QUuid::createUuid().toString(QUuid::WithoutBraces);
+        } while (QFileInfo::exists(quarantinePath));
+        if (!_renameFile(filePath, quarantinePath)) {
+            _persistenceReadOnly = true;
+            _setPersistenceError(
+                tr("Unable to quarantine vehicle roles file %1. Changes will not be saved.").arg(filePath));
+            qCWarning(VehicleRoleLog) << "Failed to quarantine roles file:" << filePath;
+            return;
+        }
+        _persistenceNotice = tr("Invalid vehicle roles file moved to %1.").arg(quarantinePath);
+        emit persistenceNoticeChanged();
+        emit QGCCorePlugin::instance() -> operatorNotification(_persistenceNotice);
         return;
     }
 
+    int rolePosition = 0;
     for (const QJsonValue& value : doc.array()) {
+        const int position = rolePosition++;
+        if (!value.isObject()) {
+            _extraRoles.insert(position, value);
+            continue;
+        }
         const QJsonObject obj = value.toObject();
         const QJsonValue savedSysid = obj.value(QStringLiteral("sysid"));
         const double numericSysid = savedSysid.toDouble();
         if (!savedSysid.isDouble() || !std::isfinite(numericSysid) || numericSysid < 1 ||
             numericSysid > std::numeric_limits<quint32>::max() || std::floor(numericSysid) != numericSysid) {
             qCWarning(VehicleRoleLog) << "Skipping invalid saved entry - sysid:" << savedSysid;
+            _extraRoles.insert(position, value);
             continue;
         }
         const auto sysid = static_cast<quint32>(numericSysid);
@@ -414,6 +538,8 @@ void VehicleRoleController::_load()
         const int port = (savedPort >= 0 && savedPort <= 65535) ? savedPort : 0;
         auto* entry = new VehicleRoleEntry(sysid, role, name, port, this);
 
+        _rawObjects.insert(entry, obj);
+
         // "links" is absent in files saved before the multi-link model existed; toArray() on a
         // missing/non-array JSON value safely yields an empty array, so entries from those files
         // simply load with no link associations for the operator to re-add via the Vehicle Links
@@ -421,17 +547,25 @@ void VehicleRoleController::_load()
         // actual persisted link identity (see VehicleRoleEntry::port()), so nothing is silently
         // lost by not attempting to migrate it into a link association.
         bool hasPreferred = false;
+        int linkPosition = 0;
         for (const QJsonValue& linkValue : obj.value(QStringLiteral("links")).toArray()) {
+            const int linkIndex = linkPosition++;
+            if (!linkValue.isObject()) {
+                _extraLinks[entry].insert(linkIndex, linkValue);
+                continue;
+            }
             const QJsonObject linkObj = linkValue.toObject();
             const QString label = linkObj.value(QStringLiteral("label")).toString();
             if (label.isEmpty()) {
                 qCWarning(VehicleRoleLog) << "Skipping saved link with empty label for sysid:" << sysid;
+                _extraLinks[entry].insert(linkIndex, linkValue);
                 continue;
             }
             auto* link =
-                new VehicleRoleLinkEntry(label, linkObj.value(QStringLiteral("linkConfigName")).toString(), this);
+                new VehicleRoleLinkEntry(label, linkObj.value(QStringLiteral("linkConfigName")).toString(), entry);
             const bool preferred = linkObj.value(QStringLiteral("preferred")).toBool(false) &&
                                    !link->linkConfigName().isEmpty() && !hasPreferred;
+            _rawObjects.insert(link, linkObj);
             link->setPreferred(preferred);
             hasPreferred = hasPreferred || preferred;
             entry->links()->append(link);
@@ -443,19 +577,35 @@ void VehicleRoleController::_load()
 
 void VehicleRoleController::_save()
 {
+    _dirty = true;
+    if (_persistenceReadOnly) {
+        return;
+    }
     QJsonArray array;
+    auto roleExtra = _extraRoles.cbegin();
     for (int i = 0; i < _roleEntries->count(); i++) {
         auto* entry = qobject_cast<VehicleRoleEntry*>(_roleEntries->get(i));
-        QJsonObject obj;
+        while (roleExtra != _extraRoles.cend() && roleExtra.key() <= array.size()) {
+            array.append(roleExtra.value());
+            ++roleExtra;
+        }
+        QJsonObject obj = _rawObjects.value(entry);
         obj[QStringLiteral("sysid")] = static_cast<double>(entry->sysid());
         obj[QStringLiteral("role")] = entry->role();
         obj[QStringLiteral("name")] = entry->name();
         obj[QStringLiteral("port")] = entry->port();
 
         QJsonArray linksArray;
+        const auto extras = _extraLinks.value(entry);
+        auto linkExtra = extras.cbegin();
         for (int j = 0; j < entry->links()->count(); j++) {
             auto* link = qobject_cast<VehicleRoleLinkEntry*>(entry->links()->get(j));
-            QJsonObject linkObj;
+            while (linkExtra != extras.cend() && linkExtra.key() <= linksArray.size()) {
+                linksArray.append(linkExtra.value());
+                ++linkExtra;
+            }
+            QJsonObject linkObj = _rawObjects.value(link);
+            linkObj.remove(QStringLiteral("preferred"));
             linkObj[QStringLiteral("label")] = link->label();
             linkObj[QStringLiteral("linkConfigName")] = link->linkConfigName();
             if (link->preferred()) {
@@ -463,17 +613,28 @@ void VehicleRoleController::_save()
             }
             linksArray.append(linkObj);
         }
+        while (linkExtra != extras.cend()) {
+            linksArray.append(linkExtra.value());
+            ++linkExtra;
+        }
         obj[QStringLiteral("links")] = linksArray;
 
         array.append(obj);
     }
 
+    while (roleExtra != _extraRoles.cend()) {
+        array.append(roleExtra.value());
+        ++roleExtra;
+    }
     const QString filePath =
         SettingsManager::instance()->appSettings()->settingsSavePath() + QStringLiteral("/") + kRolesFileName;
-    QFile file(filePath);
-    if (!file.open(QIODevice::WriteOnly)) {
-        qCWarning(VehicleRoleLog) << "Failed to open roles file for write:" << filePath;
+    QString error;
+    if (!_writeBytes(filePath, QJsonDocument(array).toJson(), &error)) {
+        _setPersistenceError(
+            tr("Unable to save vehicle roles file %1: %2. Changes have not been saved.").arg(filePath, error));
+        qCWarning(VehicleRoleLog) << "Failed to save roles file:" << filePath << error;
         return;
     }
-    file.write(QJsonDocument(array).toJson());
+    _dirty = false;
+    _setPersistenceError({});
 }

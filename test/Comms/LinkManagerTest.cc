@@ -427,6 +427,48 @@ void LinkManagerTest::_testUdpBindFailureDisconnects()
     linkManager()->removeConfiguration(config.get());
 }
 
+void LinkManagerTest::_testConfigurationNameValidation()
+{
+    const auto first = linkManager()->addConfiguration(new UDPConfiguration(QStringLiteral("Validation A")));
+    const auto duplicate = linkManager()->addConfiguration(new UDPConfiguration(QStringLiteral("Validation A")));
+    const auto other = linkManager()->addConfiguration(new UDPConfiguration(QStringLiteral("Validation B")));
+    const auto cleanup = qScopeGuard([&] {
+        linkManager()->removeConfiguration(first.get());
+        linkManager()->removeConfiguration(duplicate.get());
+        linkManager()->removeConfiguration(other.get());
+    });
+
+    const auto count = linkManager()->_rgLinkConfigs.size();
+    std::unique_ptr<LinkConfiguration> created(new UDPConfiguration(QStringLiteral("Validation A")));
+    QVERIFY(!linkManager()->endCreateConfiguration(created.get()));
+    QCOMPARE(created->name(), QStringLiteral("Validation A"));
+    QCOMPARE(linkManager()->_rgLinkConfigs.size(), count);
+    QVERIFY(std::none_of(linkManager()->_rgLinkConfigs.cbegin(), linkManager()->_rgLinkConfigs.cend(),
+                         [&](const auto& config) { return config.get() == created.get(); }));
+    created->setName(QString());
+    QVERIFY(!linkManager()->endCreateConfiguration(created.get()));
+    created->setName(QStringLiteral("validation a"));
+    QVERIFY(linkManager()->endCreateConfiguration(created.get()));
+    const auto accepted = linkManager()->_rgLinkConfigs.last();
+    created.release();
+    linkManager()->removeConfiguration(accepted.get());
+
+    std::unique_ptr<LinkConfiguration> edit(linkManager()->startConfigurationEditing(first.get()));
+    edit->setName(QStringLiteral("Validation B"));
+    QVERIFY(!linkManager()->endConfigurationEditing(first.get(), edit.get()));
+    QCOMPARE(first->name(), QStringLiteral("Validation A"));
+    QCOMPARE(edit->name(), QStringLiteral("Validation B"));
+    QCOMPARE(linkManager()->_rgLinkConfigs.size(), count);
+    QVERIFY(std::none_of(linkManager()->_rgLinkConfigs.cbegin(), linkManager()->_rgLinkConfigs.cend(),
+                         [&](const auto& config) { return config.get() == edit.get(); }));
+    edit->setName(QStringLiteral("Validation A"));
+    edit->setHighLatency(true);
+    QVERIFY(linkManager()->endConfigurationEditing(first.get(), edit.get()));
+    QVERIFY(first->isHighLatency());
+    QCOMPARE(linkManager()->_rgLinkConfigs.size(), count);
+    edit.release();
+}
+
 void LinkManagerTest::_testUdpDisconnectEditReconnectOnNewPort()
 {
     const quint16 portA = _unusedUdpPort();

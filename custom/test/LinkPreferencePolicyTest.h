@@ -7,6 +7,9 @@ class LinkPreferencePolicyTest : public UnitTest
     Q_OBJECT
 
 private slots:
+    void _singleAttachedAmbiguousConfiguration();
+    void _ambiguousPreferredIsNotOnPreferred();
+    void _ambiguousConfigurationBlocksReturn();
     void _initialSettleOutlastsLossDetection();
     void _transferActive_data();
     void _transferActive();

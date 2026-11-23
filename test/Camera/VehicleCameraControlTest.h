@@ -23,6 +23,14 @@ private slots:
     void _testDistinctCameraNamesDoNotShareCacheFile();
     void _testConstructorBuildsCacheFileFromBoundedNames();
     void _testFtpDefinitionDownloadRefusedFallsBack();
+    UT_PARAMETERIZED_TEST(_testFtpFailureFallsBack);
+    void _testFtpInvalidCompressedDefinitionFallsBack();
+    void _testFtpStaleDefinitionIsIgnored();
+    void _testFtpUnreadableDefinitionFallsBack();
+    void _testFtpMissingDefinitionFallsBack();
+    void _testFtpGoodDefinitionIsCached();
+    void _testUnknownRangeTarget();
+    void _testResetPassIgnoresUnknownTarget();
     UT_PARAMETERIZED_TEST(_testFtpDefinitionDownloadIsSavedAsCacheFile);
 
 private:

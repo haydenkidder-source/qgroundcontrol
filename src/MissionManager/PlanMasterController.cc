@@ -1,5 +1,7 @@
 #include "PlanMasterController.h"
 
+#include <utility>
+
 #include <QtCore/QFileInfo>
 #include <QtCore/QJsonDocument>
 
@@ -21,6 +23,8 @@
 #include "VisualMissionItem.h"
 
 QGC_LOGGING_CATEGORY(PlanMasterControllerLog, "PlanManager.PlanMasterController")
+
+QList<PlanMasterController*> PlanMasterController::_liveControllers;
 
 PlanMasterController::PlanMasterController(QObject* parent)
     : QObject               (parent)
@@ -50,6 +54,7 @@ PlanMasterController::PlanMasterController(MAV_AUTOPILOT firmwareType, MAV_TYPE 
 
 void PlanMasterController::_commonInit(void)
 {
+    _liveControllers.append(this);
     connect(&_missionController,    &MissionController::dirtyChanged,               this, &PlanMasterController::_updateOverallDirty);
     connect(&_geoFenceController,   &GeoFenceController::dirtyChanged,              this, &PlanMasterController::_updateOverallDirty);
     connect(&_rallyPointController, &RallyPointController::dirtyChanged,            this, &PlanMasterController::_updateOverallDirty);
@@ -78,10 +83,138 @@ void PlanMasterController::_commonInit(void)
 
 PlanMasterController::~PlanMasterController()
 {
+    _liveControllers.removeAll(this);
     _releaseExclusive();
     if (_removeExclusiveFence) {
         _removeExclusiveFence->releaseExclusive(&_removeAllFromVehicleContext);
     }
+}
+
+PlanMasterController::ExternalFenceResult PlanMasterController::applyVerifiedFence(Vehicle* vehicle,
+                                                                                   const VerifiedFence& fence)
+{
+    return _applyVerifiedFence(vehicle, fence, EXTERNAL_FENCE_POLICY);
+}
+
+#ifdef QGC_UNITTEST_BUILD
+PlanMasterController::ExternalFenceResult PlanMasterController::applyVerifiedFenceForTest(Vehicle* vehicle,
+                                                                                          const VerifiedFence& fence,
+                                                                                          ExternalFencePolicy policy)
+{
+    return _applyVerifiedFence(vehicle, fence, policy);
+}
+#endif
+
+PlanMasterController::ExternalFenceResult PlanMasterController::_applyVerifiedFence(Vehicle* vehicle,
+                                                                                    const VerifiedFence& fence,
+                                                                                    ExternalFencePolicy policy)
+{
+    ExternalFenceResult result;
+    if (!vehicle || vehicle->isOfflineEditingVehicle()) {
+        return result;
+    }
+    const auto samePosition = [](const QGeoCoordinate& first, const QGeoCoordinate& second) {
+        const auto transmitted = [](double value) {
+            const double scaled = value * 1e7;
+            return static_cast<qint32>(scaled + (scaled < 0 ? -1e-6 : 1e-6));
+        };
+        return transmitted(first.latitude()) == transmitted(second.latitude()) &&
+               transmitted(first.longitude()) == transmitted(second.longitude());
+    };
+    for (PlanMasterController* editor : std::as_const(_liveControllers)) {
+        if (editor->_flyView || editor->_managerVehicle != vehicle) {
+            continue;
+        }
+        ++result.editors;
+        if (policy == ExternalFencePolicy::RequireReload) {
+            result.reloadRequired = true;
+            if (!editor->_staleFenceVehicles.contains(vehicle)) {
+                editor->_staleFenceVehicles.append(vehicle);
+            }
+            continue;
+        }
+        GeoFenceController* const controller = &editor->_geoFenceController;
+        QList<bool> usedPolygons(controller->polygons()->count(), false);
+        QList<bool> usedCircles(controller->circles()->count(), false);
+        int added = 0;
+        for (const VerifiedFenceShape& shape : fence.shapes) {
+            if (shape.vertices.isEmpty()) {
+                continue;
+            }
+            bool found = false;
+            if (shape.polygon) {
+                for (int i = 0; i < usedPolygons.count() && !found; ++i) {
+                    auto* polygon = controller->polygons()->value<QGCFencePolygon*>(i);
+                    if (usedPolygons[i] || !polygon || polygon->inclusion() != shape.inclusion ||
+                        polygon->count() != shape.vertices.count()) {
+                        continue;
+                    }
+                    const qsizetype count = shape.vertices.count();
+                    for (qsizetype offset = 0; offset < count && !found; ++offset) {
+                        for (int direction : {1, -1}) {
+                            bool matches = true;
+                            for (qsizetype j = 0; j < count; ++j) {
+                                if (!samePosition(shape.vertices[j], polygon->vertexCoordinate(static_cast<int>(
+                                                                         (offset + direction * j + count) % count)))) {
+                                    matches = false;
+                                    break;
+                                }
+                            }
+                            if (matches) {
+                                found = true;
+                                usedPolygons[i] = true;
+                                break;
+                            }
+                        }
+                    }
+                }
+                if (!found) {
+                    auto* polygon = new QGCFencePolygon(shape.inclusion, controller);
+                    polygon->appendVertices(shape.vertices);
+                    controller->polygons()->append(polygon);
+                    ++added;
+                }
+            } else {
+                for (int i = 0; i < usedCircles.count() && !found; ++i) {
+                    auto* circle = controller->circles()->value<QGCFenceCircle*>(i);
+                    if (!usedCircles[i] && circle && circle->inclusion() == shape.inclusion &&
+                        samePosition(circle->center(), shape.vertices.first()) &&
+                        static_cast<float>(circle->radius()->rawValue().toDouble()) ==
+                            static_cast<float>(shape.radius)) {
+                        usedCircles[i] = true;
+                        found = true;
+                    }
+                }
+                if (!found) {
+                    controller->circles()->append(
+                        new QGCFenceCircle(shape.vertices.first(), shape.radius, shape.inclusion, controller));
+                    ++added;
+                }
+            }
+        }
+        bool changed = added > 0;
+        const QGeoCoordinate planReturn = controller->breachReturnPoint();
+        if (fence.returnPoint.isValid()) {
+            if (!planReturn.isValid()) {
+                controller->setBreachReturnPoint(fence.returnPoint);
+                controller->breachReturnAltitude()->setRawValue(fence.returnPoint.altitude());
+                changed = true;
+            } else if (!samePosition(planReturn, fence.returnPoint) ||
+                       (!(qIsNaN(planReturn.altitude()) && qIsNaN(fence.returnPoint.altitude())) &&
+                        static_cast<float>(planReturn.altitude()) !=
+                            static_cast<float>(fence.returnPoint.altitude()))) {
+                result.returnPointConflict = true;
+            }
+        }
+        result.shapesAdded += added;
+        if (changed) {
+            ++result.changedEditors;
+            editor->_planContentsChanged();
+            controller->setDirty(true);
+            editor->_setDirtyStates(true, true);
+        }
+    }
+    return result;
 }
 
 bool PlanMasterController::_acquireExclusive()
@@ -354,6 +487,10 @@ void PlanMasterController::_loadRallyPointsComplete(void)
     if (_loadSequence != SyncSequence::RallyPoints && _loadSequence != SyncSequence::CachedRallyPoints) {
         return;
     }
+    if (_loadSequence == SyncSequence::RallyPoints && _loadVehicleId && _managerVehicle &&
+        _loadVehicleId == _managerVehicle->id()) {
+        _staleFenceVehicles.removeAll(_managerVehicle);
+    }
     if (_loadSequence == SyncSequence::RallyPoints) {
         _releaseExclusive();
     }
@@ -443,6 +580,10 @@ void PlanMasterController::_sendRallyPointsComplete(bool error)
 void PlanMasterController::sendToVehicle(void)
 {
     if (!_managerVehicle) {
+        return;
+    }
+    if (_staleFenceVehicles.contains(_managerVehicle)) {
+        QGC::showAppMessage(tr("The vehicle fence has changed. Reload the plan from the vehicle before uploading."));
         return;
     }
     SharedLinkInterfacePtr sharedLink = _managerVehicle->vehicleLinkManager()->primaryLink().lock();

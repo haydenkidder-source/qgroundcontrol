@@ -18,9 +18,19 @@ private slots:
     void _suggestedRoleFollowsVehicleType_data();
     void _suggestedRoleFollowsVehicleType();
     void _addEntryRejectsUnrecognizedRole();
+    void _addEntryIfNewDoesNotReplace();
+    void _ambiguousConnectedConfiguration();
     void _loadMigratesUnrecognizedSavedRoleToName();
     void _nicknamesMustBeDistinct();
     void _savedDuplicateNicknamesStillLoad();
+    void _newerFormatIsReadOnly();
+    void _roundTripKeepsMeaning();
+    void _unknownDataSurvivesEdit();
+    void _writeFailureKeepsOriginal_data();
+    void _writeFailureKeepsOriginal();
+    void _realOpenFailureKeepsStateUnsaved();
+    void _malformedFileIsQuarantined();
+    void _unreadableFileBlocksWrites();
 
 private:
     QTemporaryDir _directory;
