@@ -16,13 +16,12 @@ AnalyzePage {
     property var    _controller:      ExclusionZoneController
     property var    _targetVehicle:   _controller.targetVehicle
 
-    property bool _importFailed: false
     property string _pushResult: ""
 
     KMLOrSHPFileDialog {
         id: importDialog
         onAcceptedForLoad: (file) => {
-            exclusionZoneReviewPage._importFailed = !exclusionZoneReviewPage._controller.importFromFile(file)
+            exclusionZoneReviewPage._controller.importFromFile(file)
             close()
         }
     }
@@ -73,14 +72,32 @@ AnalyzePage {
                 spacing: ScreenTools.defaultFontPixelWidth
 
                 QGCButton {
+                    objectName: "importZonesButton"
                     text:       qsTr("Import Zones from File…")
                     onClicked:  importDialog.openForLoad()
                 }
 
+                TextEdit {
+                    objectName:             "importErrorLabel"
+                    Layout.fillWidth:       true
+                    visible:                text.length > 0
+                    color:                  importErrorPalette.colorRed
+                    text:                   _controller.importError
+                    readOnly:               true
+                    selectByMouse:          true
+                    wrapMode:               TextEdit.Wrap
+                    font.pointSize:         ScreenTools.defaultFontPointSize
+                    font.family:            ScreenTools.normalFontFamily
+
+                    QGCPalette { id: importErrorPalette; colorGroupEnabled: parent.enabled }
+                }
+
                 QGCLabel {
-                    visible:    exclusionZoneReviewPage._importFailed
-                    color:      qgcPal.colorRed
-                    text:       qsTr("Import failed — see log for details.")
+                    objectName:             "importSummaryLabel"
+                    Layout.fillWidth:       true
+                    visible:                text.length > 0
+                    text:                   _controller.importSummary
+                    wrapMode:               Text.WordWrap
                 }
             }
 

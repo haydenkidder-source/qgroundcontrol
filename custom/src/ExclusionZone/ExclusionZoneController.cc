@@ -3,6 +3,7 @@
 #include <QtCore/QDateTime>
 #include <QtCore/QDir>
 #include <QtCore/QFile>
+#include <QtCore/QFileInfo>
 #include <QtCore/QJsonArray>
 #include <QtCore/QJsonDocument>
 #include <QtCore/QJsonObject>
@@ -132,26 +133,40 @@ int ExclusionZoneController::approvedCount() const
 
 bool ExclusionZoneController::importFromFile(const QString& file)
 {
+    if (!_importError.isEmpty()) {
+        _importError.clear();
+        emit importErrorChanged();
+    }
+    if (!_importSummary.isEmpty()) {
+        _importSummary.clear();
+        emit importSummaryChanged();
+    }
+
     QList<QList<QGeoCoordinate>> polygons;
     QString errorString;
-    if (!ShapeFileHelper::loadPolygonsFromFile(file, polygons, errorString)) {
-        qCWarning(ExclusionZoneLog) << "loadPolygonsFromFile failed:" << errorString;
-        return false;
-    }
-    if (polygons.isEmpty()) {
-        qCWarning(ExclusionZoneLog) << "No polygons found in file:" << file;
+    if (!ShapeFileHelper::loadStrictPolygonsFromFile(file, polygons, errorString)) {
+        _importError = errorString;
+        emit importErrorChanged();
+        qCDebug(ExclusionZoneLog) << "loadStrictPolygonsFromFile failed:" << errorString;
         return false;
     }
 
+    QList<StagedExclusionZone*> staged;
     for (const QList<QGeoCoordinate>& vertices : polygons) {
         auto* polygon = new QGCFencePolygon(false /* inclusion */, this);
         polygon->appendVertices(vertices);
         auto* zone = new StagedExclusionZone(polygon, this);
         connect(zone, &StagedExclusionZone::approvedChanged, this, &ExclusionZoneController::approvedCountChanged);
+        staged.append(zone);
+    }
+    for (auto* zone : staged) {
         _stagedZones->append(zone);
     }
 
     emit approvedCountChanged();
+    _importSummary =
+        tr("Imported %n zone(s) from %1", nullptr, static_cast<int>(staged.size())).arg(QFileInfo(file).fileName());
+    emit importSummaryChanged();
     return true;
 }
 

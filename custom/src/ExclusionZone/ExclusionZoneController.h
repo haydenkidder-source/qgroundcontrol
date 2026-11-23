@@ -39,6 +39,8 @@ class ExclusionZoneController : public QObject
     Q_PROPERTY(QmlObjectListModel* stagedZones READ stagedZones CONSTANT)
     Q_PROPERTY(Vehicle* targetVehicle READ targetVehicle WRITE setTargetVehicle NOTIFY targetVehicleChanged)
     Q_PROPERTY(int approvedCount READ approvedCount NOTIFY approvedCountChanged)
+    Q_PROPERTY(QString importError READ importError NOTIFY importErrorChanged)
+    Q_PROPERTY(QString importSummary READ importSummary NOTIFY importSummaryChanged)
 
 public:
     explicit ExclusionZoneController(QObject* parent = nullptr);
@@ -51,6 +53,10 @@ public:
     void setTargetVehicle(Vehicle* vehicle);
 
     int approvedCount() const;
+
+    QString importError() const { return _importError; }
+
+    QString importSummary() const { return _importSummary; }
 
     /// Imports polygons from a KML/SHP file, staging one exclusion zone per polygon found.
     /// @return true if at least one polygon was imported.
@@ -68,6 +74,8 @@ public:
 signals:
     void targetVehicleChanged(Vehicle* targetVehicle);
     void approvedCountChanged();
+    void importErrorChanged();
+    void importSummaryChanged();
     /// Fired once the push attempt concludes, successfully or not.
     void pushFinished(bool success, QString message);
 
@@ -98,6 +106,8 @@ private:
     void _clearTransaction();
 
     QmlObjectListModel* _stagedZones = nullptr;
+    QString _importError;
+    QString _importSummary;
     QPointer<Vehicle> _targetVehicle;
     QPointer<Vehicle> _transactionVehicle;
     bool _pushInProgress = false;
