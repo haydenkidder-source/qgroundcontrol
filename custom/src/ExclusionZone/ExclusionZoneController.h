@@ -92,9 +92,18 @@ private:
         QGeoCoordinate coordinate;
     };
 
+    struct FenceShape
+    {
+        int command;
+        double parameter;
+        QList<QGeoCoordinate> vertices;
+    };
+
+    static bool _readFenceItems(GeoFenceManager* fenceMgr, QList<FenceItem>& items);
+    static bool _parseFence(const QList<FenceItem>& items, QList<FenceShape>& shapes);
     void _startVerification(quint64 transactionId);
     bool _fenceMatches(GeoFenceManager* fenceMgr) const;
-    void _failTransaction(const QString& reason);
+    void _failTransaction(const QString& reason, bool addContext = true);
     void _clearTransaction();
 
     QmlObjectListModel* _stagedZones = nullptr;

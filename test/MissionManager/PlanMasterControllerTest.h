@@ -47,6 +47,9 @@ private slots:
     void _testDownloadClearsFileAssociation();
     void _testBackgroundSyncPreservesFileAssociation();
     void _testUnrequestedSendCompletePreservesDirtyForUpload();
+    void _testVerifiedFenceMerge();
+    void _testVerifiedFenceRequireReload();
+    void _testVerifiedFenceVehicleIsolation();
     void _testStaleInitialPlanLoadRallyCompletePreservesPlan();
     void _testShowPlanFromVehicleClearsFileAssociation();
 

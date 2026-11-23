@@ -94,6 +94,14 @@ public:
     /// connecting GCS will download a non-empty mission.
     void loadSimpleMultirotorMission();
 
+    void setFenceItems(const QList<mavlink_mission_item_int_t>& items)
+    {
+        _fenceItems.clear();
+        for (qsizetype i = 0; i < items.count(); ++i) {
+            _fenceItems[static_cast<uint16_t>(i)] = items[i];
+        }
+    }
+
     void setSendHomePositionOnEmptyList(bool sendHomePositionOnEmptyList) { _sendHomePositionOnEmptyList = sendHomePositionOnEmptyList; }
 
     int requestListCount(MAV_MISSION_TYPE type) const { return _requestListCounts.value(type, 0); }

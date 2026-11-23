@@ -1,5 +1,7 @@
 #include "ExclusionZoneController.h"
 
+#include <utility>
+
 #include <QtCore/QDateTime>
 #include <QtCore/QDir>
 #include <QtCore/QFile>
@@ -13,6 +15,7 @@
 #include "GeoFenceManager.h"
 #include "GeoJsonHelper.h"
 #include "MultiVehicleManager.h"
+#include "PlanMasterController.h"
 #include "QGCFenceCircle.h"
 #include "QGCFencePolygon.h"
 #include "QGCLoggingCategory.h"
@@ -79,21 +82,24 @@ void ExclusionZoneController::_clearTransaction()
     _pushInProgress = false;
 }
 
-void ExclusionZoneController::_failTransaction(const QString& reason)
+void ExclusionZoneController::_failTransaction(const QString& reason, bool addContext)
 {
     if (!_pushInProgress) {
         return;
     }
     QString message = reason;
-    if (_recoveryRequiresReadback || (_transactionFenceManager && _transactionFenceManager->uploadRequiresReadback() &&
-                                      _pushPhase != PushPhase::Loading)) {
+    if (addContext &&
+        (_recoveryRequiresReadback || (_transactionFenceManager && _transactionFenceManager->uploadRequiresReadback() &&
+                                       _pushPhase != PushPhase::Loading))) {
         message += tr(" The fence upload needed a full restart, so its stored contents require readback verification.");
     }
-    message += _pushPhase == PushPhase::Loading
-                   ? tr(" No zones were sent. Check the connection and try again.")
-                   : tr(" The zones may be on the vehicle, but installation could not be verified. "
-                        "Read the fence back in Plan view before relying on it.");
-    if (_pushPhase != PushPhase::Loading && _approvedZonesChanged()) {
+    if (addContext) {
+        message += _pushPhase == PushPhase::Loading
+                       ? tr(" No zones were sent. Check the connection and try again.")
+                       : tr(" The zones may be on the vehicle, but installation could not be verified. "
+                            "Read the fence back in Plan view before relying on it.");
+    }
+    if (addContext && _pushPhase != PushPhase::Loading && _approvedZonesChanged()) {
         message += tr(" Approved staged zones were removed during the push.");
     }
     _clearTransaction();
@@ -240,9 +246,16 @@ bool ExclusionZoneController::pushApproved()
     // other zones, and its breach-return point.
     const quint64 transactionId = _transactionId;
     _fenceLoadErrorConnection =
-        connect(fenceMgr, &GeoFenceManager::error, this, [this, transactionId](int, const QString& msg) {
+        connect(fenceMgr, &GeoFenceManager::error, this, [this, fenceMgr, transactionId](int, const QString& msg) {
             if (transactionId == _transactionId) {
-                _failTransaction(tr("Couldn't read the vehicle's current fence. (%1)").arg(msg));
+                QList<FenceItem> items;
+                QList<FenceShape> shapes;
+                if (!fenceMgr->inProgress() && (!_readFenceItems(fenceMgr, items) || !_parseFence(items, shapes))) {
+                    _failTransaction(tr("The vehicle's fence could not be read completely, so nothing was sent."),
+                                     false);
+                } else {
+                    _failTransaction(tr("Couldn't read the vehicle's current fence. (%1)").arg(msg));
+                }
             }
         });
     _fenceLoadCompleteConnection =
@@ -255,6 +268,12 @@ bool ExclusionZoneController::pushApproved()
             if (!_transactionVehicle || _targetVehicle != _transactionVehicle ||
                 _transactionVehicle->geoFenceManager() != fenceMgr || fenceMgr->inProgress()) {
                 _failTransaction(tr("The fence operation was interrupted before sending."));
+                return;
+            }
+            QList<FenceItem> items;
+            QList<FenceShape> shapes;
+            if (!_readFenceItems(fenceMgr, items) || !_parseFence(items, shapes)) {
+                _failTransaction(tr("The vehicle's fence could not be read completely, so nothing was sent."), false);
                 return;
             }
             _mergeAndSend(fenceMgr);
@@ -490,6 +509,25 @@ void ExclusionZoneController::_startVerification(quint64 transactionId)
                 _failTransaction(tr("The fence read back from the vehicle does not match the fence sent."));
                 return;
             }
+            QList<FenceItem> verifiedItems;
+            QList<FenceShape> verifiedShapes;
+            if (!_readFenceItems(fenceMgr, verifiedItems) || !_parseFence(verifiedItems, verifiedShapes)) {
+                _failTransaction(tr("The fence read back from the vehicle is invalid."));
+                return;
+            }
+            PlanMasterController::VerifiedFence snapshot;
+            for (const FenceShape& shape : std::as_const(verifiedShapes)) {
+                if (shape.command == MAV_CMD_NAV_FENCE_RETURN_POINT) {
+                    snapshot.returnPoint = shape.vertices.first();
+                } else {
+                    const bool polygon = shape.command == MAV_CMD_NAV_FENCE_POLYGON_VERTEX_INCLUSION ||
+                                         shape.command == MAV_CMD_NAV_FENCE_POLYGON_VERTEX_EXCLUSION;
+                    const bool inclusion = shape.command == MAV_CMD_NAV_FENCE_POLYGON_VERTEX_INCLUSION ||
+                                           shape.command == MAV_CMD_NAV_FENCE_CIRCLE_INCLUSION;
+                    snapshot.shapes.append({polygon, inclusion, shape.vertices, shape.parameter});
+                }
+            }
+            const auto reconciliation = PlanMasterController::applyVerifiedFence(_transactionVehicle, snapshot);
             const auto approvedZones = _approvedZones;
             _clearTransaction();
             int completed = 0;
@@ -512,78 +550,100 @@ void ExclusionZoneController::_startVerification(quint64 transactionId)
                               .arg(completed)
                               .arg(approvedZones.count() - completed);
             }
+            if (reconciliation.reloadRequired) {
+                message += tr(" The vehicle fence was verified. Reload the Plan from the vehicle before uploading.");
+            } else if (reconciliation.editors > 0) {
+                if (reconciliation.shapesAdded > 0) {
+                    message += tr(" The vehicle fence was verified. %n shape(s) were added to the Plan.", "",
+                                  reconciliation.shapesAdded);
+                } else {
+                    message += tr(" The vehicle fence was verified. No shapes needed to be added to the Plan.");
+                }
+                if (reconciliation.changedEditors > 0) {
+                    message += tr(" The updated Plan has unsaved changes.");
+                }
+                if (reconciliation.returnPointConflict) {
+                    message +=
+                        tr(" A Plan return point differs; uploading the Plan will replace the vehicle return point.");
+                }
+            } else if (message.isEmpty()) {
+                message = tr("The vehicle fence was verified.");
+            }
             emit pushFinished(completed > 0, message);
         });
     fenceMgr->loadFromVehicle();
 }
 
-bool ExclusionZoneController::_fenceMatches(GeoFenceManager* fenceMgr) const
+bool ExclusionZoneController::_readFenceItems(GeoFenceManager* fenceMgr, QList<FenceItem>& items)
 {
-    struct FenceShape
-    {
-        int command;
-        double parameter;
-        QList<QGeoCoordinate> vertices;
-    };
-
-    const auto parse = [](const QList<FenceItem>& items, QList<FenceShape>& shapes) {
-        bool hasReturn = false;
-        for (qsizetype i = 0; i < items.count();) {
-            const FenceItem& first = items[i];
-            if (!qIsFinite(first.parameter)) {
-                return false;
-            }
-            const bool polygon = first.command == MAV_CMD_NAV_FENCE_POLYGON_VERTEX_INCLUSION ||
-                                 first.command == MAV_CMD_NAV_FENCE_POLYGON_VERTEX_EXCLUSION;
-            const bool circle = first.command == MAV_CMD_NAV_FENCE_CIRCLE_INCLUSION ||
-                                first.command == MAV_CMD_NAV_FENCE_CIRCLE_EXCLUSION;
-            const bool returnPoint = first.command == MAV_CMD_NAV_FENCE_RETURN_POINT;
-            qsizetype count = 1;
-            if (polygon) {
-                // Bound before converting, and require a complete, contiguous group with one count/type.
-                if (first.parameter < 3 || first.parameter > items.count() - i) {
-                    return false;
-                }
-                count = static_cast<qsizetype>(first.parameter);
-                if (first.parameter != count) {
-                    return false;
-                }
-            } else if (returnPoint) {
-                if (hasReturn || (!qIsFinite(first.coordinate.altitude()) && !qIsNaN(first.coordinate.altitude()))) {
-                    return false;
-                }
-                hasReturn = true;
-            } else if (!circle) {
-                return false;
-            }
-            FenceShape shape{first.command, first.parameter, {}};
-            for (qsizetype j = 0; j < count; ++j) {
-                const FenceItem& item = items[i + j];
-                if (item.command != first.command || item.parameter != first.parameter ||
-                    item.frame != (returnPoint ? MAV_FRAME_GLOBAL_RELATIVE_ALT : MAV_FRAME_GLOBAL) ||
-                    !item.coordinate.isValid() || !qIsFinite(item.coordinate.latitude()) ||
-                    !qIsFinite(item.coordinate.longitude())) {
-                    return false;
-                }
-                shape.vertices.append(item.coordinate);
-            }
-            shapes.append(shape);
-            i += count;
-        }
-        return true;
-    };
-
-    QList<FenceItem> actualItems;
     for (const MissionItem* item : fenceMgr->missionItems()) {
         if (!item) {
             return false;
         }
-        actualItems.append({item->command(), item->frame(), item->param1(),
-                            QGeoCoordinate(item->param5(), item->param6(), item->param7())});
+        items.append({item->command(), item->frame(), item->param1(),
+                      QGeoCoordinate(item->param5(), item->param6(), item->param7())});
+    }
+    return true;
+}
+
+bool ExclusionZoneController::_parseFence(const QList<FenceItem>& items, QList<FenceShape>& shapes)
+{
+    bool hasReturn = false;
+    for (qsizetype i = 0; i < items.count();) {
+        const FenceItem& first = items[i];
+        if (!qIsFinite(first.parameter)) {
+            return false;
+        }
+        const bool polygon = first.command == MAV_CMD_NAV_FENCE_POLYGON_VERTEX_INCLUSION ||
+                             first.command == MAV_CMD_NAV_FENCE_POLYGON_VERTEX_EXCLUSION;
+        const bool circle =
+            first.command == MAV_CMD_NAV_FENCE_CIRCLE_INCLUSION || first.command == MAV_CMD_NAV_FENCE_CIRCLE_EXCLUSION;
+        const bool returnPoint = first.command == MAV_CMD_NAV_FENCE_RETURN_POINT;
+        qsizetype count = 1;
+        if (polygon) {
+            // Bound before converting, and require a complete, contiguous group with one count/type.
+            if (first.parameter < 3 || first.parameter > items.count() - i) {
+                return false;
+            }
+            count = static_cast<qsizetype>(first.parameter);
+            if (first.parameter != count) {
+                return false;
+            }
+        } else if (returnPoint) {
+            if (hasReturn || (!qIsFinite(first.coordinate.altitude()) && !qIsNaN(first.coordinate.altitude()))) {
+                return false;
+            }
+            hasReturn = true;
+        } else if (!circle || first.parameter <= 0) {
+            return false;
+        }
+        FenceShape shape{first.command, first.parameter, {}};
+        for (qsizetype j = 0; j < count; ++j) {
+            const FenceItem& item = items[i + j];
+            if (item.command != first.command || item.parameter != first.parameter ||
+                item.frame != (returnPoint ? MAV_FRAME_GLOBAL_RELATIVE_ALT : MAV_FRAME_GLOBAL) ||
+                !item.coordinate.isValid() || !qIsFinite(item.coordinate.latitude()) ||
+                !qIsFinite(item.coordinate.longitude())) {
+                return false;
+            }
+            shape.vertices.append(item.coordinate);
+        }
+        shapes.append(shape);
+        i += count;
+    }
+    return true;
+}
+
+bool ExclusionZoneController::_fenceMatches(GeoFenceManager* fenceMgr) const
+{
+    QList<FenceItem> actualItems;
+    if (!_readFenceItems(fenceMgr, actualItems)) {
+        return false;
     }
     QList<FenceShape> expected;
     QList<FenceShape> actual;
-    if (!parse(_expectedFence, expected) || !parse(actualItems, actual) || expected.count() != actual.count()) {
+    if (!_parseFence(_expectedFence, expected) || !_parseFence(actualItems, actual) ||
+        expected.count() != actual.count()) {
         return false;
     }
     const auto samePosition = [](const QGeoCoordinate& a, const QGeoCoordinate& b) {

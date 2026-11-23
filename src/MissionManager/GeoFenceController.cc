@@ -323,6 +323,10 @@ void GeoFenceController::_managerLoadComplete(void)
     if (!_managerVehicle || (sender() && sender() != _geoFenceManager)) {
         return;
     }
+    if (!_flyView && !_itemsRequested && _geoFenceManager->exclusiveBusy() &&
+        !_geoFenceManager->exclusiveOwnedBy(_masterController)) {
+        return;
+    }
     const quint32 vehicleId = _managerVehicle->isOfflineEditingVehicle() ? 0 : _managerVehicle->id();
     // Fly view always reloads on _loadComplete
     // Plan view only reloads if:
